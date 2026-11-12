@@ -32,7 +32,7 @@ Retro is a web application for running team retrospectives. It has a **Vue 3 + T
 ## 1. Glossary
 
 | Term | Definition |
-|---|---|
+| --- | --- |
 | **User** | A person authenticated through the OIDC provider. |
 | **Team** | A group of users that hold meetings together and share a task board. |
 | **Member** | A user that belongs to a team. |
@@ -48,41 +48,57 @@ Retro is a web application for running team retrospectives. It has a **Vue 3 + T
 
 ## 2. Architecture overview
 
-```
+```text
 ┌──────────────┐   HTTPS (REST + WebSocket)   ┌──────────────┐     SQL     ┌──────────────┐
 │   Frontend   │ ───────────────────────────▶ │   Backend    │ ──────────▶ │  PostgreSQL  │
 │ Vue 3 + TS   │                              │    Rust      │             │ (external in │
 │ (static SPA) │ ◀─────── realtime events ─── │  API + WS    │             │  production) │
 └──────┬───────┘                              └──────┬───────┘             └──────────────┘
-       │ OIDC Authorization Code + PKCE              │ token validation (JWKS)
-       └──────────────────▶ OIDC Provider ◀──────────┘
+       │ browser redirect (sign-in page)             │ OIDC Authorization Code + PKCE
+       └──────────────────▶ OIDC Provider ◀──────────┘ (confidential client)
 ```
 
 - **Frontend**: a static single-page application served by its own container (e.g. nginx).
 - **Backend**: a stateless Rust service exposing a REST API under `/api/v1` and a WebSocket endpoint for real-time meeting and board updates. It owns the database schema.
 - **Database**: PostgreSQL is the **only** stateful dependency. It stores all application data, including uploaded images, and carries real-time fan-out between backend replicas (`LISTEN/NOTIFY`, see §11.3). It is provisioned separately in production and can be deployed inside Minikube in development. No cache or message broker (e.g. Valkey/Redis) is required.
-- **Identity provider**: any OIDC-compliant provider (e.g. Keycloak, Auth0, Entra ID, Google).
+- **Identity provider** (optional): any OIDC-compliant provider (e.g. Keycloak, Auth0, Entra ID, Google) for single sign-on. Retro also has its own username/password accounts (§3).
 
 ---
 
 ## 3. Authentication
 
-- Login uses **OAuth 2.0 / OpenID Connect, Authorization Code flow with PKCE** (S256), performed by the frontend as a public client.
-- The frontend stores the access token in memory (not `localStorage`). It renews tokens with a refresh token or silent renew, depending on what the provider supports.
-- Each API request sends `Authorization: Bearer <access_token>`.
-- The backend validates tokens on every request:
-  - signature, using the provider's JWKS (cached and refreshed on key rotation);
-  - `iss`, `aud`, `exp` and `nbf`.
-- The WebSocket connection authenticates with the access token, sent either in the first message or as a short-lived ticket obtained from `POST /api/v1/ws-ticket`. Tokens are never put in URLs that get logged.
-- The first time a user authenticates, the backend creates a local `User` record keyed by the OIDC `sub` claim (plus `iss`). `email`, `name` and `picture` are synced from claims on each login.
-- Logout clears the local session and calls the provider's `end_session_endpoint` when one is available.
-- Configuration (issuer URL, client ID, audience, redirect URIs, scopes `openid profile email`) is supplied through environment variables / Helm values.
+Authentication is performed by the **backend**, which issues Retro's own session for both sign-in methods (ADR-0005).
+
+### 3.1 Sign-in methods
+
+- **Username and password** (local accounts). The sign-in form accepts a username or an email address (case-insensitive). Passwords are stored as Argon2id hashes. Wrong credentials and unknown accounts produce the same error and take the same time. Failed attempts are rate-limited per login name and per client IP. Local sign-in can be disabled (`AUTH_LOCAL_LOGIN_ENABLED`).
+- **Single sign-on** through an OIDC provider, optional (`OIDC_ENABLED`). The backend is a **confidential client** using the Authorization Code flow with **PKCE** (S256), `state` and `nonce`. It validates the ID token (signature via the provider's JWKS, cached and refreshed on key rotation; `iss`, `aud`, `exp`, `nonce`) and requires `email_verified`. Provider tokens never reach the browser.
+- The sign-in page shows "Forgot password?" only when a password reset URL is configured (`AUTH_PASSWORD_RESET_URL`); the application sends no email (§6.1).
+
+### 3.2 Accounts and SSO identities
+
+- An SSO identity is keyed by the provider's `iss` + `sub`. On SSO sign-in, in one transaction:
+  1. a known identity signs in its user;
+  2. otherwise, a user with the same (verified) email gets the identity linked;
+  3. otherwise, a new user is created when auto-registration is on (`OIDC_AUTO_REGISTER`, default on), or the sign-in is refused.
+- `email`, display name and picture are synced from the provider's claims on each SSO sign-in.
+
+### 3.3 Session
+
+- After sign-in the backend returns a short-lived **access token** (JWT signed by Retro, default 15 minutes) and sets a **refresh token** in an `httpOnly`, `SameSite=Strict` cookie scoped to `/api/v1/auth`.
+- The frontend keeps the access token in memory (not `localStorage`) and sends `Authorization: Bearer <access_token>` on each API request. On a `401` it renews once through `POST /auth/refresh` and retries. After a reload, the session is restored from the refresh cookie.
+- Refresh tokens are opaque, single-use and rotated on every refresh; only their hash is stored. Presenting an already-rotated token revokes the whole session (token family), except within a few seconds, to tolerate several tabs refreshing at once.
+- **"Keep me signed in"** makes the refresh cookie persistent (30 days by default). Otherwise it is a browser-session cookie and the session expires after 12 hours at most.
+- After single sign-on, the backend sets the refresh cookie and redirects to `/auth/callback`; **no token is ever put in a URL**.
+- The WebSocket connection authenticates with a short-lived ticket obtained from `POST /api/v1/ws-ticket` with the access token. Tokens are never put in URLs that get logged.
+- **Logout** revokes the session (refresh token family) and clears the cookie. Signing out of the identity provider (`end_session_endpoint`) is a later addition.
+- Configuration (secrets, token lifetimes, OIDC issuer, client ID and secret, scopes `openid email profile`, button text) is supplied through environment variables / Helm values. The redirect URI to register with the provider is `<public URL>/api/v1/auth/oidc/callback`.
 
 ---
 
 ## 4. Users
 
-- A user has: id, OIDC subject, email, display name, avatar URL, created/updated timestamps.
+- A user has: id, email (unique), optional username (unique, local accounts), display name, avatar URL, optional password hash, created/updated timestamps, and zero or more linked SSO identities (§3.2).
 - A user can belong to zero or more teams.
 - A user with no teams sees an empty state that invites them to create a team or accept an invitation.
 - The user's email is the key used to match pending invitations (see §6).
@@ -153,7 +169,7 @@ Retro is a web application for running team retrospectives. It has a **Vue 3 + T
 ### 7.2 Left menu
 
 | Entry | Behavior |
-|---|---|
+| --- | --- |
 | **Add meeting** (button) | Starts a new retrospective for the selected team and navigates into it. The creator becomes its facilitator. |
 | **Meetings** | Lists the team's **active** meetings. Each entry shows creation time, facilitator, current phase and participants, with a **Join** button. Below it, a list of **ended** meetings opens each one's summary (§8.3). |
 | **Tasks** | The team's task board (see §10). |
@@ -182,6 +198,7 @@ Retro is a web application for running team retrospectives. It has a **Vue 3 + T
 ### 8.3 Meeting summary (ended meetings)
 
 Team members can open any ended meeting, which shows a read-only **summary** with:
+
 - date, duration and facilitator;
 - **participants**;
 - **groups**, sorted by votes, each with its name, **vote total** and its anonymous reflections;
@@ -303,7 +320,7 @@ The individual meeting phases cannot be replayed.
 ### 11.2 Event catalogue (non-exhaustive)
 
 | Event | Payload highlights | Visible to |
-|---|---|---|
+| --- | --- | --- |
 | `participant.joined` / `participant.left` | user | all |
 | `presence.changed` | user, online | all |
 | `facilitator.changed` | new facilitator | all |
@@ -332,7 +349,7 @@ The individual meeting phases cannot be replayed.
 What the real-time layer has to do:
 
 | Need | How it is handled with PostgreSQL only |
-|---|---|
+| --- | --- |
 | Fan-out of events between backend replicas | `LISTEN/NOTIFY`. Each replica holds **one** dedicated listener connection and forwards events to its local WebSocket subscribers through in-process Tokio broadcast channels. |
 | Consistency between persisted state and events | `NOTIFY` issued inside the same transaction as the write is delivered **only on commit**, so clients never see events for rolled-back changes. A dedicated broker can't give this guarantee for free. |
 | Ephemeral events (typing, drag in progress, presence) | Throttled on the client (drag position ≤ 10 Hz per dragged card; typing debounced to 1 event / 2 s) and sent through `NOTIFY` without being persisted. |
@@ -342,10 +359,12 @@ What the real-time layer has to do:
 | Rate limiting | In memory per replica, which is acceptable at the target scale. |
 
 Why this is sufficient at the target scale (§20: 500 concurrent meetings × 50 participants):
+
 - With throttling, the expected peak is a few hundred `NOTIFY`/s cluster-wide. PostgreSQL handles thousands per second.
 - Fan-out to the individual sockets happens **in the replicas**, not in PostgreSQL: one notification per event per replica, not one per client.
 
 Constraints and mitigations:
+
 - **8000-byte `NOTIFY` payload limit**: payloads that could exceed it (e.g. `reflections.revealed`, rich-text content) are not sent inline. The notification carries only the event type and entity IDs, and each replica loads the data from the database before pushing it to its clients.
 - **Global notification queue** (8 GB by default): monitored through `pg_notification_queue_usage()`, which is exported as a Prometheus metric. Listener connections must never block.
 - **Connection poolers**: the listener connection must be a direct session connection. Transaction-mode PgBouncer does not support `LISTEN`.
@@ -357,7 +376,7 @@ Constraints and mitigations:
 ## 12. Permissions matrix
 
 | Action | Non-member | Member | Team admin | Facilitator |
-|---|:-:|:-:|:-:|:-:|
+| --- | :-: | :-: | :-: | :-: |
 | View team / meetings / tasks | ✗ | ✓ | ✓ | ✓ |
 | Rename team | ✗ | ✗ | ✓ | — |
 | Invite (email / join link) | ✗ | ✓ | ✓ | — |
@@ -388,9 +407,16 @@ Constraints and mitigations:
 
 The backend owns the schema and manages it through ORM migrations. All IDs are UUIDv7 and all timestamps are `timestamptz` (UTC).
 
-```
-users(id, oidc_issuer, oidc_subject, email, display_name, avatar_url, created_at, updated_at)
-    UNIQUE(oidc_issuer, oidc_subject)
+```text
+users(id, email UNIQUE, username UNIQUE NULL, display_name, avatar_url NULL,
+      password_hash NULL, created_at, updated_at)
+    -- email and username are stored lower-cased
+
+user_identities(id, user_id → users, issuer, subject, created_at)
+    UNIQUE(issuer, subject)
+
+refresh_tokens(id, user_id → users, family_id, token_hash UNIQUE, persistent,
+               expires_at, revoked_at NULL, replaced_by NULL, created_at)
 
 teams(id, name, join_token NULL, join_enabled, created_by → users, created_at, updated_at)
 
@@ -457,14 +483,22 @@ Notes:
 Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem details. An OpenAPI 3 document is generated from the code and served at `/api/v1/openapi.json`. The frontend generates its TypeScript client and types from this document.
 
 ### 14.1 Users & auth
+
 | Method | Path | Description |
-|---|---|---|
+| --- | --- | --- |
+| GET | `/auth/config` | Sign-in options: local sign-in on/off, SSO on/off and button text, password reset URL |
+| POST | `/auth/login` | `{ login, password, remember }` → access token + user; sets the refresh cookie |
+| POST | `/auth/refresh` | Rotates the refresh cookie → new access token + user |
+| POST | `/auth/logout` | Revokes the session and clears the cookie |
+| GET | `/auth/oidc?redirect=&remember=` | Starts single sign-on (redirect to the provider) |
+| GET | `/auth/oidc/callback` | Provider callback; sets the refresh cookie, redirects to `/auth/callback` (or `/login?error=…`) |
 | GET | `/me` | Current user, their teams and pending invitations |
 | POST | `/ws-ticket` | Short-lived ticket to open the WebSocket |
 
 ### 14.2 Teams
+
 | Method | Path | Description |
-|---|---|---|
+| --- | --- | --- |
 | GET | `/teams` | Teams of the current user |
 | POST | `/teams` | Create a team (creator becomes admin) |
 | GET | `/teams/{teamId}` | Team details |
@@ -483,8 +517,9 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/join/{joinToken}` | Join through the link |
 
 ### 14.3 Meetings
+
 | Method | Path | Description |
-|---|---|---|
+| --- | --- | --- |
 | GET | `/teams/{teamId}/meetings?status=active\|ended` | List meetings |
 | POST | `/teams/{teamId}/meetings` | Start a meeting |
 | GET | `/meetings/{id}/state` | Full snapshot, filtered by the caller's permissions and the current phase |
@@ -502,8 +537,9 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/meetings/{id}/end` | End the meeting (facilitator) |
 
 ### 14.4 Reflections, groups, votes, reactions
+
 | Method | Path | Description |
-|---|---|---|
+| --- | --- | --- |
 | POST | `/meetings/{id}/reflections` | Create a draft/confirmed reflection |
 | PATCH | `/reflections/{rid}` | Edit content/column/status (author, before Group) |
 | DELETE | `/reflections/{rid}` | Delete (author, before Group) |
@@ -518,8 +554,9 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | PUT | `/meetings/{id}/discuss/current` | Set the current group (facilitator) |
 
 ### 14.5 Tasks
+
 | Method | Path | Description |
-|---|---|---|
+| --- | --- | --- |
 | GET | `/teams/{teamId}/tasks` | Board, with filters |
 | POST | `/meetings/{id}/tasks` | Create a task (Discuss phase) |
 | PATCH | `/tasks/{tid}` | Edit content (author/admin) |
@@ -527,10 +564,11 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | DELETE | `/tasks/{tid}` | Delete (author/admin) |
 
 ### 14.6 Operational
+
 | Method | Path | Description |
-|---|---|---|
-| GET | `/healthz` | Liveness |
-| GET | `/readyz` | Readiness (database reachable, migrations applied) |
+| --- | --- | --- |
+| GET | `/healthz` | Liveness (served at the root, not under `/api/v1`) |
+| GET | `/readyz` | Readiness (database reachable, migrations applied; served at the root) |
 | GET | `/metrics` | Prometheus metrics (internal port) |
 
 ---
@@ -538,19 +576,20 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 ## 15. Frontend
 
 ### 15.1 Stack
+
 - **Vue 3** (Composition API, `<script setup>`), **TypeScript** (strict), **Vite**.
 - **Vue Router** for routing and **Pinia** for state.
-- **oidc-client-ts** for OIDC Authorization Code + PKCE.
 - **Tiptap** (ProseMirror) as the rich text editor, with extensions for bold, italic, link, image paste and mention.
 - **DOMPurify** for client-side defensive sanitization when rendering rich text.
 - Drag and drop: **vue-draggable-plus** (SortableJS) or `@vueuse/integrations`, used for both the Group phase and the Tasks board.
 - API client generated from OpenAPI (e.g. `openapi-typescript` + `openapi-fetch`).
-- UI component library: to be chosen (e.g. PrimeVue or Naive UI). Styling with CSS variables, light and dark themes.
+- No UI component library: components are built from the design tokens as CSS variables (light and dark themes) with scoped styles (ADR-0002). Plus Jakarta Sans is self-hosted.
 
 ### 15.2 Routes
-```
-/login                          → redirects to the IdP
-/callback                       → OIDC callback
+
+```text
+/login                          → sign-in page (username/password, single sign-on)
+/auth/callback                  → landing page after single sign-on
 /invite/:token                  → accept invitation
 /join/:joinToken                → join team via link
 /m/:inviteToken                 → join team (if needed) + running meeting
@@ -562,7 +601,8 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 ```
 
 ### 15.3 Structure
-```
+
+```text
 frontend/
   src/
     api/          generated client + ws client
@@ -582,27 +622,30 @@ frontend/
 ```
 
 ### 15.4 Behavior
+
 - The meeting store applies WebSocket events to a local snapshot. Actions are applied optimistically and reconciled with server responses.
 - The app reconnects automatically with exponential backoff and shows a "Reconnecting…" banner.
 - Images are protected by authentication, so `<img src>` cannot fetch them directly. The frontend loads them with an authenticated `fetch`, displays them as `blob:` URLs (custom Tiptap image node view), and caches them per session.
-- Runtime configuration (API URL, OIDC settings) is loaded from `/config.json`, generated by the container entrypoint from environment variables, so a single image works in every environment.
+- The frontend is served from the same origin as the API (the ingress routes `/api` to the backend) and reads sign-in options from `GET /api/v1/auth/config`, so a single image works in every environment without runtime configuration files.
 
 ---
 
 ## 16. Backend
 
 ### 16.1 Stack
+
 - **Rust** (stable, edition 2024), **Tokio** runtime.
 - **Axum** for HTTP and WebSocket.
 - **SeaORM** as the ORM, with **sea-orm-migration** for schema migrations. The backend owns the schema: migrations run automatically at startup (guarded by a PostgreSQL advisory lock) or as a Helm pre-upgrade Job.
-- **jsonwebtoken** + a JWKS cache for OIDC token validation.
+- **openidconnect** (OIDC confidential client, ID token validation with JWKS), **jsonwebtoken** (Retro's access tokens), **argon2** (password hashes), **axum-extra** cookies.
 - **ammonia** for server-side HTML sanitization.
 - **utoipa** for OpenAPI generation.
 - **tracing** + `tracing-subscriber` (JSON logs), Prometheus metrics.
-- Configuration from environment variables (with `figment` or `config`).
+- Configuration from environment variables, validated at startup.
 
 ### 16.2 Structure
-```
+
+```text
 backend/
   src/
     main.rs
@@ -619,6 +662,7 @@ backend/
 ```
 
 ### 16.3 Rules enforced on the server
+
 - Membership and role checks on every endpoint and every WS subscription.
 - Phase guards: e.g. no reflection edits after Reflect, votes only during Vote, tasks only during Discuss.
 - Vote limits (budget and maximum per group) checked transactionally.
@@ -633,19 +677,21 @@ backend/
 ## 17. Deployment
 
 ### 17.1 Container images
+
 - `frontend/Dockerfile`: multi-stage — Node build stage, then an `nginx` (unprivileged) runtime serving the static build, with SPA fallback and the runtime `config.json` entrypoint.
 - `backend/Dockerfile`: multi-stage — `rust` build stage with dependency caching (e.g. `cargo-chef`), then a minimal runtime (`distroless/cc` or `debian-slim`), running as a non-root user.
 - Images are tagged with the git SHA and semver releases.
 
 ### 17.2 Helm chart
+
 The application is deployed to Kubernetes with a Helm chart (`deploy/helm/retro`).
 
 - **Frontend** and **backend** are deployed as separate microservices, each with its own `Deployment`, `Service`, resource limits, probes and `HorizontalPodAutoscaler` (optional).
 - An **Ingress** (optional, configurable class/TLS) routes `/` to the frontend and `/api` to the backend, with WebSocket upgrade enabled.
 - **ConfigMap**: non-secret configuration (OIDC issuer/client ID, public URLs, log level, vote defaults).
-- **Secret**: database connection details (host, port, database, user, password, sslmode). Alternatively, an `existingSecret` can be referenced.
-- **Migration Job** (optional, `pre-install`/`pre-upgrade` hook) running the backend's migration command.
-- The **database is not deployed** by the chart. The chart assumes PostgreSQL is already available and reads connection details from `values.yaml`.
+- **Secrets**: database password and auth secrets (JWT secret, SSO state secret, OIDC client secret). Alternatively, `existingSecret`s can be referenced.
+- **Migration Job** (optional, one per release revision) running the backend's migration command; new pods become ready once it has applied their migrations (ADR-0004).
+- The **database is not deployed** by the chart in production. The chart assumes PostgreSQL is already available and reads connection details from `values.yaml`. Development-only PostgreSQL and dex templates render only with `devMode.enabled` (ADR-0006).
 
 Example `values.yaml` excerpt:
 
@@ -657,10 +703,13 @@ backend:
   image: { repository: ghcr.io/<org>/retro-backend, tag: "" }
   replicas: 2
   runMigrations: job   # job | startup | none
+auth:
+  localLogin: true
+  existingSecret: retro-auth   # JWT_SECRET, STATE_SECRET, OIDC_CLIENT_SECRET
 oidc:
+  enabled: true
   issuerUrl: https://idp.example.com/realms/retro
-  clientId: retro-frontend
-  audience: retro-api
+  clientId: retro
 database:
   host: postgres.example.com
   port: 5432
@@ -677,6 +726,7 @@ ingress:
 ```
 
 ### 17.3 Production
+
 - PostgreSQL is **provisioned separately** (managed service or a dedicated cluster) and is **not part of the application deployment**.
 - TLS terminates at the ingress. Pods run as non-root with a read-only root filesystem.
 
@@ -684,37 +734,43 @@ ingress:
 
 ## 18. Development environment
 
-- **Minikube** provides a local Kubernetes cluster. The same Helm chart deploys the application into it, with a `values-dev.yaml` overlay.
-- In development, **PostgreSQL can run inside Minikube** (e.g. a simple StatefulSet manifest or the Bitnami chart installed by a helper script). This is separate from the application chart, which keeps the production contract unchanged.
-- A development OIDC provider (e.g. **Keycloak** with a pre-imported `retro` realm and test users) can also be deployed into Minikube.
+The full guide is [`docs/development.md`](development.md) (ADR-0007).
+
+- **Minikube** (ingress addon) provides a local Kubernetes cluster. The same Helm chart deploys the application into it, with the `values-dev.yaml` overlay. The application is served at `retro.<minikube ip>.nip.io`.
+- In development, **PostgreSQL** (ephemeral) and **dex** (OIDC provider, served under `/dex` on the application host) run inside Minikube, rendered by the chart only in dev mode.
+- **Seed users**: in dev mode the backend seeds at least two users (`alice`, `bob`, password `password`) at startup. dex has the same users, so each can sign in with a password or through single sign-on.
 - **Telepresence** lets you run the frontend and/or backend **locally** (with hot reload: `vite dev`, `cargo watch`) while they talk to the services in the cluster as if they were running there.
 - **Helper scripts** (`scripts/`):
 
 | Script | Purpose |
-|---|---|
-| `scripts/setup.sh` | Install/check tooling (Node, pnpm, Rust, Docker, Minikube, Helm, kubectl, Telepresence) and project dependencies |
-| `scripts/cluster-up.sh` | Start Minikube, enable ingress, deploy PostgreSQL and Keycloak |
-| `scripts/build.sh` | Build the frontend/backend images into Minikube's Docker daemon |
+| --- | --- |
+| `scripts/setup.sh` | Check tooling (Node, Rust, Docker/Podman, Minikube, Helm, kubectl, Telepresence) and install project dependencies |
+| `scripts/dev.sh` | One command: start the cluster, build images, deploy, restart, print the URL and users |
+| `scripts/cluster-up.sh` | Start Minikube and enable the ingress addon |
+| `scripts/build.sh` | Build the frontend/backend images inside Minikube |
 | `scripts/deploy.sh` | `helm upgrade --install` with `values-dev.yaml` |
-| `scripts/dev-backend.sh` / `scripts/dev-frontend.sh` | Telepresence intercept + run the service locally |
-| `scripts/db-reset.sh` | Drop/recreate the dev database and run migrations + seed |
+| `scripts/restart.sh` | Restart the app pods after rebuilding the `:dev` images |
+| `scripts/dev-backend.sh` / `scripts/dev-frontend.sh` | Run a service locally (with a Telepresence intercept) |
+| `scripts/telepresence-*.sh` | Connect, intercept, leave |
+| `scripts/db-reset.sh` | Reset the dev database; the backend migrates and re-seeds |
 | `scripts/cluster-down.sh` | Tear down |
+| `scripts/test-playwright.sh` | Run the end-to-end tests against a deployed instance |
 
 ---
 
 ## 19. Continuous integration
 
-GitHub Actions runs the pipeline on **every push to `main`** and on **every pull request**. Jobs run in parallel where possible, and the dependency caches (pnpm, cargo) are kept between runs.
+GitHub Actions runs the pipeline on **every push to `main`** and on **every pull request**. Jobs run in parallel where possible, and the dependency caches (npm, cargo) are kept between runs (ADR-0009).
 
 | Stage | Frontend | Backend |
-|---|---|---|
+| --- | --- | --- |
 | **Lint** | ESLint (+ `vue-tsc` type check, Prettier check) | `cargo fmt --check`, `cargo clippy -- -D warnings` |
-| **Test** | **Vitest** unit tests; **Playwright** end-to-end tests against the built app + backend + PostgreSQL service container + mock OIDC | `cargo test` unit tests; integration tests of the HTTP/WS API against a PostgreSQL service container |
+| **Test** | **Vitest** unit tests; **Playwright** end-to-end tests against the app deployed in Minikube with the dev overlay (PostgreSQL and dex) | `cargo test` unit tests; integration tests of the HTTP/WS API against PostgreSQL (testcontainers) |
 | **Build** | Docker build of `frontend/Dockerfile` | Docker build of `backend/Dockerfile` |
 
 Additional checks: `helm lint` and `helm template` on the chart, and a check that the generated OpenAPI client is up to date.
 
-Images are pushed to the registry only from `main` and from tags. PR builds are build-only.
+Images and the Helm chart are pushed to the registry when a release is published (Release Please). PR builds are build-only. Renovate keeps dependencies up to date.
 
 ---
 
@@ -722,7 +778,7 @@ Images are pushed to the registry only from `main` and from tags. PR builds are 
 
 - **Real-time latency**: events delivered to participants within 300 ms (p95) under normal load.
 - **Scale target**: meetings of up to 50 participants, 500 concurrent meetings per deployment.
-- **Security**: OWASP ASVS L1 baseline; server-side sanitization of rich text; CSP headers on the frontend; rate limiting on invitation and join endpoints; size/type limits on uploads (default 5 MB, images only).
+- **Security**: OWASP ASVS L1 baseline; server-side sanitization of rich text; CSP headers on the frontend; rate limiting on sign-in, invitation and join endpoints; size/type limits on uploads (default 5 MB, images only).
 - **Privacy**: reflection authorship is never exposed through the API or WS. Logs never contain reflection content or tokens.
 - **Accessibility**: WCAG 2.1 AA. Every drag-and-drop interaction has a keyboard alternative (e.g. a "Move to…" menu).
 - **Browser support**: latest two versions of Chrome, Firefox, Safari and Edge.

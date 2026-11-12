@@ -91,7 +91,7 @@ jobs:
       - name: Check generated API client is up to date
         run: |
           npm run api:generate
-          git diff --exit-code -- frontend/openapi.json frontend/src/api/schema.d.ts
+          git diff --exit-code -- frontend/openapi.json frontend/src/api/generated.ts
 
       - name: Build
         run: npm run build --workspace @retro/frontend

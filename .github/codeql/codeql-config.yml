@@ -6,5 +6,5 @@ packs:
   javascript:
     - codeql/javascript-queries:AlertSuppression.ql
 paths-ignore:
-  - frontend/src/api/schema.d.ts
+  - frontend/src/api/generated.ts
   - backend/target

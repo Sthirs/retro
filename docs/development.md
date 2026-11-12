@@ -108,7 +108,7 @@ scripts/restart.sh      # rollout restart backend and frontend
   SSO sign-in.
 - The API contract is generated: after changing an endpoint or DTO run
   `npm run api:generate` and commit `frontend/openapi.json` and
-  `frontend/src/api/schema.d.ts`.
+  `frontend/src/api/generated.ts`.
 - The scripts read `RETRO_NAMESPACE`, `RETRO_RELEASE` and `RETRO_DEV_HOST` to override
   the defaults (`retro`, `retro`, `retro.<minikube ip>.nip.io`).
 

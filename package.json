@@ -20,7 +20,7 @@
     "telepresence:backend": "./scripts/telepresence-intercept-backend.sh",
     "telepresence:frontend": "./scripts/telepresence-intercept-frontend.sh",
     "telepresence:leave": "./scripts/telepresence-leave.sh",
-    "api:generate": "cargo run --quiet --manifest-path backend/Cargo.toml -- openapi > frontend/openapi.json && npm run api:types --workspace @retro/frontend",
+    "api:generate": "cargo run --quiet --manifest-path backend/Cargo.toml -- openapi > frontend/openapi.json && npm run api:client --workspace @retro/frontend",
     "lint": "npm run lint:backend && npm run lint:frontend",
     "lint:backend": "cargo fmt --manifest-path backend/Cargo.toml --all --check && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",
     "lint:frontend": "npm run lint --workspace @retro/frontend",
@@ -33,10 +33,5 @@
     "@playwright/test": "1.65.0",
     "@types/node": "26.6.6",
     "concurrently": "10.0.7"
-  },
-  "overrides": {
-    "openapi-typescript": {
-      "typescript": "npm:@typescript/typescript6@6.0.2"
-    }
   }
 }

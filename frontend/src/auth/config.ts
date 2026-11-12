@@ -9,8 +9,8 @@ export const FALLBACK_AUTH_CONFIG: AuthConfig = {
 
 export async function fetchAuthConfig(): Promise<AuthConfig> {
   try {
-    const { data } = await api.GET('/api/v1/auth/config');
-    return data ?? FALLBACK_AUTH_CONFIG;
+    const res = await api.config();
+    return res.status === 200 && res.data ? res.data : FALLBACK_AUTH_CONFIG;
   } catch {
     return FALLBACK_AUTH_CONFIG;
   }

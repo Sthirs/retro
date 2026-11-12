@@ -11,11 +11,10 @@
     "lint": "eslint . && prettier --check . && vue-tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
-    "api:types": "openapi-typescript openapi.json -o src/api/schema.d.ts && prettier --write src/api/schema.d.ts"
+    "api:client": "orval --config orval.config.ts && prettier --write src/api/generated.ts"
   },
   "dependencies": {
     "@fontsource-variable/plus-jakarta-sans": "5.3.0",
-    "openapi-fetch": "0.17.0",
     "pinia": "4.1.0",
     "vue": "3.5.45",
     "vue-i18n": "11.4.19",
@@ -31,7 +30,7 @@
     "eslint-plugin-vue": "10.12.1",
     "globals": "17.14.0",
     "happy-dom": "21.0.4",
-    "openapi-typescript": "7.13.0",
+    "orval": "8.47.0",
     "prettier": "3.10.1",
     "typescript": "npm:@typescript/typescript6@6.0.2",
     "typescript-eslint": "8.72.2",

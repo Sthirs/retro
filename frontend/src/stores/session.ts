@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 
-import { api, setTokenSource, type Problem, type SessionResponse, type User } from '@/api/client';
+import { api, setTokenSource, type SessionResponse, type User } from '@/api/client';
 
 /** Error codes the sign-in page knows how to explain. */
 export type LoginErrorCode = 'invalid_credentials' | 'too_many_requests' | 'unknown';
@@ -36,18 +36,15 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function login(login: string, password: string, remember: boolean): Promise<void> {
-    const { data, error, response } = await api.POST('/api/v1/auth/login', {
-      body: { login, password, remember },
-    });
-    if (data) {
-      apply(data);
+    const res = await api.login({ login, password, remember });
+    if (res.status === 200) {
+      apply(res.data);
       return;
     }
-    const code = (error as Problem | undefined)?.code;
-    if (response.status === 401 && code === 'invalid_credentials') {
+    if (res.status === 401 && res.data?.code === 'invalid_credentials') {
       throw new LoginError('invalid_credentials');
     }
-    if (response.status === 429) throw new LoginError('too_many_requests');
+    if (res.status === 429) throw new LoginError('too_many_requests');
     throw new LoginError('unknown');
   }
 
@@ -55,9 +52,9 @@ export const useSessionStore = defineStore('session', () => {
   function refresh(): Promise<boolean> {
     pendingRefresh ??= (async () => {
       try {
-        const { data } = await api.POST('/api/v1/auth/refresh');
-        if (data) {
-          apply(data);
+        const res = await api.refreshSession();
+        if (res.status === 200) {
+          apply(res.data);
           return true;
         }
         clear();
@@ -81,7 +78,7 @@ export const useSessionStore = defineStore('session', () => {
 
   async function logout(): Promise<void> {
     try {
-      await api.POST('/api/v1/auth/logout');
+      await api.logout();
     } finally {
       clear();
     }

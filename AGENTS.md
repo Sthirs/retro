@@ -81,7 +81,7 @@ These rules are **binding**:
 
 - The backend's OpenAPI document (utoipa) is the contract. After changing an
   endpoint or DTO, run `npm run api:generate` and commit `frontend/openapi.json`
-  and `frontend/src/api/schema.d.ts`. CI fails when they are stale.
+  and `frontend/src/api/generated.ts`. CI fails when they are stale.
 
 ### 4.4 UI
 

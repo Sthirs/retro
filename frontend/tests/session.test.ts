@@ -35,8 +35,9 @@ describe('session store', () => {
     const store = useSessionStore();
     store.accessToken = 'expired';
 
-    const { data } = await api.GET('/api/v1/me');
-    expect(data?.user.displayName).toBe(ALICE.displayName);
+    const res = await api.me();
+    expect(res.status).toBe(200);
+    expect(res.data).toEqual({ user: ALICE });
     const me = calls.filter((c) => c.path === '/api/v1/me');
     expect(me[0]?.headers.get('Authorization')).toBe('Bearer expired');
     expect(me[1]?.headers.get('Authorization')).toBe('Bearer access-token');

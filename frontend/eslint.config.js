@@ -5,7 +5,7 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'src/api/schema.d.ts'] },
+  { ignores: ['dist', 'src/api/generated.ts'] },
   { languageOptions: { globals: { ...globals.browser } } },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,

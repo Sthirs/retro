@@ -582,7 +582,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 - **Tiptap** (ProseMirror) as the rich text editor, with extensions for bold, italic, link, image paste and mention.
 - **DOMPurify** for client-side defensive sanitization when rendering rich text.
 - Drag and drop: **vue-draggable-plus** (SortableJS) or `@vueuse/integrations`, used for both the Group phase and the Tasks board.
-- API client generated from OpenAPI (e.g. `openapi-typescript` + `openapi-fetch`).
+- API client generated from the backend's OpenAPI document with **orval** (`fetch` client) (ADR-0002).
 - No UI component library: components are built from the design tokens as CSS variables (light and dark themes) with scoped styles (ADR-0002). Plus Jakarta Sans is self-hosted.
 
 ### 15.2 Routes

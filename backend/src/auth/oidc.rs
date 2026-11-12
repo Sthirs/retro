@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn compares_in_constant_time() {
         assert!(constant_time_eq(b"abc", b"abc"));
-        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"abx"));
         assert!(!constant_time_eq(b"abc", b"ab"));
     }
 }

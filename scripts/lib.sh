@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 # Shared settings for the dev scripts. Source it; do not run it.
 # shellcheck disable=SC2034
 

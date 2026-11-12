@@ -223,7 +223,7 @@ The individual meeting phases cannot be replayed.
 - At meeting creation the backend picks:
   - a **greeting** ("Hello") in a randomly chosen language, shown with the language name (e.g. *"Ciao — Italian"*);
   - an **icebreaker question** from a curated list.
-  
+
   Both differ from meeting to meeting. Where possible, the backend avoids repeating the team's recent picks.
 - The participants are shown **one at a time** on everyone's screen (avatar + name), in a randomized order fixed at phase start.
 - Only the **facilitator** can move to the **next person**. After the last person, the facilitator can move to the **next phase** (Reflect).
@@ -238,7 +238,7 @@ The individual meeting phases cannot be replayed.
 - Lifecycle of a reflection:
   1. **draft** — being written, only on the author's screen;
   2. **confirmed** — sent by the author.
-  
+
   Once sent, a reflection **cannot be un-sent** (returned to draft). Until the Group phase starts, the author can still **edit** it, **move** it to another column, or **delete** it. After that, reflections are immutable.
 - **Privacy during Reflect**:
   - each participant sees only their own reflections in full;

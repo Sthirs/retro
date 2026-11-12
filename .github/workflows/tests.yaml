@@ -131,6 +131,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # The images are built on the runner with Buildx (GitHub Actions layer
+      # cache) in the background while the cluster starts, then loaded into
+      # Minikube once ready.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      # Exposes ACTIONS_RUNTIME_TOKEN / ACTIONS_RESULTS_URL to run steps, which
+      # the `type=gha` Buildx cache needs outside docker/build-push-action.
+      - name: Expose GitHub runtime for the Buildx cache
+        uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+
+      - name: Start image builds (background)
+        run: nohup scripts/ci-build-images.sh "$RUNNER_TEMP/images" > /dev/null 2>&1 < /dev/null &
+
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
@@ -163,8 +177,22 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Build images in minikube
-        run: scripts/build.sh
+      - name: Wait for images and load them into minikube
+        timeout-minutes: 25
+        run: |
+          dir="$RUNNER_TEMP/images"
+          until [ -f "$dir/exit-code" ]; do sleep 2; done
+          for app in backend frontend; do
+            echo "::group::Build log: $app"
+            cat "$dir/$app.log" || true
+            echo "::endgroup::"
+          done
+          if [ "$(cat "$dir/exit-code")" != 0 ]; then
+            echo "::error::Image build failed (see the build logs above)"
+            exit 1
+          fi
+          minikube image load "$dir/backend.tar"
+          minikube image load "$dir/frontend.tar"
 
       - name: Deploy with Helm
         run: HELM_TIMEOUT=8m scripts/deploy.sh

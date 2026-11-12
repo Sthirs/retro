@@ -1,0 +1,202 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - "*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs of the same PR; main-branch runs always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  backend:
+    name: Backend (fmt, clippy, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Reads backend/rust-toolchain.toml (channel + rustfmt, clippy).
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          rust-src-dir: backend
+          cache: false
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: backend
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      # Integration tests start PostgreSQL containers through testcontainers
+      # (Docker is available on the runner).
+      - name: Test
+        run: cargo test --locked
+
+  frontend:
+    name: Frontend (lint, types, tests, API client)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          rust-src-dir: backend
+          cache: false
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: backend
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (eslint, prettier, vue-tsc)
+        run: npm run lint:frontend
+
+      - name: Unit tests
+        run: npm run test:frontend
+
+      # The TypeScript client is generated from the backend's OpenAPI document.
+      - name: Check generated API client is up to date
+        run: |
+          npm run api:generate
+          git diff --exit-code -- frontend/openapi.json frontend/src/api/schema.d.ts
+
+      - name: Build
+        run: npm run build --workspace @retro/frontend
+
+  helm:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+
+      - name: Lint and render
+        env:
+          PROD_VALUES: >-
+            --set auth.jwtSecret=ci-jwt-secret-ci-jwt-secret-ci-jwt-secret
+            --set auth.stateSecret=ci-state-secret-ci-state-secret-ci-state
+            --set database.host=postgres.example.com
+            --set database.password=ci
+        run: |
+          # shellcheck disable=SC2086
+          helm lint --strict deploy/helm/retro $PROD_VALUES
+          # shellcheck disable=SC2086
+          helm template retro deploy/helm/retro $PROD_VALUES > /dev/null
+          helm lint --strict deploy/helm/retro -f deploy/helm/retro/values-dev.yaml
+          helm template retro deploy/helm/retro -f deploy/helm/retro/values-dev.yaml > /dev/null
+
+  # Must stay one job: Minikube lives inside the runner VM.
+  e2e:
+    name: End-to-end (Minikube)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Start minikube
+        uses: medyagh/setup-minikube@e9e035a86bbc3caea26a450bd4dbf9d0c453682e # v0.0.21
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+
+      - name: Enable ingress addon
+        run: |
+          minikube addons enable ingress
+          kubectl -n ingress-nginx wait --for=condition=ready pod \
+            -l app.kubernetes.io/component=controller --timeout=180s
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build images in minikube
+        run: scripts/build.sh
+
+      - name: Deploy with Helm
+        run: HELM_TIMEOUT=8m scripts/deploy.sh
+
+      - name: Wait for the backend
+        run: |
+          host="$(scripts/dev-host.sh)"
+          for i in $(seq 1 30); do
+            if curl -sf "http://${host}/api/v1/auth/config" > /dev/null; then
+              echo "Backend is ready"
+              exit 0
+            fi
+            echo "Waiting for backend... ($i/30)"
+            sleep 5
+          done
+          exit 1
+
+      - name: Run Playwright tests
+        run: scripts/test-playwright.sh "http://$(scripts/dev-host.sh)"
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 3
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          kubectl -n retro get pods -o wide || true
+          kubectl -n retro logs -l app.kubernetes.io/component=backend --tail=200 || true
+          kubectl -n retro logs -l app.kubernetes.io/component=dex --tail=100 || true
+          kubectl -n retro get events --sort-by=.lastTimestamp | tail -30 || true

@@ -1,0 +1,29 @@
+# Dependencies and builds
+node_modules/
+dist/
+backend/target/
+*.tsbuildinfo
+
+# Test output
+coverage/
+test-results/
+playwright-report/
+playwright/.cache/
+tests/e2e/.auth/
+
+# Local environment
+.env
+.env.*
+!.env.example
+*.log
+*.swp
+*~
+.DS_Store
+
+# Editors and local tooling
+.idea/
+.vscode/
+.playwright-mcp/
+
+# Design canvas, downloaded locally for reference
+.design/

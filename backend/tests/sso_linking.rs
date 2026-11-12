@@ -57,3 +57,19 @@ async fn registers_unknown_users_only_when_allowed() {
     assert!(user.password_hash.is_none());
     assert!(user.username.is_none());
 }
+
+#[tokio::test]
+async fn sso_registered_users_cannot_sign_in_with_a_password() {
+    let app = TestApp::new().await;
+    let carol = identity("sub-c", "carol@retro.local");
+    sign_in_with_identity(&app.db, &carol, true)
+        .await
+        .unwrap()
+        .unwrap();
+
+    for (login, password) in [("carol@retro.local", "password"), ("carol@retro.local", "")] {
+        let res = app.login(login, password, false).await;
+        assert_eq!(res.status, 401);
+        assert_eq!(res.json()["code"], "invalid_credentials");
+    }
+}

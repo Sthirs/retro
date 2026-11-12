@@ -42,13 +42,16 @@ prints the host at any time.
 
 ### Seeded users
 
-In dev mode the backend seeds these accounts at startup, and dex has the same people,
-so each can sign in **with a password or through single sign-on**:
+In dev mode the backend seeds `alice` and `bob` at startup, and dex has the same
+people, so each can sign in **with a password or through single sign-on**. `carol`
+exists only in dex: she can sign in **only through single sign-on**, and her Retro
+account is created on her first sign-in (`OIDC_AUTO_REGISTER`).
 
-| Username | Email | Name | Password |
-| --- | --- | --- | --- |
-| `alice` | `alice@retro.local` | Alice Rossi | `password` |
-| `bob` | `bob@retro.local` | Bob Bianchi | `password` |
+| Username | Email | Name | Password | Sign-in methods |
+| --- | --- | --- | --- | --- |
+| `alice` | `alice@retro.local` | Alice Rossi | `password` | password, SSO |
+| `bob` | `bob@retro.local` | Bob Bianchi | `password` | password, SSO |
+| — | `carol@retro.local` | Carol Verdi | `password` (in dex) | SSO only |
 
 On the first SSO sign-in, the backend links the dex identity to the existing account
 with the same verified email ([ADR-0005](adr/0005-authentication.md)). The seed runs

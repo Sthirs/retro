@@ -738,7 +738,7 @@ The full guide is [`docs/development.md`](development.md) (ADR-0007).
 
 - **Minikube** (ingress addon) provides a local Kubernetes cluster. The same Helm chart deploys the application into it, with the `values-dev.yaml` overlay. The application is served at `retro.<minikube ip>.nip.io`.
 - In development, **PostgreSQL** (ephemeral) and **dex** (OIDC provider, served under `/dex` on the application host) run inside Minikube, rendered by the chart only in dev mode.
-- **Seed users**: in dev mode the backend seeds at least two users (`alice`, `bob`, password `password`) at startup. dex has the same users, so each can sign in with a password or through single sign-on.
+- **Seed users**: in dev mode the backend seeds at least two users (`alice`, `bob`, password `password`) at startup. dex has the same users, so each can sign in with a password or through single sign-on. dex also has `carol@retro.local`, who exists only there and can sign in only through single sign-on.
 - **Telepresence** lets you run the frontend and/or backend **locally** (with hot reload: `vite dev`, `cargo watch`) while they talk to the services in the cluster as if they were running there.
 - **Helper scripts** (`scripts/`):
 

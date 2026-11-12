@@ -24,6 +24,8 @@ Retro is running at http://$DEV_HOST
 Seeded users (password "password"), for both password sign-in and single sign-on:
   alice  alice@retro.local  Alice Rossi
   bob    bob@retro.local    Bob Bianchi
+Single sign-on only (dex), password "password":
+         carol@retro.local  Carol Verdi
 
 End-to-end tests: scripts/test-playwright.sh http://$DEV_HOST
 INFO

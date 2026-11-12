@@ -27,12 +27,19 @@ staticPasswords:
     # nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
     hash: "$2y$10$o1g9gtZlpBRww2xJGU/iLuY3tuQW7xdDoP0kJeaNzB/u04fPXMbJu"
     userID: 0193f1a0-0000-7000-8000-000000000b0b
+  # SSO-only: no Retro password; the account is created on first sign-in.
+  - email: carol@retro.local
+    username: Carol Verdi
+    # nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
+    hash: "$2y$10$o1g9gtZlpBRww2xJGU/iLuY3tuQW7xdDoP0kJeaNzB/u04fPXMbJu"
+    userID: 0193f1a0-0000-7000-8000-0000000ca201
 {{- end -}}
 
 {{- if include "retro.devDex" . }}
 # Development only: dex as the OIDC provider, served on the app host under
 # /dex so the browser and the backend use the same issuer URL.
-# Static users mirror the backend's seeded accounts (password: "password").
+# alice and bob mirror the backend's seeded accounts; carol exists only here
+# (SSO-only). Password for all: "password".
 apiVersion: v1
 kind: Secret
 metadata:

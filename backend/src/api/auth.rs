@@ -43,7 +43,7 @@ pub struct AuthConfig {
 }
 
 /// Returns the sign-in options.
-#[utoipa::path(get, path = "/api/v1/auth/config", tag = "auth", responses((status = 200, body = AuthConfig)))]
+#[utoipa::path(get, path = "/api/v1/auth/config", tag = "auth", responses((status = 200, body = AuthConfig, description = "Sign-in options")))]
 pub async fn config(State(state): State<AppState>) -> Json<AuthConfig> {
     Json(AuthConfig {
         local_login: state.config.local_login_enabled,
@@ -111,9 +111,9 @@ fn client_ip(headers: &HeaderMap) -> String {
     request_body = LoginRequest,
     responses(
         (status = 200, body = SessionResponse, description = "Signed in; sets the refresh cookie"),
-        (status = 401, body = Problem, content_type = "application/problem+json"),
+        (status = 401, body = Problem, content_type = "application/problem+json", description = "Invalid credentials"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "Local sign-in disabled"),
-        (status = 429, body = Problem, content_type = "application/problem+json"),
+        (status = 429, body = Problem, content_type = "application/problem+json", description = "Too many attempts"),
     )
 )]
 pub async fn login(
@@ -160,8 +160,8 @@ pub async fn login(
     path = "/api/v1/auth/refresh",
     tag = "auth",
     responses(
-        (status = 200, body = SessionResponse),
-        (status = 401, body = Problem, content_type = "application/problem+json"),
+        (status = 200, body = SessionResponse, description = "Session renewed; rotates the refresh cookie"),
+        (status = 401, body = Problem, content_type = "application/problem+json", description = "Missing, expired or revoked refresh cookie"),
     )
 )]
 pub async fn refresh_session(State(state): State<AppState>, jar: CookieJar) -> Response {
@@ -201,7 +201,7 @@ pub async fn refresh_session(State(state): State<AppState>, jar: CookieJar) -> R
 }
 
 /// Signs out: revokes the session and clears the cookie.
-#[utoipa::path(post, path = "/api/v1/auth/logout", tag = "auth", responses((status = 204)))]
+#[utoipa::path(post, path = "/api/v1/auth/logout", tag = "auth", responses((status = 204, description = "Signed out; clears the refresh cookie")))]
 pub async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -216,6 +216,7 @@ pub async fn logout(
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct OidcStartQuery {
     /// Local path to open after signing in.
     pub redirect: Option<String>,
@@ -266,6 +267,7 @@ pub async fn oidc_start(
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct OidcCallbackQuery {
     pub code: Option<String>,
     pub state: Option<String>,

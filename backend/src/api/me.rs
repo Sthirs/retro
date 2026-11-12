@@ -19,8 +19,8 @@ pub struct MeResponse {
     tag = "users",
     security(("bearer" = [])),
     responses(
-        (status = 200, body = MeResponse),
-        (status = 401, body = Problem, content_type = "application/problem+json"),
+        (status = 200, body = MeResponse, description = "The signed-in user"),
+        (status = 401, body = Problem, content_type = "application/problem+json", description = "Missing or invalid access token"),
     )
 )]
 pub async fn me(CurrentUser(user): CurrentUser) -> Json<MeResponse> {

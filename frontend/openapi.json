@@ -19,6 +19,7 @@
         "operationId": "config",
         "responses": {
           "200": {
+            "description": "Sign-in options",
             "content": {
               "application/json": {
                 "schema": {
@@ -59,6 +60,7 @@
             }
           },
           "401": {
+            "description": "Invalid credentials",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -78,6 +80,7 @@
             }
           },
           "429": {
+            "description": "Too many attempts",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -97,7 +100,9 @@
         "summary": "Signs out: revokes the session and clears the cookie.",
         "operationId": "logout",
         "responses": {
-          "204": {}
+          "204": {
+            "description": "Signed out; clears the refresh cookie"
+          }
         }
       }
     },
@@ -111,26 +116,20 @@
         "parameters": [
           {
             "name": "redirect",
-            "in": "path",
+            "in": "query",
             "description": "Local path to open after signing in.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "remember",
-            "in": "path",
+            "in": "query",
             "description": "\"Keep me signed in\".",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "boolean",
-                "null"
-              ]
+              "type": "boolean"
             }
           }
         ],
@@ -151,35 +150,26 @@
         "parameters": [
           {
             "name": "code",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "state",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "error",
-            "in": "path",
-            "required": true,
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -199,6 +189,7 @@
         "operationId": "refresh_session",
         "responses": {
           "200": {
+            "description": "Session renewed; rotates the refresh cookie",
             "content": {
               "application/json": {
                 "schema": {
@@ -208,6 +199,7 @@
             }
           },
           "401": {
+            "description": "Missing, expired or revoked refresh cookie",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -228,6 +220,7 @@
         "operationId": "me",
         "responses": {
           "200": {
+            "description": "The signed-in user",
             "content": {
               "application/json": {
                 "schema": {
@@ -237,6 +230,7 @@
             }
           },
           "401": {
+            "description": "Missing or invalid access token",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -272,7 +266,7 @@
         "tags": [
           "operational"
         ],
-        "summary": "Readiness: the database is reachable and every migration is applied.",
+        "summary": "Readiness: the database is reachable and every migration this binary knows\nis applied. Migrations applied by a newer release are ignored, so pods of\nthe previous release stay ready during a rolling upgrade.",
         "operationId": "readyz",
         "responses": {
           "200": {

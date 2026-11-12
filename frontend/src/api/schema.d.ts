@@ -150,7 +150,11 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Readiness: the database is reachable and every migration is applied. */
+    /**
+     * Readiness: the database is reachable and every migration this binary knows
+     *     is applied. Migrations applied by a newer release are ignored, so pods of
+     *     the previous release stay ready during a rolling upgrade.
+     */
     get: operations['readyz'];
     put?: never;
     post?: never;
@@ -233,6 +237,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description Sign-in options */
       200: {
         headers: {
           [name: string]: unknown;
@@ -265,6 +270,7 @@ export interface operations {
           'application/json': components['schemas']['SessionResponse'];
         };
       };
+      /** @description Invalid credentials */
       401: {
         headers: {
           [name: string]: unknown;
@@ -282,6 +288,7 @@ export interface operations {
           'application/problem+json': components['schemas']['Problem'];
         };
       };
+      /** @description Too many attempts */
       429: {
         headers: {
           [name: string]: unknown;
@@ -301,6 +308,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description Signed out; clears the refresh cookie */
       204: {
         headers: {
           [name: string]: unknown;
@@ -311,14 +319,14 @@ export interface operations {
   };
   oidc_start: {
     parameters: {
-      query?: never;
-      header?: never;
-      path: {
+      query?: {
         /** @description Local path to open after signing in. */
-        redirect: string | null;
+        redirect?: string;
         /** @description "Keep me signed in". */
-        remember: boolean | null;
+        remember?: boolean;
       };
+      header?: never;
+      path?: never;
       cookie?: never;
     };
     requestBody?: never;
@@ -334,13 +342,13 @@ export interface operations {
   };
   oidc_callback: {
     parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        code: string | null;
-        state: string | null;
-        error: string | null;
+      query?: {
+        code?: string;
+        state?: string;
+        error?: string;
       };
+      header?: never;
+      path?: never;
       cookie?: never;
     };
     requestBody?: never;
@@ -363,6 +371,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description Session renewed; rotates the refresh cookie */
       200: {
         headers: {
           [name: string]: unknown;
@@ -371,6 +380,7 @@ export interface operations {
           'application/json': components['schemas']['SessionResponse'];
         };
       };
+      /** @description Missing, expired or revoked refresh cookie */
       401: {
         headers: {
           [name: string]: unknown;
@@ -390,6 +400,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description The signed-in user */
       200: {
         headers: {
           [name: string]: unknown;
@@ -398,6 +409,7 @@ export interface operations {
           'application/json': components['schemas']['MeResponse'];
         };
       };
+      /** @description Missing or invalid access token */
       401: {
         headers: {
           [name: string]: unknown;

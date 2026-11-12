@@ -1,0 +1,52 @@
+# Development overlay for Minikube (scripts/deploy.sh). Never use in production.
+# ingress.host is passed by the script: retro.<minikube ip>.nip.io
+
+devMode:
+  enabled: true
+
+frontend:
+  replicas: 1
+  image:
+    repository: retro/frontend
+    tag: dev
+
+backend:
+  replicas: 1
+  image:
+    repository: retro/backend
+    tag: dev
+  runMigrations: startup
+  logLevel: info,retro_backend=debug
+  env:
+    APP_ENV: development
+    SEED_DEV_USERS: "true"
+    LOG_FORMAT: pretty
+    LOGIN_RATE_LIMIT: "1000"
+
+auth:
+  cookieSecure: false
+  jwtSecret: dev-jwt-secret-dev-jwt-secret-dev-jwt-secret
+  stateSecret: dev-state-secret-dev-state-secret-dev-state
+
+oidc:
+  enabled: true
+  # Empty: http://<ingress.host>/dex (the in-cluster dex).
+  issuerUrl: ""
+  clientId: retro
+  clientSecret: retro-dev-secret
+
+database:
+  # Empty: the in-cluster dev Postgres.
+  host: ""
+  user: retro
+  password: retro
+  sslMode: disable
+
+ingress:
+  host: retro.127.0.0.1.nip.io
+
+postgres:
+  enabled: true
+
+dex:
+  enabled: true

@@ -1,0 +1,110 @@
+{{- define "retro.dexConfig" -}}
+issuer: {{ include "retro.oidcIssuerUrl" . }}
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+staticClients:
+  - id: {{ .Values.oidc.clientId }}
+    name: Retro
+    secret: {{ .Values.oidc.clientSecret }}
+    redirectURIs:
+      - {{ include "retro.publicUrl" . }}/api/v1/auth/oidc/callback
+enablePasswordDB: true
+staticPasswords:
+  - email: alice@retro.local
+    # dex sends this as the `name` claim, synced to the display name.
+    username: Alice Rossi
+    # nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
+    hash: "$2y$10$o1g9gtZlpBRww2xJGU/iLuY3tuQW7xdDoP0kJeaNzB/u04fPXMbJu"
+    userID: 0193f1a0-0000-7000-8000-00000000a11c
+  - email: bob@retro.local
+    username: Bob Bianchi
+    # nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash
+    hash: "$2y$10$o1g9gtZlpBRww2xJGU/iLuY3tuQW7xdDoP0kJeaNzB/u04fPXMbJu"
+    userID: 0193f1a0-0000-7000-8000-000000000b0b
+{{- end -}}
+
+{{- if include "retro.devDex" . }}
+# Development only: dex as the OIDC provider, served on the app host under
+# /dex so the browser and the backend use the same issuer URL.
+# Static users mirror the backend's seeded accounts (password: "password").
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "retro.fullname" . }}-dex
+  labels:
+    {{- include "retro.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dex
+type: Opaque
+stringData:
+  config.yaml: |
+    {{- include "retro.dexConfig" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "retro.fullname" . }}-dex
+  labels:
+    {{- include "retro.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dex
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "retro.selectorLabels" (dict "root" . "component" "dex") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "retro.selectorLabels" (dict "root" . "component" "dex") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include "retro.dexConfig" . | sha256sum }}
+    spec:
+      containers:
+        - name: dex
+          image: "{{ .Values.dex.image.repository }}:{{ .Values.dex.image.tag }}"
+          imagePullPolicy: {{ .Values.dex.image.pullPolicy }}
+          args: ["dex", "serve", "/etc/dex/config.yaml"]
+          ports:
+            - name: http
+              containerPort: 5556
+          readinessProbe:
+            httpGet:
+              path: /dex/.well-known/openid-configuration
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/dex
+              readOnly: true
+            - name: data
+              mountPath: /var/dex
+          {{- with .Values.dex.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config
+          secret:
+            secretName: {{ include "retro.fullname" . }}-dex
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "retro.fullname" . }}-dex
+  labels:
+    {{- include "retro.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dex
+spec:
+  selector:
+    {{- include "retro.selectorLabels" (dict "root" . "component" "dex") | nindent 4 }}
+  ports:
+    - name: http
+      port: 5556
+      targetPort: http
+{{- end }}

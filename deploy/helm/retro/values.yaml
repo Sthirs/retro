@@ -1,0 +1,134 @@
+# Default values for production. Development overrides live in values-dev.yaml.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Development mode: enables the dev-only services below (postgres, dex),
+# relaxes pod hardening and lets the backend seed demo users. Never in production.
+devMode:
+  enabled: false
+
+imagePullSecrets: []
+
+# External base URL. Defaults to http(s)://<ingress.host>.
+publicUrl: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+frontend:
+  replicas: 2
+  image:
+    repository: ghcr.io/sthirs/retro/frontend
+    # Defaults to the chart appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  resources: {}
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+backend:
+  replicas: 2
+  image:
+    repository: ghcr.io/sthirs/retro/backend
+    tag: ""
+    pullPolicy: IfNotPresent
+  # job: a Job per release applies migrations; pods wait on /readyz.
+  # startup: each pod migrates at startup (guarded by a PostgreSQL advisory lock).
+  # none: migrations are applied out of band.
+  runMigrations: job
+  logLevel: info
+  service:
+    port: 3000
+    metricsPort: 9090
+  resources: {}
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+  # Extra environment variables (name: value).
+  env: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+auth:
+  # Username/password sign-in against Retro's own accounts.
+  localLogin: true
+  # "Forgot password?" target on the sign-in page; hidden when empty.
+  passwordResetUrl: ""
+  cookieSecure: true
+  accessTokenTtlSeconds: 900
+  refreshTokenTtlSeconds: 2592000
+  sessionRefreshTtlSeconds: 43200
+  # Secret with JWT_SECRET, STATE_SECRET and (with OIDC) OIDC_CLIENT_SECRET.
+  # When empty, the chart creates one from the values below.
+  existingSecret: ""
+  jwtSecret: ""
+  stateSecret: ""
+
+oidc:
+  enabled: false
+  issuerUrl: ""
+  clientId: retro
+  clientSecret: ""
+  scopes: openid email profile
+  buttonText: Continue with single sign-on
+  # Create an account on first SSO sign-in for unknown users.
+  autoRegister: true
+
+# PostgreSQL is provisioned separately in production (spec §17.3).
+database:
+  host: ""
+  port: 5432
+  name: retro
+  user: retro
+  password: ""
+  sslMode: require
+  # Secret with DB_PASSWORD. When empty, the chart creates one from `password`.
+  existingSecret: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  host: retro.example.com
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+# --- Development only (rendered only when devMode.enabled) ---------------
+
+postgres:
+  enabled: false
+  image:
+    repository: postgres
+    tag: "18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395"
+    pullPolicy: IfNotPresent
+  resources: {}
+
+dex:
+  enabled: false
+  image:
+    repository: dexidp/dex
+    tag: "v2.46.1@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab"
+    pullPolicy: IfNotPresent
+  resources: {}

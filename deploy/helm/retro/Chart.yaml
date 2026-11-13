@@ -1,6 +1,8 @@
 apiVersion: v2
 name: retro
-description: Retro — team retrospectives (frontend, backend, ingress; dev-only Postgres and dex).
+description: >-
+  Retro — team retrospectives (frontend, backend, ingress; dev-only Postgres and
+  dex).
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.1.1
+appVersion: 0.1.1

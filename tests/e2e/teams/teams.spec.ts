@@ -132,9 +132,13 @@ test.describe('teams', () => {
     await confirm.getByRole('button', { name: 'Remove' }).click();
     await expect(settings.members).toHaveCount(1);
 
-    // Regenerating the link stops the old one from working.
-    await settings.regenerate.click();
+    // Removing bob regenerated the join link: his old link no longer works.
     await expect(settings.joinLink).not.toHaveValue(joinLink);
+    const afterRemoval = await settings.joinLink.inputValue();
+
+    // An admin can also regenerate it by hand.
+    await settings.regenerate.click();
+    await expect(settings.joinLink).not.toHaveValue(afterRemoval);
     await bob.goto(new URL(joinLink).pathname);
     await expect(bob.getByRole('heading', { level: 1 })).toHaveText(
       'This join link no longer works',

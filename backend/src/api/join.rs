@@ -8,10 +8,10 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use crate::{
-    api::{TeamRefDto, check_limit},
+    api::{TeamRefDto, check_limit, record_token_failure},
     auth::CurrentUser,
     domain::teams,
-    error::{AppError, AppResult, Problem},
+    error::{AppResult, Problem},
     state::AppState,
 };
 
@@ -41,17 +41,14 @@ pub async fn join_team(
     CurrentUser(user): CurrentUser,
     Path(token): Path<String>,
 ) -> AppResult<Json<JoinResponse>> {
-    let key = user.id.to_string();
-    check_limit(&state.token_limiter, &key)?;
-    match teams::join_with_token(&state.db, &token, user.id).await {
-        Ok((team, already_member)) => Ok(Json(JoinResponse {
-            team: team.into(),
-            already_member,
-        })),
-        Err(err @ AppError::NotFound(_)) => {
-            state.token_limiter.record_failure(&key);
-            Err(err)
-        }
-        Err(err) => Err(err),
-    }
+    check_limit(&state.token_limiter, &user.id.to_string())?;
+    let (team, already_member) = record_token_failure(
+        &state.token_limiter,
+        user.id,
+        teams::join_with_token(&state.db, &token, user.id).await,
+    )?;
+    Ok(Json(JoinResponse {
+        team: team.into(),
+        already_member,
+    }))
 }

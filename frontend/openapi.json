@@ -808,7 +808,7 @@
         "tags": [
           "invitations"
         ],
-        "summary": "Invites someone by email (any member). Returns the open invitation for\nthat email if there already is one.",
+        "summary": "Invites someone by email (any member). When that email already has an\nopen invitation, its inviter and admins get it back; other members get\n`already_invited`.",
         "operationId": "create_invitation",
         "parameters": [
           {
@@ -864,7 +864,7 @@
             }
           },
           "409": {
-            "description": "`already_member`",
+            "description": "`already_member`, or `already_invited` by another member",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1330,7 +1330,6 @@
         "required": [
           "id",
           "email",
-          "url",
           "expiresAt"
         ],
         "properties": {
@@ -1356,8 +1355,11 @@
             ]
           },
           "url": {
-            "type": "string",
-            "description": "Personal accept link (`/invite/{token}`) to share with the invitee."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Personal accept link (`/invite/{token}`) to share with the invitee.\nOnly for the inviter and admins (spec §6.1); `null` for other members."
           }
         }
       },

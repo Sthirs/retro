@@ -103,6 +103,39 @@ describe('TeamSettingsView', () => {
     expect(wrapper.text()).not.toContain('Revoke');
   });
 
+  it("does not offer another member's invitation link", async () => {
+    mockFetch(
+      routes('member', {
+        [`GET ${base}/invitations`]: {
+          status: 200,
+          body: [
+            invitation({ url: null }),
+            invitation({
+              id: 'inv-2',
+              email: 'omar@acme.dev',
+              invitedBy: { id: ALICE.id, displayName: 'Alice Rossi' },
+            }),
+          ],
+        },
+      }),
+    );
+    const { wrapper } = await renderAt(`/teams/${TEAM_ID}/settings`);
+    const rows = wrapper.findAll('[data-testid="pending-invitation"]');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.text()).not.toContain('Copy link');
+    expect(rows[1]?.text()).toContain('Copy link');
+  });
+
+  it('explains that another member already invited that email', async () => {
+    mockFetch(routes('member', { [`POST ${base}/invitations`]: problem(409, 'already_invited') }));
+    const { wrapper } = await renderAt(`/teams/${TEAM_ID}/settings`);
+    await wrapper.find('#inv-email').setValue('nina@acme.dev');
+    await submitFormOf(wrapper, '#inv-email');
+    await vi.waitFor(() =>
+      expect(wrapper.text()).toContain('This email already has an open invitation.'),
+    );
+  });
+
   it('renames the team', async () => {
     const { calls } = mockFetch(
       routes('admin', {

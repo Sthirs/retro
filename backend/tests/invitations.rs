@@ -2,10 +2,15 @@
 
 mod common;
 
+use axum::{
+    body::Body,
+    http::{Request, header},
+};
 use common::TestApp;
 use retro_backend::entities::invitation;
-use sea_orm::{ConnectionTrait, EntityTrait};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use serde_json::{Value, json};
+use tower::ServiceExt;
 
 struct Ctx {
     app: TestApp,
@@ -48,6 +53,42 @@ impl Ctx {
             .await;
         assert_eq!(res.status, 201, "{}", res.text());
         res.json()
+    }
+
+    /// Bob joins the team through its join link, as a member.
+    async fn bob_joins(&self) {
+        let link = self
+            .app
+            .get_with_token(
+                &format!("/api/v1/teams/{}/join-link", self.team),
+                &self.alice,
+            )
+            .await
+            .json();
+        let join_token = link["url"].as_str().unwrap().rsplit('/').next().unwrap();
+        let res = self
+            .app
+            .call(
+                "POST",
+                &format!("/api/v1/join/{join_token}"),
+                &self.bob,
+                None,
+            )
+            .await;
+        assert_eq!(res.status, 200, "{}", res.text());
+    }
+
+    async fn pending(&self) -> Vec<Value> {
+        self.app
+            .get_with_token(
+                &format!("/api/v1/teams/{}/invitations", self.team),
+                &self.alice,
+            )
+            .await
+            .json()
+            .as_array()
+            .unwrap()
+            .clone()
     }
 }
 
@@ -395,4 +436,143 @@ async fn unknown_tokens() {
         .await;
     assert_eq!(res.status, 404);
     assert_eq!(res.json()["code"], "invitation_not_found");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_invites_make_one_invitation() {
+    let ctx = setup().await;
+    let path = format!("/api/v1/teams/{}/invitations", ctx.team);
+    let mut tasks = Vec::new();
+    for _ in 0..10 {
+        let router = ctx.app.router.clone();
+        let request = Request::builder()
+            .method("POST")
+            .uri(&path)
+            .header(header::AUTHORIZATION, format!("Bearer {}", ctx.alice))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({ "email": "nina@acme.dev" }).to_string()))
+            .unwrap();
+        tasks.push(tokio::spawn(router.oneshot(request)));
+    }
+    for task in tasks {
+        assert_eq!(task.await.unwrap().unwrap().status(), 201);
+    }
+    let open = invitation::Entity::find()
+        .filter(invitation::Column::Email.eq("nina@acme.dev"))
+        .count(&ctx.app.db)
+        .await
+        .unwrap();
+    assert_eq!(open, 1);
+}
+
+#[tokio::test]
+async fn links_are_for_the_inviter_and_admins() {
+    let ctx = setup().await;
+    ctx.bob_joins().await;
+    let by_alice = ctx.invite(&ctx.alice, "nina@acme.dev").await;
+    let by_bob = ctx.invite(&ctx.bob, "omar@acme.dev").await;
+    assert!(by_bob["url"].is_string());
+
+    let list = ctx
+        .app
+        .get_with_token(&format!("/api/v1/teams/{}/invitations", ctx.team), &ctx.bob)
+        .await
+        .json();
+    let url_of = |id: &Value| {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == *id)
+            .unwrap()["url"]
+            .clone()
+    };
+    assert_eq!(url_of(&by_alice["id"]), Value::Null);
+    assert_eq!(url_of(&by_bob["id"]), by_bob["url"]);
+    // Admins see every link.
+    for inv in ctx.pending().await {
+        assert!(inv["url"].is_string());
+    }
+
+    // A member cannot get another person's open invitation back by re-inviting.
+    let res = ctx
+        .app
+        .call(
+            "POST",
+            &format!("/api/v1/teams/{}/invitations", ctx.team),
+            &ctx.bob,
+            Some(json!({ "email": "nina@acme.dev" })),
+        )
+        .await;
+    assert_eq!(res.status, 409);
+    assert_eq!(res.json()["code"], "already_invited");
+    // The admin gets the member's invitation back, with its link.
+    let again = ctx.invite(&ctx.alice, "omar@acme.dev").await;
+    assert_eq!(again["id"], by_bob["id"]);
+    assert_eq!(again["url"], by_bob["url"]);
+    assert_eq!(again["invitedBy"]["displayName"], "Bob Bianchi");
+}
+
+#[tokio::test]
+async fn reinviting_does_not_use_the_quota() {
+    let ctx = setup().await;
+    // More than the hourly quota (100) of re-invites for one email.
+    for _ in 0..105 {
+        ctx.invite(&ctx.alice, "nina@acme.dev").await;
+    }
+    ctx.invite(&ctx.alice, "omar@acme.dev").await;
+}
+
+#[tokio::test]
+async fn a_member_accepting_keeps_someone_elses_invitation_open() {
+    let ctx = setup().await;
+    ctx.bob_joins().await;
+    let inv = ctx.invite(&ctx.alice, "nina@acme.dev").await;
+    let res = ctx
+        .app
+        .call(
+            "POST",
+            &format!("/api/v1/invitations/{}/accept", token_of(&inv)),
+            &ctx.bob,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 200);
+    let pending = ctx.pending().await;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0]["id"], inv["id"]);
+}
+
+#[tokio::test]
+async fn joining_by_link_closes_the_invitation() {
+    let ctx = setup().await;
+    ctx.invite(&ctx.alice, "bob@retro.local").await;
+    ctx.bob_joins().await;
+    assert_eq!(ctx.pending().await, Vec::<Value>::new());
+    let me = ctx.app.get_with_token("/api/v1/me", &ctx.bob).await.json();
+    assert_eq!(me["invitations"], json!([]));
+}
+
+#[tokio::test]
+async fn mixed_case_invitations_reach_the_invitee() {
+    let ctx = setup().await;
+    ctx.invite(&ctx.alice, "Bob@Retro.Local").await;
+    let me = ctx.app.get_with_token("/api/v1/me", &ctx.bob).await.json();
+    assert_eq!(me["invitations"][0]["team"]["name"], "Platform Team");
+}
+
+#[tokio::test]
+async fn token_responses_are_not_cached() {
+    let ctx = setup().await;
+    let inv = ctx.invite(&ctx.alice, "nina@acme.dev").await;
+    let paths = [
+        "/api/v1/me".to_owned(),
+        format!("/api/v1/teams/{}/invitations", ctx.team),
+        format!("/api/v1/teams/{}/join-link", ctx.team),
+        format!("/api/v1/invitations/{}", token_of(&inv)),
+    ];
+    for path in paths {
+        let res = ctx.app.get_with_token(&path, &ctx.alice).await;
+        assert_eq!(res.status, 200, "{path}");
+        assert_eq!(res.headers["cache-control"], "no-store", "{path}");
+    }
 }

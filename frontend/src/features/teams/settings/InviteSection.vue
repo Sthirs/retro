@@ -74,7 +74,7 @@ function setEnabled(enabled: boolean): void {
 }
 
 async function copyInvitation(invitation: InvitationDto): Promise<void> {
-  if (await copyText(invitation.url)) {
+  if (invitation.url && (await copyText(invitation.url))) {
     copiedId.value = invitation.id;
     setTimeout(() => {
       if (copiedId.value === invitation.id) copiedId.value = null;
@@ -192,6 +192,7 @@ function meta(invitation: InvitationDto): string {
             <span class="item__meta">{{ meta(invitation) }}</span>
           </div>
           <AppButton
+            v-if="invitation.url"
             variant="ghost"
             size="compact"
             :aria-label="t('settings.pending.copyLabel', { email: invitation.email })"

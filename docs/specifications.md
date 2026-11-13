@@ -136,15 +136,18 @@ Authentication is performed by the **backend**, which issues Retro's own session
 
 - Any member can invite a user by entering their email address.
 - The backend creates an `Invitation` (team, email, inviter, token, expiry — default 7 days). **The application does not send emails.**
+- A team has at most one open invitation per email address. Inviting that address again gives the open invitation back to its inviter and to admins; other members get an "already invited" error.
 - The invitation appears in the invitee's **pending invitations** (user menu and onboarding screen) when they log in with an account whose email matches. They can accept or decline it there. Accepting makes them a member.
-- After creating an invitation, the inviter can copy its personal accept link (`/invite/{token}`) and share it through any channel. Opening the link takes the user through login (if needed) and then the acceptance step. The token in the link is the credential: whoever holds the link can accept it, whatever the email of their account. The acceptance step shows the email the invitation was sent to.
+- After creating an invitation, the inviter can copy its personal accept link (`/invite/{token}`) and share it through any channel. Only the inviter and admins can see that link; other members see the pending invitation without it. Opening the link takes the user through login (if needed) and then the acceptance step. The token in the link is the credential: whoever holds the link can accept it, whatever the email of their account. The acceptance step shows the email the invitation was sent to.
 - Invitations can be revoked by the inviter or by an admin. Accepting a revoked or expired invitation fails with a clear message.
+- When a user becomes a member by any route (invitation or join link), the open invitations to that team for their email are closed as accepted. A user who is already a member and opens someone else's invitation link does not use it up.
 
 ### 6.2 Join link
 
 - Each team can have a **join link** (a random, unguessable token).
 - Any authenticated user who opens the link joins the team as a member.
 - Any member can copy the join link. Admins can regenerate it (which invalidates the old one) or disable it.
+- The join link is regenerated automatically whenever a member leaves or is removed, so a former member cannot rejoin with the link they knew.
 
 ### 6.3 Meeting invite link
 
@@ -425,6 +428,7 @@ team_members(team_id → teams, user_id → users, role ENUM('admin','member'), 
 
 invitations(id, team_id → teams, email, token UNIQUE, invited_by → users,
             status ENUM('pending','accepted','declined','revoked','expired'), expires_at, created_at)
+    UNIQUE(team_id, email) WHERE status = 'pending'   -- one open invitation per email
 
 meetings(id, team_id → teams, created_by → users, facilitator_id → users,
          status ENUM('active','ended'),
@@ -779,7 +783,7 @@ Images and the Helm chart are pushed to the registry when a release is published
 
 - **Real-time latency**: events delivered to participants within 300 ms (p95) under normal load.
 - **Scale target**: meetings of up to 50 participants, 500 concurrent meetings per deployment.
-- **Security**: OWASP ASVS L1 baseline; server-side sanitization of rich text; CSP headers on the frontend; rate limiting on sign-in, invitation and join endpoints; size/type limits on uploads (default 5 MB, images only).
+- **Security**: OWASP ASVS L1 baseline; server-side sanitization of rich text; CSP headers on the frontend; rate limiting on sign-in, invitation and join endpoints; every `/api/v1` response carries `Cache-Control: no-store`, since responses hold tokens (access, refresh, invitation and join links); size/type limits on uploads (default 5 MB, images only).
 - **Privacy**: reflection authorship is never exposed through the API or WS. Logs never contain reflection content or tokens.
 - **Accessibility**: WCAG 2.1 AA. Every drag-and-drop interaction has a keyboard alternative (e.g. a "Move to…" menu).
 - **Browser support**: latest two versions of Chrome, Firefox, Safari and Edge.

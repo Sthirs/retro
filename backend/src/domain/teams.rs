@@ -304,7 +304,9 @@ pub async fn change_role(
 }
 
 /// Removes `target` from the team: an admin removing someone, or anyone
-/// leaving. When the last member leaves, the team is deleted.
+/// leaving. When the last member leaves, the team is deleted. Otherwise the
+/// join link is regenerated, so a former member cannot come back with the
+/// link they knew (spec §6.2).
 pub async fn remove_member(
     db: &(impl TransactionTrait + ConnectionTrait),
     team_id: Uuid,
@@ -312,6 +314,11 @@ pub async fn remove_member(
     target: Uuid,
 ) -> Result<(), AppError> {
     let txn = db.begin().await?;
+    // Team row first, then memberships: the same order as `join_with_token`.
+    team::Entity::find_by_id(team_id)
+        .lock_exclusive()
+        .one(&txn)
+        .await?;
     let rows = lock_members(&txn, team_id).await?;
     let Some(me) = rows.iter().find(|m| m.user_id == actor) else {
         return Err(AppError::NotFound("team_not_found"));
@@ -332,6 +339,13 @@ pub async fn remove_member(
             team_member::Entity::delete_by_id((team_id, target))
                 .exec(&txn)
                 .await?;
+            txn.execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "UPDATE teams SET join_token = $2, updated_at = now() \
+                 WHERE id = $1 AND join_token IS NOT NULL",
+                [team_id.into(), random_token().into()],
+            ))
+            .await?;
         }
     }
     txn.commit().await?;
@@ -418,20 +432,27 @@ pub async fn update_join_link(
     Ok(JoinLink { token, enabled })
 }
 
-/// Joins the team behind an enabled join link as a member. Returns the team
-/// and whether the user was already a member.
+/// Joins the team behind an enabled join link as a member, and closes the
+/// user's open invitations to it. Returns the team and whether the user was
+/// already a member.
 pub async fn join_with_token(
-    db: &impl ConnectionTrait,
+    db: &(impl TransactionTrait + ConnectionTrait),
     token: &str,
     user_id: Uuid,
 ) -> Result<(team::Model, bool), AppError> {
+    let txn = db.begin().await?;
+    // The row lock waits for a concurrent regeneration (member removal), after
+    // which the old token no longer matches.
     let team = team::Entity::find()
         .filter(team::Column::JoinToken.eq(token))
         .filter(team::Column::JoinEnabled.eq(true))
-        .one(db)
+        .lock_exclusive()
+        .one(&txn)
         .await?
         .ok_or(AppError::NotFound("join_link_invalid"))?;
-    let added = add_member(db, team.id, user_id).await?;
+    let added = add_member(&txn, team.id, user_id).await?;
+    crate::domain::invitations::close_for_member(&txn, team.id, user_id).await?;
+    txn.commit().await?;
     Ok((team, !added))
 }
 

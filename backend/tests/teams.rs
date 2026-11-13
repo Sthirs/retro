@@ -339,3 +339,55 @@ async fn deleting_a_team_cascades() {
         Value::Array(vec![])
     );
 }
+
+#[tokio::test]
+async fn removing_or_leaving_regenerates_the_join_link() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let carol = app
+        .create_user("carol", "carol@retro.local", "Carol Verdi")
+        .await;
+    let bob_id = user_id(&app, &bob).await;
+    let carol_id = user_id(&app, &carol).await;
+    let team = create_team(&app, &alice, "T").await;
+    let link = || async {
+        app.get_with_token(&format!("/api/v1/teams/{team}/join-link"), &alice)
+            .await
+            .json()["url"]
+            .as_str()
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    join(&app, &alice, &team, &bob).await;
+    join(&app, &alice, &team, &carol).await;
+
+    // An admin removes Carol: her old link no longer works.
+    let before = link().await;
+    let member = |id: &str| format!("/api/v1/teams/{team}/members/{id}");
+    assert_eq!(
+        app.call("DELETE", &member(&carol_id), &alice, None)
+            .await
+            .status,
+        204
+    );
+    let after_removal = link().await;
+    assert_ne!(after_removal, before);
+    let res = app
+        .call("POST", &format!("/api/v1/join/{before}"), &carol, None)
+        .await;
+    assert_eq!(res.status, 404);
+    assert_eq!(res.json()["code"], "join_link_invalid");
+
+    // Bob leaves on his own: the link changes too.
+    assert_eq!(
+        app.call("DELETE", &member(&bob_id), &bob, None)
+            .await
+            .status,
+        204
+    );
+    assert_ne!(link().await, after_removal);
+}

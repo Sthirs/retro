@@ -27,12 +27,7 @@ pub fn router(state: AppState) -> Router {
         .route("/refresh", post(api::auth::refresh_session))
         .route("/logout", post(api::auth::logout))
         .route("/oidc", get(api::auth::oidc_start))
-        .route("/oidc/callback", get(api::auth::oidc_callback))
-        // Responses carry tokens: never cache them.
-        .layer(SetResponseHeaderLayer::overriding(
-            header::CACHE_CONTROL,
-            HeaderValue::from_static("no-store"),
-        ));
+        .route("/oidc/callback", get(api::auth::oidc_callback));
 
     let v1 = Router::new()
         .nest("/auth", auth)
@@ -77,7 +72,13 @@ pub fn router(state: AppState) -> Router {
             post(api::invitations::decline_invitation),
         )
         .route("/join/{token}", post(api::join::join_team))
-        .route("/openapi.json", get(openapi_json));
+        .route("/openapi.json", get(openapi_json))
+        // Responses carry tokens and personal data (access and refresh tokens,
+        // invitation and join links): never cache any of them.
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ));
 
     Router::new()
         .route("/healthz", get(api::health::healthz))

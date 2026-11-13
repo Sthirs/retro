@@ -48,15 +48,30 @@ pub fn normalize_email(raw: &str) -> Result<String, AppError> {
     }
 }
 
-/// Creates an invitation (any member). An open invitation for the same email
-/// is returned instead of creating a second one.
+/// The result of [`create`].
+#[derive(Debug, Clone)]
+pub struct Created {
+    pub invitation: invitation::Model,
+    /// False when the open invitation for that email was returned instead.
+    pub created: bool,
+}
+
+/// Whether `actor` (with `role` in the team) may see the personal link of
+/// `invitation`: its inviter or an admin (spec §6.1).
+pub fn can_see_link(invitation: &invitation::Model, actor: Uuid, role: team_member::Role) -> bool {
+    invitation.invited_by == Some(actor) || role == team_member::Role::Admin
+}
+
+/// Creates an invitation (any member). A team has at most one open invitation
+/// per email (a partial unique index enforces it): when one exists, its
+/// inviter and admins get it back; other members get `already_invited`.
 pub async fn create(
-    db: &impl ConnectionTrait,
+    db: &(impl TransactionTrait + ConnectionTrait),
     team_id: Uuid,
     actor: Uuid,
     email: &str,
-) -> Result<invitation::Model, AppError> {
-    teams::require_member(db, team_id, actor).await?;
+) -> Result<Created, AppError> {
+    let role = teams::require_member(db, team_id, actor).await?;
     let email = normalize_email(email)?;
 
     if let Some(existing_user) = user::Entity::find()
@@ -72,38 +87,93 @@ pub async fn create(
     }
 
     let now = OffsetDateTime::now_utc();
-    if let Some(open) = invitation::Entity::find()
-        .filter(invitation::Column::TeamId.eq(team_id))
-        .filter(invitation::Column::Email.eq(email.clone()))
-        .filter(invitation::Column::Status.eq(InvitationStatus::Pending))
-        .filter(invitation::Column::ExpiresAt.gt(now))
-        .one(db)
+    let txn = db.begin().await?;
+    // A pending row past its expiry would block the unique index.
+    txn.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE invitations SET status = 'expired'
+         WHERE team_id = $1 AND email = $2 AND status = 'pending' AND expires_at <= $3",
+        [team_id.into(), email.clone().into(), now.into()],
+    ))
+    .await?;
+    // Concurrent requests for the same email wait on the index and insert nothing.
+    let inserted = txn
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "INSERT INTO invitations (id, team_id, email, token, invited_by, status, expires_at, created_at)
+             VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
+             ON CONFLICT (team_id, email) WHERE status = 'pending' DO NOTHING
+             RETURNING id",
+            [
+                Uuid::now_v7().into(),
+                team_id.into(),
+                email.clone().into(),
+                random_token().into(),
+                actor.into(),
+                (now + INVITATION_TTL).into(),
+                now.into(),
+            ],
+        ))
         .await?
-    {
-        return Ok(open);
-    }
+        .map(|row| row.try_get::<Uuid>("", "id"))
+        .transpose()?;
 
-    Ok(invitation::ActiveModel {
-        id: Set(Uuid::now_v7()),
-        team_id: Set(team_id),
-        email: Set(email),
-        token: Set(random_token()),
-        invited_by: Set(Some(actor)),
-        status: Set(InvitationStatus::Pending),
-        expires_at: Set(now + INVITATION_TTL),
-        created_at: Set(now),
+    let created = inserted.is_some();
+    let invitation = match inserted {
+        Some(id) => invitation::Entity::find_by_id(id).one(&txn).await?,
+        None => {
+            invitation::Entity::find()
+                .filter(invitation::Column::TeamId.eq(team_id))
+                .filter(invitation::Column::Email.eq(email))
+                .filter(invitation::Column::Status.eq(InvitationStatus::Pending))
+                .one(&txn)
+                .await?
+        }
     }
-    .insert(db)
-    .await?)
+    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("open invitation vanished")))?;
+    txn.commit().await?;
+
+    if !created && !can_see_link(&invitation, actor, role) {
+        return Err(AppError::Conflict("already_invited"));
+    }
+    Ok(Created {
+        invitation,
+        created,
+    })
 }
 
-/// Open invitations of a team with their inviter, newest first (any member).
+/// Marks the open invitations addressed to `user_id`'s email in a team as
+/// accepted, once that user is a member (spec §6.1).
+pub async fn close_for_member(
+    db: &impl ConnectionTrait,
+    team_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), AppError> {
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "UPDATE invitations SET status = 'accepted'
+         WHERE team_id = $1 AND status = 'pending'
+           AND email = (SELECT email FROM users WHERE id = $2)",
+        [team_id.into(), user_id.into()],
+    ))
+    .await?;
+    Ok(())
+}
+
+/// Open invitations of a team with their inviter, newest first (any member),
+/// and the caller's role.
 pub async fn list_pending(
     db: &impl ConnectionTrait,
     team_id: Uuid,
     actor: Uuid,
-) -> Result<Vec<(invitation::Model, Option<user::Model>)>, AppError> {
-    teams::require_member(db, team_id, actor).await?;
+) -> Result<
+    (
+        team_member::Role,
+        Vec<(invitation::Model, Option<user::Model>)>,
+    ),
+    AppError,
+> {
+    let role = teams::require_member(db, team_id, actor).await?;
     let rows = invitation::Entity::find()
         .filter(invitation::Column::TeamId.eq(team_id))
         .filter(invitation::Column::Status.eq(InvitationStatus::Pending))
@@ -112,13 +182,15 @@ pub async fn list_pending(
         .all(db)
         .await?;
     let inviters = teams::users_by_id(db, rows.iter().filter_map(|i| i.invited_by)).await?;
-    Ok(rows
-        .into_iter()
-        .map(|i| {
-            let inviter = i.invited_by.and_then(|id| inviters.get(&id).cloned());
-            (i, inviter)
-        })
-        .collect())
+    Ok((
+        role,
+        rows.into_iter()
+            .map(|i| {
+                let inviter = i.invited_by.and_then(|id| inviters.get(&id).cloned());
+                (i, inviter)
+            })
+            .collect(),
+    ))
 }
 
 /// Revokes an open invitation: its inviter or a team admin.
@@ -214,8 +286,9 @@ fn unusable(status: InvitationStatus) -> AppError {
     }
 }
 
-/// Accepts an invitation: the caller becomes a member. Accepting while
-/// already a member succeeds.
+/// Accepts an invitation: the caller becomes a member, and their other open
+/// invitations to the team close. Accepting while already a member succeeds
+/// without using up an invitation addressed to someone else.
 pub async fn accept(
     db: &(impl TransactionTrait + ConnectionTrait),
     token: &str,
@@ -239,11 +312,18 @@ pub async fn accept(
         .is_some();
 
     match status {
+        // Someone else's invitation stays open for its invitee.
+        InvitationStatus::Pending if is_member => {
+            close_for_member(&txn, team.id, user_id).await?;
+            txn.commit().await?;
+            Ok(team)
+        }
         InvitationStatus::Pending => {
             teams::add_member(&txn, team.id, user_id).await?;
             let mut active: invitation::ActiveModel = invitation.into();
             active.status = Set(InvitationStatus::Accepted);
             active.update(&txn).await?;
+            close_for_member(&txn, team.id, user_id).await?;
             txn.commit().await?;
             Ok(team)
         }

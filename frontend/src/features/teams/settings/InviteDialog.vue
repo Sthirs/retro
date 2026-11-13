@@ -87,7 +87,7 @@ async function create(): Promise<void> {
       </span>
       <CopyField
         id="invitation-link"
-        :value="invitation.url"
+        :value="invitation.url ?? ''"
         :label="t('settings.inviteDialog.link')"
         :show-label="false"
         :button-label="t('settings.inviteDialog.copyLink')"

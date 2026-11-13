@@ -81,3 +81,16 @@ pub(crate) fn check_limit(
         Ok(())
     }
 }
+
+/// Counts a failed token lookup (`NotFound`) against `user_id` on `limiter`,
+/// so unknown invitation and join tokens cannot be guessed at speed.
+pub(crate) fn record_token_failure<T>(
+    limiter: &crate::auth::rate_limit::RateLimiter,
+    user_id: Uuid,
+    result: crate::error::AppResult<T>,
+) -> crate::error::AppResult<T> {
+    if let Err(crate::error::AppError::NotFound(_)) = &result {
+        limiter.record_failure(&user_id.to_string());
+    }
+    result
+}

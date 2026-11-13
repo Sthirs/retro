@@ -40,8 +40,12 @@ export interface InvitationDto {
   expiresAt: string;
   id: string;
   invitedBy?: PersonDto | null;
-  /** Personal accept link (`/invite/{token}`) to share with the invitee. */
-  url: string;
+  /**
+   * Personal accept link (`/invite/{token}`) to share with the invitee.
+   * Only for the inviter and admins (spec §6.1); `null` for other members.
+   * @nullable
+   */
+  url?: string | null;
 }
 
 /**
@@ -996,8 +1000,9 @@ export const getCreateInvitationUrl = (teamId: string) => {
 };
 
 /**
- * @summary Invites someone by email (any member). Returns the open invitation for
-that email if there already is one.
+ * @summary Invites someone by email (any member). When that email already has an
+open invitation, its inviter and admins get it back; other members get
+`already_invited`.
  */
 export const createInvitation = async (
   teamId: string,

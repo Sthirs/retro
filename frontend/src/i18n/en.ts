@@ -19,6 +19,7 @@ export default {
     invalid_team_name: 'Enter a team name of up to 60 characters.',
     invalid_email: 'Enter a valid email address.',
     already_member: 'This person is already a member of the team.',
+    already_invited: 'This email already has an open invitation.',
     last_admin: 'Every team needs at least one admin. Make someone else an admin first.',
     forbidden: "You don't have permission to do that.",
     team_not_found: 'This team no longer exists or you are no longer a member.',

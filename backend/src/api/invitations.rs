@@ -12,14 +12,14 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
-    api::{PersonDto, TeamRefDto, check_limit},
+    api::{PersonDto, TeamRefDto, check_limit, record_token_failure},
     auth::CurrentUser,
-    domain::invitations,
+    domain::{invitations, teams},
     entities::{
         invitation::{self, InvitationStatus},
         user,
     },
-    error::{AppError, AppResult, Problem},
+    error::{AppResult, Problem},
     state::AppState,
 };
 
@@ -35,7 +35,8 @@ pub struct InvitationDto {
     pub id: Uuid,
     pub email: String,
     /// Personal accept link (`/invite/{token}`) to share with the invitee.
-    pub url: String,
+    /// Only for the inviter and admins (spec §6.1); `null` for other members.
+    pub url: Option<String>,
     pub invited_by: Option<PersonDto>,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
@@ -46,10 +47,11 @@ fn invitation_dto(
     state: &AppState,
     invitation: invitation::Model,
     inviter: Option<user::Model>,
+    with_link: bool,
 ) -> InvitationDto {
     InvitationDto {
         id: invitation.id,
-        url: invite_url(state, &invitation.token),
+        url: with_link.then(|| invite_url(state, &invitation.token)),
         email: invitation.email,
         invited_by: inviter.map(Into::into),
         expires_at: invitation.expires_at,
@@ -108,16 +110,9 @@ impl From<invitations::PendingForUser> for PendingInvitationDto {
     }
 }
 
-/// Counts failed token lookups against the caller.
-fn record_token_failure<T>(state: &AppState, user_id: Uuid, result: AppResult<T>) -> AppResult<T> {
-    if let Err(AppError::NotFound(_)) = &result {
-        state.token_limiter.record_failure(&user_id.to_string());
-    }
-    result
-}
-
-/// Invites someone by email (any member). Returns the open invitation for
-/// that email if there already is one.
+/// Invites someone by email (any member). When that email already has an
+/// open invitation, its inviter and admins get it back; other members get
+/// `already_invited`.
 #[utoipa::path(
     post,
     path = "/api/v1/teams/{team_id}/invitations",
@@ -129,7 +124,7 @@ fn record_token_failure<T>(state: &AppState, user_id: Uuid, result: AppResult<T>
         (status = 201, body = InvitationDto, description = "The invitation and its personal link"),
         (status = 400, body = Problem, content_type = "application/problem+json", description = "`invalid_email`"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "`team_not_found`"),
-        (status = 409, body = Problem, content_type = "application/problem+json", description = "`already_member`"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`already_member`, or `already_invited` by another member"),
         (status = 429, body = Problem, content_type = "application/problem+json", description = "Too many invitations"),
     )
 )]
@@ -141,9 +136,18 @@ pub async fn create_invitation(
 ) -> AppResult<(StatusCode, Json<InvitationDto>)> {
     let key = user.id.to_string();
     check_limit(&state.invite_limiter, &key)?;
-    let invitation = invitations::create(&state.db, team_id, user.id, &body.email).await?;
-    state.invite_limiter.record_failure(&key);
-    let dto = invitation_dto(&state, invitation, Some(user));
+    let created = invitations::create(&state.db, team_id, user.id, &body.email).await?;
+    // The quota counts new invitations only, not an open one given back.
+    if created.created {
+        state.invite_limiter.record_failure(&key);
+    }
+    let invitation = created.invitation;
+    let inviter = match invitation.invited_by {
+        Some(id) if id == user.id => Some(user),
+        Some(id) => teams::users_by_id(&state.db, [id]).await?.remove(&id),
+        None => None,
+    };
+    let dto = invitation_dto(&state, invitation, inviter, true);
     Ok((StatusCode::CREATED, Json(dto)))
 }
 
@@ -164,10 +168,13 @@ pub async fn list_invitations(
     CurrentUser(user): CurrentUser,
     Path(team_id): Path<Uuid>,
 ) -> AppResult<Json<Vec<InvitationDto>>> {
-    let rows = invitations::list_pending(&state.db, team_id, user.id).await?;
+    let (role, rows) = invitations::list_pending(&state.db, team_id, user.id).await?;
     Ok(Json(
         rows.into_iter()
-            .map(|(i, inviter)| invitation_dto(&state, i, inviter))
+            .map(|(i, inviter)| {
+                let with_link = invitations::can_see_link(&i, user.id, role);
+                invitation_dto(&state, i, inviter, with_link)
+            })
             .collect(),
     ))
 }
@@ -217,7 +224,7 @@ pub async fn get_invitation(
 ) -> AppResult<Json<InvitationPreviewDto>> {
     check_limit(&state.token_limiter, &user.id.to_string())?;
     let preview = record_token_failure(
-        &state,
+        &state.token_limiter,
         user.id,
         invitations::preview(&state.db, &token, user.id).await,
     )?;
@@ -254,7 +261,7 @@ pub async fn accept_invitation(
 ) -> AppResult<Json<TeamRefDto>> {
     check_limit(&state.token_limiter, &user.id.to_string())?;
     let team = record_token_failure(
-        &state,
+        &state.token_limiter,
         user.id,
         invitations::accept(&state.db, &token, user.id).await,
     )?;
@@ -282,7 +289,7 @@ pub async fn decline_invitation(
 ) -> AppResult<StatusCode> {
     check_limit(&state.token_limiter, &user.id.to_string())?;
     record_token_failure(
-        &state,
+        &state.token_limiter,
         user.id,
         invitations::decline(&state.db, &token).await,
     )?;

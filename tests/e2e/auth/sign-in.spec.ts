@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { PASSWORD, USERS } from '../fixtures';
 import { DexLoginPage, SignInPage } from '../pages/SignInPage';
+import { AppShell } from '../pages/AppShell';
 
 test.describe('Sign in', () => {
   test('redirects signed-out visitors to the sign-in page', async ({ page }) => {
@@ -26,10 +27,10 @@ test.describe('Sign in', () => {
     await signIn.goto();
     await signIn.signIn(USERS.alice.username, PASSWORD);
 
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(AppShell.HOME);
     await expect(page.getByTestId('current-user')).toHaveText(USERS.alice.name);
 
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await new AppShell(page).logOut();
     await expect(page).toHaveURL(/\/login$/);
     await page.goto('/');
     await expect(page).toHaveURL(/\/login$/);
@@ -84,7 +85,7 @@ test.describe('Sign in', () => {
     const signIn = new SignInPage(page);
     await signIn.goto('?redirect=%2F');
     await signIn.signIn(USERS.alice.username, PASSWORD);
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(AppShell.HOME);
   });
 
   test('signs in with single sign-on through dex', async ({ page }) => {
@@ -93,7 +94,7 @@ test.describe('Sign in', () => {
     await signIn.sso.click();
     await new DexLoginPage(page).signIn(USERS.bob.email, PASSWORD);
 
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(AppShell.HOME);
     await expect(page.getByTestId('current-user')).toHaveText(USERS.bob.name);
     // No token ever lands in the URL.
     expect(page.url()).not.toContain('token');

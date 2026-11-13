@@ -28,3 +28,5 @@ tests/e2e/.auth/
 
 # Design canvas, downloaded locally for reference
 .design/
+
+.claude/settings.local.json

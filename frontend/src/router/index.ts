@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type Router, type RouterHistory } from 
 
 import { safeRedirect } from '@/lib/redirect';
 import { useSessionStore } from '@/stores/session';
+import { useTeamsStore } from '@/stores/teams';
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -28,10 +29,58 @@ export function buildRouter(history: RouterHistory = createWebHistory()): Router
         component: () => import('@/features/auth/AuthCallbackView.vue'),
       },
       {
+        // The last used team, or onboarding when the user has none (spec §15.2).
         path: '/',
         name: 'home',
-        component: () => import('@/features/home/HomeView.vue'),
+        component: () => import('@/features/onboarding/OnboardingView.vue'),
         meta: { requiresAuth: true },
+        beforeEnter: async () => {
+          const teams = useTeamsStore();
+          try {
+            await teams.ensureLoaded();
+          } catch {
+            return true;
+          }
+          const team = teams.defaultTeam();
+          return team ? { name: 'team-meetings', params: { teamId: team.id } } : true;
+        },
+      },
+      {
+        path: '/invite/:token',
+        name: 'invitation',
+        component: () => import('@/features/invitations/InvitationView.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: '/join/:joinToken',
+        name: 'join',
+        component: () => import('@/features/invitations/JoinView.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        path: '/teams/:teamId',
+        component: () => import('@/components/layout/AppShell.vue'),
+        meta: { requiresAuth: true },
+        children: [
+          { path: '', redirect: (to) => ({ name: 'team-meetings', params: to.params }) },
+          {
+            path: 'meetings',
+            name: 'team-meetings',
+            component: () => import('@/features/teams/ComingSoonView.vue'),
+            props: { section: 'meetings' },
+          },
+          {
+            path: 'tasks',
+            name: 'team-tasks',
+            component: () => import('@/features/teams/ComingSoonView.vue'),
+            props: { section: 'tasks' },
+          },
+          {
+            path: 'settings',
+            name: 'team-settings',
+            component: () => import('@/features/teams/TeamSettingsView.vue'),
+          },
+        ],
       },
       { path: '/:pathMatch(.*)*', redirect: '/' },
     ],
@@ -45,6 +94,18 @@ export function buildRouter(history: RouterHistory = createWebHistory()): Router
     }
     if (to.meta.guestOnly && session.isAuthenticated) {
       return safeRedirect(to.query.redirect);
+    }
+    const teamId = to.params.teamId;
+    if (typeof teamId === 'string') {
+      // Only members see a team (spec §5.1): anything else goes home.
+      const teams = useTeamsStore();
+      try {
+        await teams.ensureLoaded();
+      } catch {
+        return { name: 'home' };
+      }
+      if (!teams.byId(teamId)) return { name: 'home' };
+      teams.remember(teamId);
     }
     return true;
   });

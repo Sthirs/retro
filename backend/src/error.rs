@@ -34,6 +34,20 @@ pub enum AppError {
     Disabled(&'static str),
     #[error("bad request: {0}")]
     BadRequest(String),
+    /// A rejected input field, with a stable code such as `invalid_team_name`.
+    #[error("invalid input: {0}")]
+    Invalid(&'static str),
+    /// The resource does not exist or the caller may not see it.
+    #[error("not found: {0}")]
+    NotFound(&'static str),
+    #[error("forbidden")]
+    Forbidden,
+    /// The request conflicts with the current state, e.g. `last_admin`.
+    #[error("conflict: {0}")]
+    Conflict(&'static str),
+    /// The resource existed but can no longer be used, e.g. `invitation_expired`.
+    #[error("gone: {0}")]
+    Gone(&'static str),
     #[error("service unavailable: {0}")]
     Unavailable(String),
     #[error(transparent)]
@@ -54,7 +68,7 @@ impl AppError {
             Self::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "too_many_requests",
-                Some("Too many sign-in attempts. Try again in a few minutes.".into()),
+                Some("Too many attempts. Try again in a few minutes.".into()),
             ),
             Self::Disabled(what) => (
                 StatusCode::NOT_FOUND,
@@ -64,6 +78,11 @@ impl AppError {
             Self::BadRequest(detail) => {
                 (StatusCode::BAD_REQUEST, "bad_request", Some(detail.clone()))
             }
+            Self::Invalid(code) => (StatusCode::BAD_REQUEST, code, None),
+            Self::NotFound(code) => (StatusCode::NOT_FOUND, code, None),
+            Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden", None),
+            Self::Conflict(code) => (StatusCode::CONFLICT, code, None),
+            Self::Gone(code) => (StatusCode::GONE, code, None),
             Self::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "unavailable", None),
             Self::Database(_) | Self::Internal(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal", None)

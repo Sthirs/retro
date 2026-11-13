@@ -5,8 +5,6 @@
 //! same family. Presenting a revoked token again revokes the whole family,
 //! except within a short grace window that absorbs two tabs refreshing at once.
 
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use rand::Rng;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Set,
     TransactionSession, TransactionTrait, sea_query::Expr,
@@ -58,12 +56,6 @@ pub fn hash_token(token: &str) -> String {
         .collect()
 }
 
-fn generate() -> String {
-    let mut bytes = [0u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    URL_SAFE_NO_PAD.encode(bytes)
-}
-
 fn ttl(config: &Config, persistent: bool) -> Duration {
     Duration::seconds(if persistent {
         config.refresh_token_ttl_seconds
@@ -90,7 +82,7 @@ async fn insert(
     family_id: Uuid,
     persistent: bool,
 ) -> Result<(Issued, Uuid), AppError> {
-    let token = generate();
+    let token = crate::domain::random_token();
     let now = OffsetDateTime::now_utc();
     let expires_at = now + ttl(config, persistent);
     let id = Uuid::now_v7();
@@ -238,18 +230,6 @@ mod tests {
         assert_eq!(
             classify(&token(Some(1), false, 60), now, 10),
             Decision::Reuse
-        );
-    }
-
-    #[test]
-    fn generates_unique_url_safe_tokens() {
-        let a = generate();
-        let b = generate();
-        assert_ne!(a, b);
-        assert_eq!(a.len(), 43);
-        assert!(
-            a.chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         );
     }
 

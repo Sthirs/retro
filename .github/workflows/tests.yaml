@@ -194,6 +194,12 @@ jobs:
           minikube image load "$dir/backend.tar"
           minikube image load "$dir/frontend.tar"
 
+      # The dev cluster serves HTTPS with a mkcert certificate (ADR-0007).
+      - name: Install mkcert
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mkcert
+
       - name: Deploy with Helm
         run: HELM_TIMEOUT=8m scripts/deploy.sh
 
@@ -201,7 +207,8 @@ jobs:
         run: |
           host="$(scripts/dev-host.sh)"
           for i in $(seq 1 30); do
-            if curl -sf "http://${host}/api/v1/auth/config" > /dev/null; then
+            if curl -sf --cacert "$(mkcert -CAROOT)/rootCA.pem" \
+              "https://${host}/api/v1/auth/config" > /dev/null; then
               echo "Backend is ready"
               exit 0
             fi
@@ -211,7 +218,7 @@ jobs:
           exit 1
 
       - name: Run Playwright tests
-        run: scripts/test-playwright.sh "http://$(scripts/dev-host.sh)"
+        run: scripts/test-playwright.sh "https://$(scripts/dev-host.sh)"
 
       - name: Upload Playwright report
         if: failure()

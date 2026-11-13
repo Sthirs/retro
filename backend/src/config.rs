@@ -4,6 +4,7 @@
 
 use std::net::SocketAddr;
 
+use openidconnect::reqwest::Certificate;
 use url::Url;
 
 /// Source of configuration variables (the process environment, or a map in tests).
@@ -68,6 +69,9 @@ pub struct OidcConfig {
     pub scopes: Vec<String>,
     pub button_text: String,
     pub auto_register: bool,
+    /// Extra root CAs trusted for calls to the provider, besides the public
+    /// web PKI (`OIDC_CA_CERT_FILE`, e.g. a private CA or the dev mkcert CA).
+    pub ca_certs: Vec<Certificate>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,7 +89,6 @@ pub struct Config {
     pub refresh_token_ttl_seconds: i64,
     pub session_refresh_ttl_seconds: i64,
     pub refresh_reuse_grace_seconds: i64,
-    pub cookie_secure: bool,
     /// Failed sign-in attempts allowed per login name and per client IP in 5 minutes.
     pub login_rate_limit: u32,
     pub local_login_enabled: bool,
@@ -194,6 +197,11 @@ impl Config {
                     .str("OIDC_BUTTON_TEXT")
                     .unwrap_or_else(|| "Continue with single sign-on".into()),
                 auto_register: r.parse::<bool>("OIDC_AUTO_REGISTER")?.unwrap_or(true),
+                ca_certs: r
+                    .str("OIDC_CA_CERT_FILE")
+                    .map(|path| ca_certs("OIDC_CA_CERT_FILE", &path))
+                    .transpose()?
+                    .unwrap_or_default(),
             })
         } else {
             None
@@ -230,7 +238,6 @@ impl Config {
                 .parse("SESSION_REFRESH_TTL_SECONDS")?
                 .unwrap_or(12 * 3600),
             refresh_reuse_grace_seconds: r.parse("REFRESH_REUSE_GRACE_SECONDS")?.unwrap_or(10),
-            cookie_secure: r.parse("COOKIE_SECURE")?.unwrap_or(true),
             login_rate_limit: r.parse("LOGIN_RATE_LIMIT")?.unwrap_or(10),
             local_login_enabled: r.parse("AUTH_LOCAL_LOGIN_ENABLED")?.unwrap_or(true),
             password_reset_url: r
@@ -262,7 +269,6 @@ impl Config {
             refresh_token_ttl_seconds: 30 * 24 * 3600,
             session_refresh_ttl_seconds: 12 * 3600,
             refresh_reuse_grace_seconds: 0,
-            cookie_secure: false,
             login_rate_limit: 1000,
             local_login_enabled: true,
             password_reset_url: None,
@@ -281,6 +287,17 @@ fn secret(name: &'static str, value: Option<String>) -> Result<String, ConfigErr
         });
     }
     Ok(value)
+}
+
+/// Reads a PEM bundle of one or more CA certificates.
+fn ca_certs(name: &'static str, path: &str) -> Result<Vec<Certificate>, ConfigError> {
+    let invalid = |reason: String| ConfigError::Invalid { name, reason };
+    let pem = std::fs::read(path).map_err(|e| invalid(format!("cannot read {path}: {e}")))?;
+    let certs = Certificate::from_pem_bundle(&pem).map_err(|e| invalid(e.to_string()))?;
+    if certs.is_empty() {
+        return Err(invalid(format!("no PEM certificate in {path}")));
+    }
+    Ok(certs)
 }
 
 fn parse_url(name: &'static str, value: &str) -> Result<Url, ConfigError> {
@@ -332,7 +349,6 @@ mod tests {
             "postgres://retro:p%40ss%20word@db:5432/retro?sslmode=require"
         );
         assert_eq!(cfg.app_env, AppEnv::Production);
-        assert!(cfg.cookie_secure);
         assert!(cfg.oidc.is_none());
     }
 
@@ -362,11 +378,11 @@ mod tests {
     #[test]
     fn rejects_invalid_booleans() {
         let mut vars = base();
-        vars.insert("COOKIE_SECURE", "maybe");
+        vars.insert("AUTH_LOCAL_LOGIN_ENABLED", "maybe");
         assert!(matches!(
             Config::from_vars(&vars),
             Err(ConfigError::Invalid {
-                name: "COOKIE_SECURE",
+                name: "AUTH_LOCAL_LOGIN_ENABLED",
                 ..
             })
         ));
@@ -395,6 +411,52 @@ mod tests {
         let oidc = Config::from_vars(&vars).unwrap().oidc.unwrap();
         assert_eq!(oidc.scopes, vec!["email", "profile"]);
         assert!(oidc.auto_register);
+    }
+
+    #[test]
+    fn loads_extra_oidc_ca_certificates() {
+        let mut vars = base();
+        vars.insert("OIDC_ENABLED", "true");
+        vars.insert("OIDC_ISSUER_URL", "https://retro.local/dex");
+        vars.insert("OIDC_CLIENT_ID", "retro");
+        vars.insert("OIDC_CLIENT_SECRET", "s");
+        assert!(
+            Config::from_vars(&vars)
+                .unwrap()
+                .oidc
+                .unwrap()
+                .ca_certs
+                .is_empty()
+        );
+
+        // A throwaway self-signed CA certificate (no key kept).
+        vars.insert(
+            "OIDC_CA_CERT_FILE",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/test-ca.pem"),
+        );
+        assert_eq!(
+            Config::from_vars(&vars)
+                .unwrap()
+                .oidc
+                .unwrap()
+                .ca_certs
+                .len(),
+            1
+        );
+
+        for path in [
+            concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"),
+            "/nonexistent/ca.pem",
+        ] {
+            vars.insert("OIDC_CA_CERT_FILE", path);
+            assert!(matches!(
+                Config::from_vars(&vars),
+                Err(ConfigError::Invalid {
+                    name: "OIDC_CA_CERT_FILE",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

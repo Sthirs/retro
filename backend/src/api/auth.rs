@@ -146,7 +146,6 @@ pub async fn login(
 
     let issued = refresh::issue(&state.db, &state.config, user.id, body.remember).await?;
     let jar = jar.add(cookies::refresh(
-        &state.config,
         issued.token,
         issued.persistent,
         issued.expires_at,
@@ -184,7 +183,6 @@ pub async fn refresh_session(State(state): State<AppState>, jar: CookieJar) -> R
         Ok((issued, user)) => match session(&state.config, user) {
             Ok(body) => {
                 let jar = jar.add(cookies::refresh(
-                    &state.config,
                     issued.token,
                     issued.persistent,
                     issued.expires_at,
@@ -193,9 +191,7 @@ pub async fn refresh_session(State(state): State<AppState>, jar: CookieJar) -> R
             }
             Err(e) => e.into_response(),
         },
-        Err(e @ AppError::Unauthorized) => {
-            (jar.add(cookies::clear_refresh(&state.config)), e).into_response()
-        }
+        Err(e @ AppError::Unauthorized) => (jar.add(cookies::clear_refresh()), e).into_response(),
         Err(e) => e.into_response(),
     }
 }
@@ -209,10 +205,7 @@ pub async fn logout(
     if let Some(cookie) = jar.get(cookies::REFRESH_COOKIE) {
         refresh::revoke(&state.db, cookie.value()).await?;
     }
-    Ok((
-        StatusCode::NO_CONTENT,
-        jar.add(cookies::clear_refresh(&state.config)),
-    ))
+    Ok((StatusCode::NO_CONTENT, jar.add(cookies::clear_refresh())))
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -259,7 +252,7 @@ pub async fn oidc_start(
                 remember: query.remember.unwrap_or(false),
             };
             let value = serde_json::to_string(&stored).expect("serializable");
-            let jar = jar.add(cookies::oidc_state(&state.config, value));
+            let jar = jar.add(cookies::oidc_state(value));
             (jar, Redirect::to(url.as_str())).into_response()
         }
         Err(_) => login_error("sso_unavailable").into_response(),
@@ -292,7 +285,7 @@ pub async fn oidc_callback(
     let stored: Option<StoredState> = private
         .get(cookies::OIDC_STATE_COOKIE)
         .and_then(|c| serde_json::from_str(c.value()).ok());
-    let private = private.remove(cookies::clear_oidc_state(&state.config));
+    let private = private.remove(cookies::clear_oidc_state());
 
     let outcome: Result<_, &'static str> = async {
         let oidc = state.oidc.clone().ok_or("sso_unavailable")?;
@@ -327,7 +320,6 @@ pub async fn oidc_callback(
     match outcome {
         Ok((issued, redirect)) => {
             let jar = jar.add(cookies::refresh(
-                &state.config,
                 issued.token,
                 issued.persistent,
                 issued.expires_at,

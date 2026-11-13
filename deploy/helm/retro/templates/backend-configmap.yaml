@@ -19,7 +19,6 @@ data:
   DB_SSLMODE: {{ .Values.database.sslMode | quote }}
   AUTH_LOCAL_LOGIN_ENABLED: {{ .Values.auth.localLogin | quote }}
   AUTH_PASSWORD_RESET_URL: {{ .Values.auth.passwordResetUrl | quote }}
-  COOKIE_SECURE: {{ .Values.auth.cookieSecure | quote }}
   ACCESS_TOKEN_TTL_SECONDS: {{ .Values.auth.accessTokenTtlSeconds | int64 | toString | quote }}
   REFRESH_TOKEN_TTL_SECONDS: {{ .Values.auth.refreshTokenTtlSeconds | int64 | toString | quote }}
   SESSION_REFRESH_TTL_SECONDS: {{ .Values.auth.sessionRefreshTtlSeconds | int64 | toString | quote }}
@@ -30,6 +29,9 @@ data:
   OIDC_SCOPES: {{ .Values.oidc.scopes | quote }}
   OIDC_BUTTON_TEXT: {{ .Values.oidc.buttonText | quote }}
   OIDC_AUTO_REGISTER: {{ .Values.oidc.autoRegister | quote }}
+  {{- if .Values.oidc.caSecret }}
+  OIDC_CA_CERT_FILE: "/etc/retro/oidc-ca/ca.crt"
+  {{- end }}
   {{- end }}
   {{- range $name, $value := .Values.backend.env }}
   {{ $name }}: {{ $value | quote }}

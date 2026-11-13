@@ -1,5 +1,6 @@
 # Development overlay for Minikube (scripts/deploy.sh). Never use in production.
 # ingress.host is passed by the script: retro.<minikube ip>.nip.io
+# The script also creates the mkcert TLS and CA secrets referenced below.
 
 devMode:
   enabled: true
@@ -24,16 +25,17 @@ backend:
     LOGIN_RATE_LIMIT: "1000"
 
 auth:
-  cookieSecure: false
   jwtSecret: dev-jwt-secret-dev-jwt-secret-dev-jwt-secret
   stateSecret: dev-state-secret-dev-state-secret-dev-state
 
 oidc:
   enabled: true
-  # Empty: http://<ingress.host>/dex (the in-cluster dex).
+  # Empty: https://<ingress.host>/dex (the in-cluster dex).
   issuerUrl: ""
   clientId: retro
   clientSecret: retro-dev-secret
+  # mkcert root CA, so the backend trusts the ingress certificate for dex.
+  caSecret: retro-dev-ca
 
 database:
   # Empty: the in-cluster dev Postgres.
@@ -44,6 +46,9 @@ database:
 
 ingress:
   host: retro.127.0.0.1.nip.io
+  tls:
+    enabled: true
+    secretName: retro-dev-tls
 
 postgres:
   enabled: true

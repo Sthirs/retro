@@ -69,10 +69,25 @@ spec:
               port: http
             periodSeconds: 2
             failureThreshold: 60
+          {{- if and .Values.oidc.enabled .Values.oidc.caSecret }}
+          volumeMounts:
+            - name: oidc-ca
+              mountPath: /etc/retro/oidc-ca
+              readOnly: true
+          {{- end }}
           {{- with .Values.backend.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+      {{- if and .Values.oidc.enabled .Values.oidc.caSecret }}
+      volumes:
+        - name: oidc-ca
+          secret:
+            secretName: {{ .Values.oidc.caSecret }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+      {{- end }}
       {{- with .Values.backend.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

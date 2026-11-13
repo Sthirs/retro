@@ -14,6 +14,7 @@ pub struct DevUser {
 }
 
 /// Password of every seeded account. Matches the dev identity provider's users.
+// codeql[rust/hard-coded-cryptographic-value] Dev-only; seeding is refused in production.
 pub const DEV_PASSWORD: &str = "password";
 
 pub const DEV_USERS: &[DevUser] = &[

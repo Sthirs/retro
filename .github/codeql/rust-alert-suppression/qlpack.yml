@@ -1,0 +1,6 @@
+# The CodeQL Rust pack ships no alert-suppression query, so in-source
+# `// codeql[<rule-id>]` comments are otherwise ignored for Rust.
+name: retro/rust-alert-suppression
+version: 0.0.0
+dependencies:
+  codeql/rust-all: "*"

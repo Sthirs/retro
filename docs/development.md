@@ -7,7 +7,7 @@ the frontend on your machine with hot reload while they talk to the rest of the
 cluster. The background is in [ADR-0007](adr/0007-development-environment.md).
 
 ```text
-browser ──▶ ingress  retro.<minikube ip>.nip.io
+browser ──▶ ingress  https://retro.<minikube ip>.nip.io (mkcert certificate)
               ├── /api  → backend   (Rust, :3000; metrics :9090)
               ├── /dex  → dex       (OIDC provider, dev only)
               └── /     → frontend  (nginx serving the Vue build, :8080)
@@ -24,10 +24,12 @@ backend ──▶ postgres (dev only, ephemeral)
 | Minikube | recent | about 4 CPUs and 6 GB of memory |
 | Helm | 3.x or 4.x | |
 | kubectl | matching the cluster | |
+| mkcert | recent | locally trusted HTTPS certificate for the dev host |
 | Telepresence | 2.x | optional: local backend or frontend |
 | cargo-watch | any | optional: backend hot reload (`cargo install cargo-watch`) |
 
-`scripts/setup.sh` checks these and installs the project dependencies.
+`scripts/setup.sh` checks these, trusts the mkcert root CA (`mkcert -install`, may
+ask for your password) and installs the project dependencies.
 
 ## First-time setup
 
@@ -37,7 +39,7 @@ scripts/setup.sh        # checks tools, npm ci, cargo fetch
 scripts/dev.sh          # Minikube + ingress, build images, deploy, print the URL
 ```
 
-Open the printed URL (`http://retro.<minikube ip>.nip.io`). `scripts/dev-host.sh`
+Open the printed URL (`https://retro.<minikube ip>.nip.io`). `scripts/dev-host.sh`
 prints the host at any time.
 
 ### Seeded users
@@ -109,6 +111,11 @@ scripts/restart.sh      # rollout restart backend and frontend
 - The API contract is generated: after changing an endpoint or DTO run
   `npm run api:generate` and commit `frontend/openapi.json` and
   `frontend/src/api/generated.ts`.
+- Development runs over HTTPS, like production, so cookies are always `Secure`.
+  `scripts/deploy.sh` issues a mkcert certificate for the dev host (kept in
+  `.dev-certs/`) and stores it with the mkcert root CA as the `retro-dev-tls` and
+  `retro-dev-ca` secrets. The backend trusts that CA for calls to dex
+  (`OIDC_CA_CERT_FILE`).
 - The scripts read `RETRO_NAMESPACE`, `RETRO_RELEASE` and `RETRO_DEV_HOST` to override
   the defaults (`retro`, `retro`, `retro.<minikube ip>.nip.io`).
 
@@ -148,7 +155,6 @@ The chart sets them from `values.yaml` (ConfigMap and Secrets).
 | `REFRESH_TOKEN_TTL_SECONDS` | `2592000` | "Keep me signed in" session (30 days) |
 | `SESSION_REFRESH_TTL_SECONDS` | `43200` | Browser-session sign-in (12 hours) |
 | `REFRESH_REUSE_GRACE_SECONDS` | `10` | Window in which a rotated refresh token is still accepted (concurrent tabs) |
-| `COOKIE_SECURE` | `true` | `false` only for plain-HTTP development |
 | `LOGIN_RATE_LIMIT` | `10` | Failed sign-ins per login name and per IP per 5 minutes |
 | `AUTH_LOCAL_LOGIN_ENABLED` | `true` | Show the username/password form |
 | `AUTH_PASSWORD_RESET_URL` | — | "Forgot password?" link target; hidden when unset |
@@ -158,6 +164,7 @@ The chart sets them from `values.yaml` (ConfigMap and Secrets).
 | `OIDC_SCOPES` | `openid email profile` | |
 | `OIDC_BUTTON_TEXT` | `Continue with single sign-on` | |
 | `OIDC_AUTO_REGISTER` | `true` | Create accounts for unknown SSO users |
+| `OIDC_CA_CERT_FILE` | — | PEM file of extra root CAs trusted for calls to the provider (chart: `oidc.caSecret`) |
 | `SEED_DEV_USERS` | `false` | Seed `alice` and `bob`; refused in production |
 
 The OIDC redirect URI to register with the provider is
@@ -170,7 +177,7 @@ The OIDC redirect URI to register with the provider is
 | Lint (all) | `npm run lint` | — |
 | Backend unit + integration | `npm run test:backend` | Docker/Podman, or `TEST_DATABASE_URL=postgres://user:pass@host:5432/postgres` |
 | Frontend unit | `npm run test:frontend` | — |
-| End-to-end | `scripts/test-playwright.sh http://$(scripts/dev-host.sh)` | the cluster running the current code |
+| End-to-end | `scripts/test-playwright.sh https://$(scripts/dev-host.sh)` | the cluster running the current code |
 
 Backend integration tests create a fresh database per test. With Podman, export
 `DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock` and enable the Podman socket.
@@ -186,7 +193,8 @@ restart first (`scripts/dev.sh`). Install the browser once with
 | `scripts/dev.sh` (`npm run dev:up`) | Cluster, images, deploy, restart, print URL |
 | `scripts/cluster-up.sh` | Start Minikube and the ingress addon |
 | `scripts/build.sh` | Build `retro/backend:dev` and `retro/frontend:dev` in Minikube |
-| `scripts/deploy.sh` | `helm upgrade --install` with `values-dev.yaml` |
+| `scripts/deploy.sh` | Dev TLS secrets (`scripts/dev-certs.sh`), then `helm upgrade --install` with `values-dev.yaml` |
+| `scripts/dev-certs.sh` | Issue the mkcert certificate for the dev host and store the TLS and CA secrets |
 | `scripts/restart.sh` | Restart backend and frontend pods |
 | `scripts/db-reset.sh` | Wipe and re-seed the dev database |
 | `scripts/cluster-down.sh [--delete]` | Remove the release (and the cluster) |

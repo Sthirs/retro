@@ -19,7 +19,7 @@ fi
 DEV_HOST="$(scripts/dev-host.sh)"
 cat <<INFO
 
-Retro is running at http://$DEV_HOST
+Retro is running at https://$DEV_HOST
 
 Seeded users (password "password"), for both password sign-in and single sign-on:
   alice  alice@retro.local  Alice Rossi
@@ -27,5 +27,5 @@ Seeded users (password "password"), for both password sign-in and single sign-on
 Single sign-on only (dex), password "password":
          carol@retro.local  Carol Verdi
 
-End-to-end tests: scripts/test-playwright.sh http://$DEV_HOST
+End-to-end tests: scripts/test-playwright.sh https://$DEV_HOST
 INFO

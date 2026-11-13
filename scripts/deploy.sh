@@ -6,6 +6,7 @@ set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 DEV_HOST="$("$REPO_ROOT/scripts/dev-host.sh")"
 
+"$REPO_ROOT/scripts/dev-certs.sh"
 helm upgrade --install "$RELEASE" "$CHART" \
   --namespace "$NAMESPACE" \
   --create-namespace \

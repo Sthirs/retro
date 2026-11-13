@@ -95,6 +95,55 @@ impl TestApp {
         .await
     }
 
+    /// Sends `method path` with a bearer token and an optional JSON body.
+    pub async fn call(
+        &self,
+        method: &str,
+        path: &str,
+        token: &str,
+        body: Option<Value>,
+    ) -> TestResponse {
+        let builder = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"));
+        let request = match body {
+            Some(json) => builder
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string())),
+            None => builder.body(Body::empty()),
+        };
+        self.send(request.unwrap()).await
+    }
+
+    /// An access token for a seeded user (`alice`, `bob`).
+    pub async fn token_for(&self, login: &str) -> String {
+        let res = self.login(login, "password", false).await;
+        assert_eq!(res.status, 200, "login {login}: {}", res.text());
+        res.json()["accessToken"].as_str().unwrap().to_owned()
+    }
+
+    /// Creates a local user with password `password` and returns their token.
+    pub async fn create_user(&self, username: &str, email: &str, name: &str) -> String {
+        use retro_backend::{auth::password, entities::user};
+        use sea_orm::{ActiveModelTrait, Set};
+        let now = time::OffsetDateTime::now_utc();
+        user::ActiveModel {
+            id: Set(uuid::Uuid::now_v7()),
+            email: Set(email.to_owned()),
+            username: Set(Some(username.to_owned())),
+            display_name: Set(name.to_owned()),
+            avatar_url: Set(None),
+            password_hash: Set(Some(password::hash("password").unwrap())),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(&self.db)
+        .await
+        .expect("insert user");
+        self.token_for(username).await
+    }
+
     pub async fn login(&self, login: &str, password: &str, remember: bool) -> TestResponse {
         self.post_json(
             "/api/v1/auth/login",

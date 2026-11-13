@@ -1,7 +1,10 @@
+import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
+import type { Plugin } from 'vue';
 import { vi } from 'vitest';
 import { createMemoryHistory, type Router } from 'vue-router';
 
+import App from '@/App.vue';
 import { buildI18n } from '@/i18n';
 import { buildRouter } from '@/router';
 
@@ -68,4 +71,56 @@ export function setup(): { router: Router; plugins: unknown[] } {
   setActivePinia(pinia);
   const router = buildRouter(createMemoryHistory());
   return { router, plugins: [pinia, buildI18n(), router] };
+}
+
+export const BOB = {
+  id: '0190a4e0-0000-7000-8000-000000000002',
+  email: 'bob@retro.local',
+  username: 'bob',
+  displayName: 'Bob Bianchi',
+  avatarUrl: null,
+};
+
+export const TEAM_ID = '0190a4e0-0000-7000-8000-0000000000a1';
+export const OTHER_TEAM_ID = '0190a4e0-0000-7000-8000-0000000000a2';
+
+export const team = (overrides: Record<string, unknown> = {}) => ({
+  id: TEAM_ID,
+  name: 'Platform Team',
+  role: 'admin',
+  memberCount: 2,
+  ...overrides,
+});
+
+export const pendingInvitation = (overrides: Record<string, unknown> = {}) => ({
+  token: 'tok-mobile',
+  team: { id: OTHER_TEAM_ID, name: 'Mobile Squad' },
+  invitedBy: { id: BOB.id, displayName: 'Bob Bianchi' },
+  expiresAt: new Date(Date.now() + 6 * 24 * 3600 * 1000).toISOString(),
+  ...overrides,
+});
+
+/** `GET /me` with the given teams and invitations. */
+export const me = (
+  teams: unknown[] = [],
+  invitations: unknown[] = [],
+  user: typeof ALICE = ALICE,
+) => ({
+  status: 200,
+  body: { user, teams, invitations },
+});
+
+export const problem = (status: number, code: string) => ({
+  status,
+  body: { type: 'about:blank', title: 'Error', status, code },
+});
+
+/** Mounts the whole app at `path`, after the router settled. */
+export async function renderAt(path: string) {
+  const { router, plugins } = setup();
+  await router.push(path);
+  await router.isReady();
+  const wrapper = mount(App, { global: { plugins: plugins as Plugin[] }, attachTo: document.body });
+  await flushPromises();
+  return { wrapper, router };
 }

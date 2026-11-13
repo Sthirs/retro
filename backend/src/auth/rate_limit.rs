@@ -1,4 +1,5 @@
-//! In-memory fixed-window limiter for failed sign-in attempts (spec §20).
+//! In-memory fixed-window limiter for failed sign-in attempts and other
+//! abuse-prone actions (spec §20).
 //! Per replica, which is acceptable at the target scale (spec §11.3).
 
 use std::{

@@ -24,12 +24,133 @@ export interface AuthConfig {
   sso: SsoConfig;
 }
 
+/**
+ * A user reduced to what other team members may see next to their avatar.
+ */
+export interface PersonDto {
+  displayName: string;
+  id: string;
+}
+
+/**
+ * An open invitation, as listed in team settings.
+ */
+export interface InvitationDto {
+  email: string;
+  expiresAt: string;
+  id: string;
+  invitedBy?: PersonDto | null;
+  /** Personal accept link (`/invite/{token}`) to share with the invitee. */
+  url: string;
+}
+
+/**
+ * Lifecycle of an invitation (spec §6.1).
+ */
+export type InvitationStatus = (typeof InvitationStatus)[keyof typeof InvitationStatus];
+
+export const InvitationStatus = {
+  pending: 'pending',
+  accepted: 'accepted',
+  declined: 'declined',
+  revoked: 'revoked',
+  expired: 'expired',
+} as const;
+
+/**
+ * A team reference: id and name only.
+ */
+export interface TeamRefDto {
+  id: string;
+  name: string;
+}
+
+/**
+ * What `/invite/{token}` shows before the invitee answers.
+ */
+export interface InvitationPreviewDto {
+  /** The caller already belongs to the team. */
+  alreadyMember: boolean;
+  email: string;
+  expiresAt: string;
+  invitedBy?: PersonDto | null;
+  memberCount: number;
+  /** Up to six members; empty unless the invitation is open. */
+  members: PersonDto[];
+  /** `expired` once past `expiresAt`, whatever is stored. */
+  status: InvitationStatus;
+  team: TeamRefDto;
+}
+
+export interface InviteRequest {
+  email: string;
+}
+
+export type JoinLinkActionDto = (typeof JoinLinkActionDto)[keyof typeof JoinLinkActionDto];
+
+export const JoinLinkActionDto = {
+  regenerate: 'regenerate',
+  enable: 'enable',
+  disable: 'disable',
+} as const;
+
+export interface JoinLinkDto {
+  /** Whether opening the link lets people join. */
+  enabled: boolean;
+  /**
+   * Absolute URL of the link; absent if none was ever generated.
+   * @nullable
+   */
+  url?: string | null;
+}
+
+export interface JoinLinkRequest {
+  action: JoinLinkActionDto;
+}
+
+export interface JoinResponse {
+  /** The caller was a member before opening the link. */
+  alreadyMember: boolean;
+  team: TeamRefDto;
+}
+
 export interface LoginRequest {
   /** Username or email address. */
   login: string;
   password: string;
   /** "Keep me signed in". */
   remember?: boolean;
+}
+
+/**
+ * An open invitation addressed to the signed-in user (user menu, onboarding).
+ */
+export interface PendingInvitationDto {
+  expiresAt: string;
+  invitedBy?: PersonDto | null;
+  team: TeamRefDto;
+  token: string;
+}
+
+/**
+ * A member's role in a team (spec §5.1).
+ */
+export type Role = (typeof Role)[keyof typeof Role];
+
+export const Role = {
+  admin: 'admin',
+  member: 'member',
+} as const;
+
+/**
+ * A team as seen by the caller.
+ */
+export interface TeamDto {
+  id: string;
+  memberCount: number;
+  name: string;
+  /** The caller's role. */
+  role: Role;
 }
 
 /**
@@ -46,6 +167,16 @@ export interface UserDto {
 }
 
 export interface MeResponse {
+  /** Open invitations sent to the user's email, newest first. */
+  invitations: PendingInvitationDto[];
+  /** Teams the user belongs to, by name. */
+  teams: TeamDto[];
+  user: UserDto;
+}
+
+export interface MemberDto {
+  joinedAt: string;
+  role: Role;
   user: UserDto;
 }
 
@@ -64,6 +195,10 @@ export interface Problem {
   type: string;
 }
 
+export interface RoleRequest {
+  role: Role;
+}
+
 /**
  * A new session: a short-lived access token (the refresh token is in a cookie).
  */
@@ -72,6 +207,11 @@ export interface SessionResponse {
   /** Access token lifetime in seconds. */
   expiresIn: number;
   user: UserDto;
+}
+
+export interface TeamNameRequest {
+  /** 1–60 characters after trimming. */
+  name: string;
 }
 
 export type OidcStartParams = {
@@ -318,6 +458,186 @@ export const refreshSession = async (
   });
 };
 
+export type getInvitationResponse200 = {
+  data: InvitationPreviewDto;
+  status: 200;
+};
+
+export type getInvitationResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type getInvitationResponse429 = {
+  data: Problem;
+  status: 429;
+};
+
+export type getInvitationResponseSuccess = getInvitationResponse200 & {
+  headers: Headers;
+};
+export type getInvitationResponseError = (getInvitationResponse404 | getInvitationResponse429) & {
+  headers: Headers;
+};
+
+export type getInvitationResponse = getInvitationResponseSuccess | getInvitationResponseError;
+
+export const getGetInvitationUrl = (token: string) => {
+  return `/api/v1/invitations/${token}`;
+};
+
+/**
+ * @summary Shows an invitation to whoever holds its link.
+ */
+export const getInvitation = async (
+  token: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<getInvitationResponse> => {
+  return apiFetch<getInvitationResponse>(getGetInvitationUrl(token), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export type acceptInvitationResponse200 = {
+  data: TeamRefDto;
+  status: 200;
+};
+
+export type acceptInvitationResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type acceptInvitationResponse410 = {
+  data: Problem;
+  status: 410;
+};
+
+export type acceptInvitationResponse429 = {
+  data: Problem;
+  status: 429;
+};
+
+export type acceptInvitationResponseSuccess = acceptInvitationResponse200 & {
+  headers: Headers;
+};
+export type acceptInvitationResponseError = (
+  acceptInvitationResponse404 | acceptInvitationResponse410 | acceptInvitationResponse429
+) & {
+  headers: Headers;
+};
+
+export type acceptInvitationResponse =
+  acceptInvitationResponseSuccess | acceptInvitationResponseError;
+
+export const getAcceptInvitationUrl = (token: string) => {
+  return `/api/v1/invitations/${token}/accept`;
+};
+
+/**
+ * @summary Accepts an invitation: the caller joins the team as a member.
+ */
+export const acceptInvitation = async (
+  token: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<acceptInvitationResponse> => {
+  return apiFetch<acceptInvitationResponse>(getAcceptInvitationUrl(token), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type declineInvitationResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type declineInvitationResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type declineInvitationResponse410 = {
+  data: Problem;
+  status: 410;
+};
+
+export type declineInvitationResponse429 = {
+  data: Problem;
+  status: 429;
+};
+
+export type declineInvitationResponseSuccess = declineInvitationResponse204 & {
+  headers: Headers;
+};
+export type declineInvitationResponseError = (
+  declineInvitationResponse404 | declineInvitationResponse410 | declineInvitationResponse429
+) & {
+  headers: Headers;
+};
+
+export type declineInvitationResponse =
+  declineInvitationResponseSuccess | declineInvitationResponseError;
+
+export const getDeclineInvitationUrl = (token: string) => {
+  return `/api/v1/invitations/${token}/decline`;
+};
+
+/**
+ * @summary Declines an invitation.
+ */
+export const declineInvitation = async (
+  token: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<declineInvitationResponse> => {
+  return apiFetch<declineInvitationResponse>(getDeclineInvitationUrl(token), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type joinTeamResponse200 = {
+  data: JoinResponse;
+  status: 200;
+};
+
+export type joinTeamResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type joinTeamResponse429 = {
+  data: Problem;
+  status: 429;
+};
+
+export type joinTeamResponseSuccess = joinTeamResponse200 & {
+  headers: Headers;
+};
+export type joinTeamResponseError = (joinTeamResponse404 | joinTeamResponse429) & {
+  headers: Headers;
+};
+
+export type joinTeamResponse = joinTeamResponseSuccess | joinTeamResponseError;
+
+export const getJoinTeamUrl = (token: string) => {
+  return `/api/v1/join/${token}`;
+};
+
+/**
+ * @summary Joins the team behind an enabled join link as a member.
+ */
+export const joinTeam = async (
+  token: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<joinTeamResponse> => {
+  return apiFetch<joinTeamResponse>(getJoinTeamUrl(token), {
+    ...options,
+    method: 'POST',
+  });
+};
+
 export type meResponse200 = {
   data: MeResponse;
   status: 200;
@@ -342,12 +662,675 @@ export const getMeUrl = () => {
 };
 
 /**
- * @summary Returns the signed-in user.
+ * @summary Returns the signed-in user with their teams and pending invitations.
  */
 export const me = async (options?: Parameters<typeof apiFetch>[1]): Promise<meResponse> => {
   return apiFetch<meResponse>(getMeUrl(), {
     ...options,
     method: 'GET',
+  });
+};
+
+export type listTeamsResponse200 = {
+  data: TeamDto[];
+  status: 200;
+};
+
+export type listTeamsResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type listTeamsResponseSuccess = listTeamsResponse200 & {
+  headers: Headers;
+};
+export type listTeamsResponseError = listTeamsResponse401 & {
+  headers: Headers;
+};
+
+export type listTeamsResponse = listTeamsResponseSuccess | listTeamsResponseError;
+
+export const getListTeamsUrl = () => {
+  return `/api/v1/teams`;
+};
+
+/**
+ * @summary Lists the caller's teams.
+ */
+export const listTeams = async (
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<listTeamsResponse> => {
+  return apiFetch<listTeamsResponse>(getListTeamsUrl(), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export type createTeamResponse201 = {
+  data: TeamDto;
+  status: 201;
+};
+
+export type createTeamResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type createTeamResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type createTeamResponseSuccess = createTeamResponse201 & {
+  headers: Headers;
+};
+export type createTeamResponseError = (createTeamResponse400 | createTeamResponse401) & {
+  headers: Headers;
+};
+
+export type createTeamResponse = createTeamResponseSuccess | createTeamResponseError;
+
+export const getCreateTeamUrl = () => {
+  return `/api/v1/teams`;
+};
+
+/**
+ * @summary Creates a team. The caller becomes its first admin.
+ */
+export const createTeam = async (
+  teamNameRequest: TeamNameRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<createTeamResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<createTeamResponse>(getCreateTeamUrl(), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(teamNameRequest),
+  });
+};
+
+export type getTeamResponse200 = {
+  data: TeamDto;
+  status: 200;
+};
+
+export type getTeamResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type getTeamResponseSuccess = getTeamResponse200 & {
+  headers: Headers;
+};
+export type getTeamResponseError = getTeamResponse404 & {
+  headers: Headers;
+};
+
+export type getTeamResponse = getTeamResponseSuccess | getTeamResponseError;
+
+export const getGetTeamUrl = (teamId: string) => {
+  return `/api/v1/teams/${teamId}`;
+};
+
+/**
+ * @summary Returns one of the caller's teams.
+ */
+export const getTeam = async (
+  teamId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<getTeamResponse> => {
+  return apiFetch<getTeamResponse>(getGetTeamUrl(teamId), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export type deleteTeamResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type deleteTeamResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type deleteTeamResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type deleteTeamResponseSuccess = deleteTeamResponse204 & {
+  headers: Headers;
+};
+export type deleteTeamResponseError = (deleteTeamResponse403 | deleteTeamResponse404) & {
+  headers: Headers;
+};
+
+export type deleteTeamResponse = deleteTeamResponseSuccess | deleteTeamResponseError;
+
+export const getDeleteTeamUrl = (teamId: string) => {
+  return `/api/v1/teams/${teamId}`;
+};
+
+/**
+ * @summary Deletes a team and everything in it (admin).
+ */
+export const deleteTeam = async (
+  teamId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<deleteTeamResponse> => {
+  return apiFetch<deleteTeamResponse>(getDeleteTeamUrl(teamId), {
+    ...options,
+    method: 'DELETE',
+  });
+};
+
+export type renameTeamResponse200 = {
+  data: TeamDto;
+  status: 200;
+};
+
+export type renameTeamResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type renameTeamResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type renameTeamResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type renameTeamResponseSuccess = renameTeamResponse200 & {
+  headers: Headers;
+};
+export type renameTeamResponseError = (
+  renameTeamResponse400 | renameTeamResponse403 | renameTeamResponse404
+) & {
+  headers: Headers;
+};
+
+export type renameTeamResponse = renameTeamResponseSuccess | renameTeamResponseError;
+
+export const getRenameTeamUrl = (teamId: string) => {
+  return `/api/v1/teams/${teamId}`;
+};
+
+/**
+ * @summary Renames a team (admin).
+ */
+export const renameTeam = async (
+  teamId: string,
+  teamNameRequest: TeamNameRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<renameTeamResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<renameTeamResponse>(getRenameTeamUrl(teamId), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(teamNameRequest),
+  });
+};
+
+export type listInvitationsResponse200 = {
+  data: InvitationDto[];
+  status: 200;
+};
+
+export type listInvitationsResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type listInvitationsResponseSuccess = listInvitationsResponse200 & {
+  headers: Headers;
+};
+export type listInvitationsResponseError = listInvitationsResponse404 & {
+  headers: Headers;
+};
+
+export type listInvitationsResponse = listInvitationsResponseSuccess | listInvitationsResponseError;
+
+export const getListInvitationsUrl = (teamId: string) => {
+  return `/api/v1/teams/${teamId}/invitations`;
+};
+
+/**
+ * @summary Lists a team's open invitations (any member).
+ */
+export const listInvitations = async (
+  teamId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<listInvitationsResponse> => {
+  return apiFetch<listInvitationsResponse>(getListInvitationsUrl(teamId), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export type createInvitationResponse201 = {
+  data: InvitationDto;
+  status: 201;
+};
+
+export type createInvitationResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type createInvitationResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type createInvitationResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type createInvitationResponse429 = {
+  data: Problem;
+  status: 429;
+};
+
+export type createInvitationResponseSuccess = createInvitationResponse201 & {
+  headers: Headers;
+};
+export type createInvitationResponseError = (
+  | createInvitationResponse400
+  | createInvitationResponse404
+  | createInvitationResponse409
+  | createInvitationResponse429
+) & {
+  headers: Headers;
+};
+
+export type createInvitationResponse =
+  createInvitationResponseSuccess | createInvitationResponseError;
+
+export const getCreateInvitationUrl = (teamId: string) => {
+  return `/api/v1/teams/${teamId}/invitations`;
+};
+
+/**
+ * @summary Invites someone by email (any member). Returns the open invitation for
+that email if there already is one.
+ */
+export const createInvitation = async (
+  teamId: string,
+  inviteRequest: InviteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<createInvitationResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<createInvitationResponse>(getCreateInvitationUrl(teamId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(inviteRequest),
+  });
+};
+
+export type revokeInvitationResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type revokeInvitationResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type revokeInvitationResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type revokeInvitationResponseSuccess = revokeInvitationResponse204 & {
+  headers: Headers;
+};
+export type revokeInvitationResponseError = (
+  revokeInvitationResponse403 | revokeInvitationResponse404
+) & {
+  headers: Headers;
+};
+
+export type revokeInvitationResponse =
+  revokeInvitationResponseSuccess | revokeInvitationResponseError;
+
+export const getRevokeInvitationUrl = (teamId: string, invitationId: string) => {
+  return `/api/v1/teams/${teamId}/invitations/${invitationId}`;
+};
+
+/**
+ * @summary Revokes an invitation (its inviter or an admin).
+ */
+export const revokeInvitation = async (
+  teamId: string,
+  invitationId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<revokeInvitationResponse> => {
+  return apiFetch<revokeInvitationResponse>(getRevokeInvitationUrl(teamId, invitationId), {
+    ...options,
+    method: 'DELETE',
+  });
+};
+
+export type getJoinLinkResponse200 = {
+  data: JoinLinkDto;
+  status: 200;
+};
+
+export type getJoinLinkResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type getJoinLinkResponseSuccess = getJoinLinkResponse200 & {
+  headers: Headers;
+};
+export type getJoinLinkResponseError = getJoinLinkResponse404 & {
+  headers: Headers;
+};
+
+export type getJoinLinkResponse = getJoinLinkResponseSuccess | getJoinLinkResponseError;
+
+export const getGetJoinLinkUrl = (teamId: string) => {
+  return `/api/v1/teams/${teamId}/join-link`;
+};
+
+/**
+ * @summary Returns the team join link (any member).
+ */
+export const getJoinLink = async (
+  teamId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<getJoinLinkResponse> => {
+  return apiFetch<getJoinLinkResponse>(getGetJoinLinkUrl(teamId), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export type updateJoinLinkResponse200 = {
+  data: JoinLinkDto;
+  status: 200;
+};
+
+export type updateJoinLinkResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type updateJoinLinkResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type updateJoinLinkResponseSuccess = updateJoinLinkResponse200 & {
+  headers: Headers;
+};
+export type updateJoinLinkResponseError = (
+  updateJoinLinkResponse403 | updateJoinLinkResponse404
+) & {
+  headers: Headers;
+};
+
+export type updateJoinLinkResponse = updateJoinLinkResponseSuccess | updateJoinLinkResponseError;
+
+export const getUpdateJoinLinkUrl = (teamId: string) => {
+  return `/api/v1/teams/${teamId}/join-link`;
+};
+
+/**
+ * @summary Regenerates, enables or disables the join link (admin).
+ */
+export const updateJoinLink = async (
+  teamId: string,
+  joinLinkRequest: JoinLinkRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<updateJoinLinkResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<updateJoinLinkResponse>(getUpdateJoinLinkUrl(teamId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(joinLinkRequest),
+  });
+};
+
+export type listMembersResponse200 = {
+  data: MemberDto[];
+  status: 200;
+};
+
+export type listMembersResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type listMembersResponseSuccess = listMembersResponse200 & {
+  headers: Headers;
+};
+export type listMembersResponseError = listMembersResponse404 & {
+  headers: Headers;
+};
+
+export type listMembersResponse = listMembersResponseSuccess | listMembersResponseError;
+
+export const getListMembersUrl = (teamId: string) => {
+  return `/api/v1/teams/${teamId}/members`;
+};
+
+/**
+ * @summary Lists the members of a team, admins first.
+ */
+export const listMembers = async (
+  teamId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<listMembersResponse> => {
+  return apiFetch<listMembersResponse>(getListMembersUrl(teamId), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export type removeMemberResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type removeMemberResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type removeMemberResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type removeMemberResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type removeMemberResponseSuccess = removeMemberResponse204 & {
+  headers: Headers;
+};
+export type removeMemberResponseError = (
+  removeMemberResponse403 | removeMemberResponse404 | removeMemberResponse409
+) & {
+  headers: Headers;
+};
+
+export type removeMemberResponse = removeMemberResponseSuccess | removeMemberResponseError;
+
+export const getRemoveMemberUrl = (teamId: string, userId: string) => {
+  return `/api/v1/teams/${teamId}/members/${userId}`;
+};
+
+/**
+ * @summary Removes a member (admin) or leaves the team (own user id). When the last
+member leaves, the team is deleted.
+ */
+export const removeMember = async (
+  teamId: string,
+  userId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<removeMemberResponse> => {
+  return apiFetch<removeMemberResponse>(getRemoveMemberUrl(teamId, userId), {
+    ...options,
+    method: 'DELETE',
+  });
+};
+
+export type updateMemberResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type updateMemberResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type updateMemberResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type updateMemberResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type updateMemberResponseSuccess = updateMemberResponse204 & {
+  headers: Headers;
+};
+export type updateMemberResponseError = (
+  updateMemberResponse403 | updateMemberResponse404 | updateMemberResponse409
+) & {
+  headers: Headers;
+};
+
+export type updateMemberResponse = updateMemberResponseSuccess | updateMemberResponseError;
+
+export const getUpdateMemberUrl = (teamId: string, userId: string) => {
+  return `/api/v1/teams/${teamId}/members/${userId}`;
+};
+
+/**
+ * @summary Promotes or demotes a member (admin). The last admin cannot be demoted.
+ */
+export const updateMember = async (
+  teamId: string,
+  userId: string,
+  roleRequest: RoleRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<updateMemberResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<updateMemberResponse>(getUpdateMemberUrl(teamId, userId), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(roleRequest),
   });
 };
 

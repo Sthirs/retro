@@ -41,6 +41,11 @@
   --avatar-6: #5f5875;
   --on-avatar: #ffffff;
 
+  --on-danger: #ffffff;
+  --overlay: rgba(20, 14, 36, 0.45);
+  --shadow-menu: 0 16px 40px rgba(0, 0, 0, 0.22);
+  --shadow-dialog: 0 24px 64px rgba(0, 0, 0, 0.28);
+
   --shadow-panel: 0 1px 2px rgba(42, 35, 64, 0.06), 0 6px 16px rgba(42, 35, 64, 0.06);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
 
@@ -73,6 +78,8 @@
   --notice-bg: #3a2618;
   --notice-text: #f6c08a;
   --well-line: #2e2648;
+  --on-danger: #1e1930;
+  --overlay: rgba(6, 4, 14, 0.65);
 
   --col-plus-fg: #5fd39a;
   --col-plus-bg: #173328;
@@ -114,6 +121,8 @@
     --notice-bg: #3a2618;
     --notice-text: #f6c08a;
     --well-line: #2e2648;
+    --on-danger: #1e1930;
+    --overlay: rgba(6, 4, 14, 0.65);
 
     --col-plus-fg: #5fd39a;
     --col-plus-bg: #173328;

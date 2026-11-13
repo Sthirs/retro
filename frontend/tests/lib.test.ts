@@ -4,6 +4,7 @@ import { ssoUrl } from '@/auth/config';
 import { AVATAR_COLORS, avatarColorIndex, initials } from '@/lib/avatar';
 import { safeRedirect } from '@/lib/redirect';
 import { applyThemePreference, readThemePreference, resolveTheme } from '@/lib/theme';
+import { relativeFromNow } from '@/lib/time';
 
 describe('theme', () => {
   it('resolves system preference', () => {
@@ -71,5 +72,17 @@ describe('redirects', () => {
   it('builds the single sign-on URL', () => {
     expect(ssoUrl('/', false)).toBe('/api/v1/auth/oidc?redirect=%2F');
     expect(ssoUrl('/x', true)).toBe('/api/v1/auth/oidc?redirect=%2Fx&remember=true');
+  });
+});
+
+describe('relativeFromNow', () => {
+  const now = Date.parse('2026-11-13T12:00:00Z');
+  const at = (ms: number) => new Date(now + ms).toISOString();
+
+  it('says days, hours or minutes from now', () => {
+    expect(relativeFromNow(at(6 * 24 * 3600e3), 'en', now)).toBe('in 6 days');
+    expect(relativeFromNow(at(24 * 3600e3), 'en', now)).toBe('tomorrow');
+    expect(relativeFromNow(at(3 * 3600e3), 'en', now)).toBe('in 3 hours');
+    expect(relativeFromNow(at(10 * 60e3), 'en', now)).toBe('in 10 minutes');
   });
 });

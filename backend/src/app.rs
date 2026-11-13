@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderName, HeaderValue, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, patch, post},
 };
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -37,6 +37,46 @@ pub fn router(state: AppState) -> Router {
     let v1 = Router::new()
         .nest("/auth", auth)
         .route("/me", get(api::me::me))
+        .route(
+            "/teams",
+            get(api::teams::list_teams).post(api::teams::create_team),
+        )
+        .route(
+            "/teams/{team_id}",
+            get(api::teams::get_team)
+                .patch(api::teams::rename_team)
+                .delete(api::teams::delete_team),
+        )
+        .route("/teams/{team_id}/members", get(api::teams::list_members))
+        .route(
+            "/teams/{team_id}/members/{user_id}",
+            patch(api::teams::update_member).delete(api::teams::remove_member),
+        )
+        .route(
+            "/teams/{team_id}/join-link",
+            get(api::teams::get_join_link).post(api::teams::update_join_link),
+        )
+        .route(
+            "/teams/{team_id}/invitations",
+            get(api::invitations::list_invitations).post(api::invitations::create_invitation),
+        )
+        .route(
+            "/teams/{team_id}/invitations/{invitation_id}",
+            delete(api::invitations::revoke_invitation),
+        )
+        .route(
+            "/invitations/{token}",
+            get(api::invitations::get_invitation),
+        )
+        .route(
+            "/invitations/{token}/accept",
+            post(api::invitations::accept_invitation),
+        )
+        .route(
+            "/invitations/{token}/decline",
+            post(api::invitations::decline_invitation),
+        )
+        .route("/join/{token}", post(api::join::join_team))
         .route("/openapi.json", get(openapi_json));
 
     Router::new()

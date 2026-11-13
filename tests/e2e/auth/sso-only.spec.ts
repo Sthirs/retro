@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import { PASSWORD, USERS } from '../fixtures';
 import { DexLoginPage, SignInPage } from '../pages/SignInPage';
+import { AppShell } from '../pages/AppShell';
 
 /** carol exists only in dex: single sign-on works, password sign-in never does. */
 test.describe('SSO-only account', () => {
@@ -17,11 +18,11 @@ test.describe('SSO-only account', () => {
     // …single sign-on works (and creates her account on first use)…
     await signIn.sso.click();
     await new DexLoginPage(page).signIn(carol.email, PASSWORD);
-    await expect(page).toHaveURL(/\/$/);
+    await expect(page).toHaveURL(AppShell.HOME);
     await expect(page.getByTestId('current-user')).toHaveText(carol.name);
 
     // …and password sign-in still fails once the account exists: it has no password.
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await new AppShell(page).logOut();
     await expect(page).toHaveURL(/\/login$/);
     await signIn.signIn(carol.email, PASSWORD);
     await expect(signIn.error).toHaveText('Incorrect username or password.');

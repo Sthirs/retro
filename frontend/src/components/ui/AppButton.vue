@@ -1,24 +1,45 @@
 <script setup lang="ts">
+import { RouterLink, type RouteLocationRaw } from 'vue-router';
+
 /**
  * Button (or link styled as a button). Primary = --accent, secondary =
- * --surface with a --line border. `size="page"` is the 48 px primary page action.
+ * --surface with a --line border, ghost = transparent, danger = --danger
+ * filled, danger-outline = --danger border. Heights: compact 36, default 40,
+ * touch 44, page 48 (the primary page action).
  */
 withDefaults(
   defineProps<{
-    variant?: 'primary' | 'secondary';
-    size?: 'default' | 'page';
+    variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-outline';
+    size?: 'compact' | 'default' | 'touch' | 'page';
     href?: string;
+    /** In-app destination: renders a RouterLink. */
+    to?: RouteLocationRaw;
     type?: 'button' | 'submit';
     block?: boolean;
     disabled?: boolean;
   }>(),
-  { variant: 'secondary', size: 'default', href: undefined, type: 'button', block: false },
+  {
+    variant: 'secondary',
+    size: 'default',
+    href: undefined,
+    to: undefined,
+    type: 'button',
+    block: false,
+  },
 );
 </script>
 
 <template>
+  <RouterLink
+    v-if="to"
+    :to="to"
+    class="btn"
+    :class="[`btn--${variant}`, `btn--${size}`, { 'btn--block': block }]"
+  >
+    <slot />
+  </RouterLink>
   <a
-    v-if="href"
+    v-else-if="href"
     :href="href"
     class="btn"
     :class="[`btn--${variant}`, `btn--${size}`, { 'btn--block': block }]"
@@ -57,6 +78,13 @@ withDefaults(
     background-color 120ms ease,
     border-color 120ms ease;
 }
+.btn--compact {
+  min-height: 36px;
+  font-size: 13px;
+}
+.btn--touch {
+  min-height: 44px;
+}
 .btn--page {
   min-height: 48px;
   font-size: 15px;
@@ -84,6 +112,33 @@ withDefaults(
 .btn--secondary:hover:not(:disabled) {
   background: var(--well);
   color: var(--text);
+}
+.btn--ghost {
+  background: transparent;
+  color: var(--text);
+}
+.btn--ghost:hover:not(:disabled) {
+  background: var(--well);
+  color: var(--text);
+}
+.btn--danger {
+  background: var(--danger);
+  color: var(--on-danger);
+  border-color: var(--danger);
+  font-weight: 700;
+}
+.btn--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 88%, var(--text));
+  color: var(--on-danger);
+}
+.btn--danger-outline {
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.btn--danger-outline:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
 }
 .btn:disabled {
   cursor: progress;

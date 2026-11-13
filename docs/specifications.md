@@ -137,7 +137,7 @@ Authentication is performed by the **backend**, which issues Retro's own session
 - Any member can invite a user by entering their email address.
 - The backend creates an `Invitation` (team, email, inviter, token, expiry — default 7 days). **The application does not send emails.**
 - The invitation appears in the invitee's **pending invitations** (user menu and onboarding screen) when they log in with an account whose email matches. They can accept or decline it there. Accepting makes them a member.
-- After creating an invitation, the inviter can copy its personal accept link (`/invite/{token}`) and share it through any channel. Opening the link takes the user through login (if needed) and then the acceptance step.
+- After creating an invitation, the inviter can copy its personal accept link (`/invite/{token}`) and share it through any channel. Opening the link takes the user through login (if needed) and then the acceptance step. The token in the link is the credential: whoever holds the link can accept it, whatever the email of their account. The acceptance step shows the email the invitation was sent to.
 - Invitations can be revoked by the inviter or by an admin. Accepting a revoked or expired invitation fails with a clear message.
 
 ### 6.2 Join link
@@ -423,7 +423,7 @@ teams(id, name, join_token NULL, join_enabled, created_by → users, created_at,
 team_members(team_id → teams, user_id → users, role ENUM('admin','member'), joined_at)
     PK(team_id, user_id)
 
-invitations(id, team_id → teams, email, token, invited_by → users,
+invitations(id, team_id → teams, email, token UNIQUE, invited_by → users,
             status ENUM('pending','accepted','declined','revoked','expired'), expires_at, created_at)
 
 meetings(id, team_id → teams, created_by → users, facilitator_id → users,
@@ -510,6 +510,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/teams/{teamId}/invitations` | Invite by email |
 | GET | `/teams/{teamId}/invitations` | List pending invitations |
 | DELETE | `/teams/{teamId}/invitations/{id}` | Revoke |
+| GET | `/invitations/{token}` | Preview an invitation for the holder of its link: team, inviter, email, expiry, status |
 | POST | `/invitations/{token}/accept` | Accept an invitation |
 | POST | `/invitations/{token}/decline` | Decline an invitation |
 | GET | `/teams/{teamId}/join-link` | Get the join link |

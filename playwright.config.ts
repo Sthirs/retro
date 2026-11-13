@@ -14,6 +14,8 @@ export default defineConfig({
   reporter: [['html', { open: 'never' }], ['list']],
   use: {
     baseURL,
+    // The dev cluster serves a local mkcert certificate; trust is not under test.
+    ignoreHTTPSErrors: true,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
   },

@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 missing=0
-for tool in node npm cargo minikube helm kubectl; do
+for tool in node npm cargo minikube helm kubectl mkcert; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     printf 'missing: %s\n' "$tool" >&2
     missing=1
@@ -25,6 +25,8 @@ if [ "$(node --version)" != "v$expected_node" ]; then
   printf 'warning: node %s found, .nvmrc expects v%s (run: nvm install && nvm use)\n' "$(node --version)" "$expected_node" >&2
 fi
 
+# Trust the mkcert root CA (system and browser stores) for https://retro.<ip>.nip.io.
+mkcert -install
 npm ci
 cargo fetch --manifest-path backend/Cargo.toml
 echo "Setup complete. Next: scripts/dev.sh"

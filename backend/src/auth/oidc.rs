@@ -54,7 +54,13 @@ pub struct OidcProvider {
 
 impl OidcProvider {
     pub fn new(config: OidcConfig, redirect_url: Url) -> Self {
-        let http = reqwest::ClientBuilder::new()
+        let http = config
+            .ca_certs
+            .iter()
+            .cloned()
+            .fold(reqwest::ClientBuilder::new(), |b, ca| {
+                b.add_root_certificate(ca)
+            })
             // Following redirects opens the client up to SSRF.
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(10))

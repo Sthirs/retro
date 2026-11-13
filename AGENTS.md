@@ -69,7 +69,7 @@ These rules are **binding**:
   one Playwright end-to-end test** covering its happy path.
   - Playwright config: [`playwright.config.ts`](playwright.config.ts); specs and
     page objects in [`tests/e2e/`](tests/e2e/).
-  - Run e2e tests: `scripts/test-playwright.sh http://$(scripts/dev-host.sh)`.
+  - Run e2e tests: `scripts/test-playwright.sh https://$(scripts/dev-host.sh)`.
 - **Backend:** unit tests next to the code (`#[cfg(test)]`) for business logic;
   integration tests in `backend/tests/` for every endpoint, run in-process
   against a real PostgreSQL (testcontainers, or `TEST_DATABASE_URL`).
@@ -101,7 +101,7 @@ Quick rules to follow on every change:
   1. `npm run lint` — must pass (cargo fmt, clippy `-D warnings`, eslint,
      prettier, vue-tsc).
   2. `npm run test` — backend unit + integration and frontend unit tests must pass.
-  3. `scripts/test-playwright.sh http://$(scripts/dev-host.sh)` — for any
+  3. `scripts/test-playwright.sh https://$(scripts/dev-host.sh)` — for any
      user-facing change, against a freshly rebuilt local cluster.
 - **Cite `Implements ADR-NNNN`** in the commit message when realising an
   accepted ADR.

@@ -6,11 +6,22 @@ use argon2::{
     Argon2,
     password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
 };
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use rand::Rng;
+
+/// Random password behind [`DUMMY_HASH`], generated once per process.
+static DUMMY_PASSWORD: LazyLock<String> = LazyLock::new(random_password);
 
 /// Hash verified when the account does not exist or has no password, so that
 /// the response time does not reveal which accounts exist.
 static DUMMY_HASH: LazyLock<String> =
-    LazyLock::new(|| hash("retro-dummy-password").expect("hashing a constant cannot fail"));
+    LazyLock::new(|| hash(&DUMMY_PASSWORD).expect("hashing a random password cannot fail"));
+
+fn random_password() -> String {
+    let mut bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
 
 pub fn hash(password: &str) -> anyhow::Result<String> {
     Argon2::default()
@@ -39,21 +50,24 @@ pub fn verify(password: &str, hash: Option<&str>) -> bool {
 mod tests {
     use super::*;
 
+    // Random passwords: CodeQL flags literals passed to `hash`/`verify`.
+
     #[test]
     fn hashes_and_verifies() {
-        let h = hash("password").unwrap();
+        let (password, other) = (random_password(), random_password());
+        let h = hash(&password).unwrap();
         assert!(h.starts_with("$argon2id$"));
-        assert!(verify("password", Some(&h)));
-        assert!(!verify("Password", Some(&h)));
+        assert!(verify(&password, Some(&h)));
+        assert!(!verify(&other, Some(&h)));
     }
 
     #[test]
     fn never_verifies_without_a_hash() {
-        assert!(!verify("retro-dummy-password", None));
+        assert!(!verify(&DUMMY_PASSWORD, None));
     }
 
     #[test]
     fn rejects_malformed_hash() {
-        assert!(!verify("password", Some("not-a-phc-string")));
+        assert!(!verify(&random_password(), Some("not-a-phc-string")));
     }
 }

@@ -12,6 +12,7 @@ playwright/.cache/
 tests/e2e/.auth/
 
 # Local environment
+.dev-certs/
 .env
 .env.*
 !.env.example

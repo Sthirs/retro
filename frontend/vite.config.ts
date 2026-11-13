@@ -18,9 +18,9 @@ export default defineConfig({
   server: {
     port: devPort,
     // Behind the Minikube ingress (Telepresence intercept), HMR must go
-    // through the public host on port 80.
+    // through the public HTTPS host on port 443.
     allowedHosts: devHost ? [devHost] : undefined,
-    hmr: devHost ? { host: devHost, clientPort: hmrClientPort, protocol: 'ws' } : undefined,
+    hmr: devHost ? { host: devHost, clientPort: hmrClientPort, protocol: 'wss' } : undefined,
     proxy: {
       '/api': { target: backendUrl, changeOrigin: false },
     },

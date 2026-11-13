@@ -75,7 +75,6 @@ auth:
   localLogin: true
   # "Forgot password?" target on the sign-in page; hidden when empty.
   passwordResetUrl: ""
-  cookieSecure: true
   accessTokenTtlSeconds: 900
   refreshTokenTtlSeconds: 2592000
   sessionRefreshTtlSeconds: 43200
@@ -92,6 +91,9 @@ oidc:
   clientSecret: ""
   scopes: openid email profile
   buttonText: Continue with single sign-on
+  # Secret with a `ca.crt` key: extra root CAs (PEM) the backend trusts when
+  # calling the provider, for a provider behind a private CA.
+  caSecret: ""
   # Create an account on first SSO sign-in for unknown users.
   autoRegister: true
 
@@ -101,9 +103,9 @@ database:
   port: 5432
   name: retro
   user: retro
-  password: ""
   sslMode: require
-  # Secret with DB_PASSWORD. When empty, the chart creates one from `password`.
+  # Secret with DB_PASSWORD. When empty, the chart creates one from
+  # `database.password` (set it at install time; no default).
   existingSecret: ""
 
 ingress:

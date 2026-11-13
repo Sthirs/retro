@@ -1,0 +1,40 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>neteye-platform/repo-commons",
+    ":semanticCommits",
+    ":dependencyDashboard",
+    "schedule:weekly"
+  ],
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "minor and patch updates"
+    },
+    {
+      "description": "Rust toolchain: rust-toolchain.toml and the backend build image move together",
+      "matchPackageNames": ["rust", "docker.io/library/rust"],
+      "groupName": "rust toolchain",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Own app images: tags are set by the release workflow",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/sthirs/retro/**", "retro/**"],
+      "enabled": false,
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "TypeScript stays on the 6.x line aliased for vue-tsc until vue-tsc supports the native compiler",
+      "matchPackageNames": ["typescript"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false,
+      "minimumReleaseAge": "7 days"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "groupName": "security updates",
+    "schedule": ["at any time"]
+  }
+}

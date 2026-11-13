@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "retro.fullname" . }}-backend
+  labels:
+    {{- include "retro.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+data:
+  APP_ENV: "production"
+  PUBLIC_URL: {{ include "retro.publicUrl" . | quote }}
+  BIND_ADDR: {{ printf "0.0.0.0:%v" .Values.backend.service.port | quote }}
+  METRICS_ADDR: {{ printf "0.0.0.0:%v" .Values.backend.service.metricsPort | quote }}
+  RUN_MIGRATIONS: {{ ternary "startup" "none" (eq .Values.backend.runMigrations "startup") | quote }}
+  RUST_LOG: {{ .Values.backend.logLevel | quote }}
+  DB_HOST: {{ include "retro.databaseHost" . | quote }}
+  DB_PORT: {{ .Values.database.port | int64 | toString | quote }}
+  DB_NAME: {{ .Values.database.name | quote }}
+  DB_USER: {{ .Values.database.user | quote }}
+  DB_SSLMODE: {{ .Values.database.sslMode | quote }}
+  AUTH_LOCAL_LOGIN_ENABLED: {{ .Values.auth.localLogin | quote }}
+  AUTH_PASSWORD_RESET_URL: {{ .Values.auth.passwordResetUrl | quote }}
+  COOKIE_SECURE: {{ .Values.auth.cookieSecure | quote }}
+  ACCESS_TOKEN_TTL_SECONDS: {{ .Values.auth.accessTokenTtlSeconds | int64 | toString | quote }}
+  REFRESH_TOKEN_TTL_SECONDS: {{ .Values.auth.refreshTokenTtlSeconds | int64 | toString | quote }}
+  SESSION_REFRESH_TTL_SECONDS: {{ .Values.auth.sessionRefreshTtlSeconds | int64 | toString | quote }}
+  OIDC_ENABLED: {{ .Values.oidc.enabled | quote }}
+  {{- if .Values.oidc.enabled }}
+  OIDC_ISSUER_URL: {{ include "retro.oidcIssuerUrl" . | quote }}
+  OIDC_CLIENT_ID: {{ .Values.oidc.clientId | quote }}
+  OIDC_SCOPES: {{ .Values.oidc.scopes | quote }}
+  OIDC_BUTTON_TEXT: {{ .Values.oidc.buttonText | quote }}
+  OIDC_AUTO_REGISTER: {{ .Values.oidc.autoRegister | quote }}
+  {{- end }}
+  {{- range $name, $value := .Values.backend.env }}
+  {{ $name }}: {{ $value | quote }}
+  {{- end }}

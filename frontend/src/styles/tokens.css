@@ -1,0 +1,136 @@
+/*
+ * Design tokens (Foundations). Components use these, never raw hex.
+ * Light on :root; dark under [data-theme='dark'], or by system preference
+ * when the user has not chosen a theme.
+ */
+:root {
+  color-scheme: light;
+
+  --bg: #f5f4f9;
+  --surface: #ffffff;
+  --well: #e4e0ee;
+  --card: #ffffff;
+  --text: #2a2340;
+  --muted: #5f5875;
+  --line: #dcd7e7;
+  --accent: #7348d6;
+  --on-accent: #ffffff;
+  --accent-soft: #eee9fb;
+  --accent-text: #5e35bf;
+  --success: #16a34a;
+  --on-success: #ffffff;
+  --danger: #b42318;
+  --notice-bg: #fff4e5;
+  --notice-text: #7a3e00;
+  --well-line: #dcd7e7;
+
+  --col-plus-fg: #1f7650;
+  --col-plus-bg: #ddf1e6;
+  --col-delta-fg: #a84c0c;
+  --col-delta-bg: #fce8d7;
+  --col-ideas-fg: #1d66a3;
+  --col-ideas-bg: #dcebf8;
+  --col-thanks-fg: #9a3683;
+  --col-thanks-bg: #f7e1f1;
+
+  --avatar-1: #a23bb8;
+  --avatar-2: #13836f;
+  --avatar-3: #7348d6;
+  --avatar-4: #1d66a3;
+  --avatar-5: #a84c0c;
+  --avatar-6: #5f5875;
+  --on-avatar: #ffffff;
+
+  --shadow-panel: 0 1px 2px rgba(42, 35, 64, 0.06), 0 6px 16px rgba(42, 35, 64, 0.06);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  --radius-panel: 14px;
+  --radius-control: 10px;
+  --radius-sm: 8px;
+  --radius-xs: 6px;
+  --radius-pill: 999px;
+
+  --font-sans: 'Plus Jakarta Sans Variable', 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg: #1e1930;
+  --surface: #2c2445;
+  --well: #17132a;
+  --card: #352b55;
+  --text: #f4f1fa;
+  --muted: #b7aecf;
+  --line: #3e345b;
+  --accent: #9b7bf2;
+  --on-accent: #17122a;
+  --accent-soft: #3a2f5e;
+  --accent-text: #c9b6ff;
+  --success: #4ade80;
+  --on-success: #0d1014;
+  --danger: #ff8fa3;
+  --notice-bg: #3a2618;
+  --notice-text: #f6c08a;
+  --well-line: #2e2648;
+
+  --col-plus-fg: #5fd39a;
+  --col-plus-bg: #173328;
+  --col-delta-fg: #f6a15b;
+  --col-delta-bg: #3a2618;
+  --col-ideas-fg: #5db2f0;
+  --col-ideas-bg: #16294a;
+  --col-thanks-fg: #ee86d2;
+  --col-thanks-bg: #3a1c38;
+
+  --avatar-1: #b04fc4;
+  --avatar-2: #11806c;
+  --avatar-3: #6e4fd8;
+  --avatar-4: #2b74b5;
+  --avatar-5: #b5571f;
+  --avatar-6: #6e6690;
+
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --bg: #1e1930;
+    --surface: #2c2445;
+    --well: #17132a;
+    --card: #352b55;
+    --text: #f4f1fa;
+    --muted: #b7aecf;
+    --line: #3e345b;
+    --accent: #9b7bf2;
+    --on-accent: #17122a;
+    --accent-soft: #3a2f5e;
+    --accent-text: #c9b6ff;
+    --success: #4ade80;
+    --on-success: #0d1014;
+    --danger: #ff8fa3;
+    --notice-bg: #3a2618;
+    --notice-text: #f6c08a;
+    --well-line: #2e2648;
+
+    --col-plus-fg: #5fd39a;
+    --col-plus-bg: #173328;
+    --col-delta-fg: #f6a15b;
+    --col-delta-bg: #3a2618;
+    --col-ideas-fg: #5db2f0;
+    --col-ideas-bg: #16294a;
+    --col-thanks-fg: #ee86d2;
+    --col-thanks-bg: #3a1c38;
+
+    --avatar-1: #b04fc4;
+    --avatar-2: #11806c;
+    --avatar-3: #6e4fd8;
+    --avatar-4: #2b74b5;
+    --avatar-5: #b5571f;
+    --avatar-6: #6e6690;
+
+    --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
+  }
+}

@@ -1,0 +1,53 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "retro.fullname" . }}
+  labels:
+    {{- include "retro.labels" . | nindent 4 }}
+  annotations:
+    # WebSocket upgrades (spec §11) need long-lived connections.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "6m"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ include "retro.host" . }}
+      secretName: {{ required "ingress.tls.secretName is required" .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ include "retro.host" . }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "retro.fullname" . }}-backend
+                port:
+                  name: http
+          {{- if include "retro.devDex" . }}
+          - path: /dex
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "retro.fullname" . }}-dex
+                port:
+                  name: http
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "retro.fullname" . }}-frontend
+                port:
+                  name: http
+{{- end }}

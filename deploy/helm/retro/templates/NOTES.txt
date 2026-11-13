@@ -1,0 +1,8 @@
+Retro is available at {{ include "retro.publicUrl" . }}
+{{- if .Values.devMode.enabled }}
+
+Development mode. Seeded users (password "password"):
+  alice / alice@retro.local
+  bob   / bob@retro.local
+Single sign-on only (dex): carol@retro.local / password
+{{- end }}

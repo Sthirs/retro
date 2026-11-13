@@ -1,0 +1,37 @@
+{
+  "name": "retro",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c magenta,cyan \"./scripts/dev-backend.sh\" \"./scripts/dev-frontend.sh\"",
+    "dev:up": "./scripts/dev.sh",
+    "dev:backend": "./scripts/dev-backend.sh",
+    "dev:frontend": "./scripts/dev-frontend.sh",
+    "dev:host": "./scripts/dev-host.sh",
+    "cluster:up": "./scripts/cluster-up.sh",
+    "cluster:build": "./scripts/build.sh",
+    "cluster:deploy": "./scripts/deploy.sh",
+    "cluster:down": "./scripts/cluster-down.sh",
+    "db:reset": "./scripts/db-reset.sh",
+    "telepresence:connect": "./scripts/telepresence-connect.sh",
+    "telepresence:backend": "./scripts/telepresence-intercept-backend.sh",
+    "telepresence:frontend": "./scripts/telepresence-intercept-frontend.sh",
+    "telepresence:leave": "./scripts/telepresence-leave.sh",
+    "api:generate": "cargo run --quiet --manifest-path backend/Cargo.toml -- openapi > frontend/openapi.json && npm run api:client --workspace @retro/frontend",
+    "lint": "npm run lint:backend && npm run lint:frontend",
+    "lint:backend": "cargo fmt --manifest-path backend/Cargo.toml --all --check && cargo clippy --manifest-path backend/Cargo.toml --all-targets -- -D warnings",
+    "lint:frontend": "npm run lint --workspace @retro/frontend",
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:backend": "cargo test --manifest-path backend/Cargo.toml",
+    "test:frontend": "npm run test --workspace @retro/frontend",
+    "test:playwright": "bash ./scripts/test-playwright.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "26.6.6",
+    "concurrently": "10.0.7"
+  }
+}

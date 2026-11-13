@@ -1,0 +1,451 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Retro API",
+    "description": "Team retrospectives.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    },
+    "version": "v1"
+  },
+  "paths": {
+    "/api/v1/auth/config": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Returns the sign-in options.",
+        "operationId": "config",
+        "responses": {
+          "200": {
+            "description": "Sign-in options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthConfig"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signs in with a username or email and a password.",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in; sets the refresh cookie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Local sign-in disabled",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Signs out: revokes the session and clears the cookie.",
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "Signed out; clears the refresh cookie"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/oidc": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Starts single sign-on: redirects to the identity provider.",
+        "operationId": "oidc_start",
+        "parameters": [
+          {
+            "name": "redirect",
+            "in": "query",
+            "description": "Local path to open after signing in.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "remember",
+            "in": "query",
+            "description": "\"Keep me signed in\".",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirect to the identity provider"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/oidc/callback": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Completes single sign-on: verifies the provider's answer, signs the user\nin, sets the refresh cookie and returns to the app. No token is put in the URL.",
+        "operationId": "oidc_callback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirect to /auth/callback, or to /login?error=… on failure"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Exchanges the refresh cookie for a new access token (and rotates the cookie).",
+        "operationId": "refresh_session",
+        "responses": {
+          "200": {
+            "description": "Session renewed; rotates the refresh cookie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked refresh cookie",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Returns the signed-in user.",
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "description": "The signed-in user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid access token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "tags": [
+          "operational"
+        ],
+        "summary": "Liveness: the process is up.",
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "description": "Alive"
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "operational"
+        ],
+        "summary": "Readiness: the database is reachable and every migration this binary knows\nis applied. Migrations applied by a newer release are ignored, so pods of\nthe previous release stay ready during a rolling upgrade.",
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "description": "Ready"
+          },
+          "503": {
+            "description": "Not ready"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuthConfig": {
+        "type": "object",
+        "description": "Which sign-in methods the sign-in page offers.",
+        "required": [
+          "localLogin",
+          "sso"
+        ],
+        "properties": {
+          "localLogin": {
+            "type": "boolean"
+          },
+          "passwordResetUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Shown as \"Forgot password?\" when set. Retro sends no email itself."
+          },
+          "sso": {
+            "$ref": "#/components/schemas/SsoConfig"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "login",
+          "password"
+        ],
+        "properties": {
+          "login": {
+            "type": "string",
+            "description": "Username or email address."
+          },
+          "password": {
+            "type": "string"
+          },
+          "remember": {
+            "type": "boolean",
+            "description": "\"Keep me signed in\"."
+          }
+        }
+      },
+      "MeResponse": {
+        "type": "object",
+        "required": [
+          "user"
+        ],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/UserDto"
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "description": "RFC 9457 problem details body.",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable machine-readable error code, e.g. `invalid_credentials`."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "URI reference identifying the problem type."
+          }
+        }
+      },
+      "SessionResponse": {
+        "type": "object",
+        "description": "A new session: a short-lived access token (the refresh token is in a cookie).",
+        "required": [
+          "accessToken",
+          "expiresIn",
+          "user"
+        ],
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "expiresIn": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Access token lifetime in seconds."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserDto"
+          }
+        }
+      },
+      "SsoConfig": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "buttonText"
+        ],
+        "properties": {
+          "buttonText": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UserDto": {
+        "type": "object",
+        "description": "A user as exposed by the API.",
+        "required": [
+          "id",
+          "email",
+          "displayName"
+        ],
+        "properties": {
+          "avatarUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}

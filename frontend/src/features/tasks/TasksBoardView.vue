@@ -4,7 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
-import { api, TaskStatus, type MemberDto } from '@/api/client';
+import { api, TaskStatus, type MemberDto, type PersonDto } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
 import AppAlert from '@/components/ui/AppAlert.vue';
 import TaskColumn from '@/features/tasks/TaskColumn.vue';
@@ -24,6 +24,14 @@ const teamId = computed(() => String(route.params.teamId));
 const loaded = ref(false);
 const members = ref<MemberDto[]>([]);
 const membersLoaded = ref(false);
+/** The members as the editor's @-mention candidates. */
+const people = computed<PersonDto[]>(() =>
+  members.value.map(({ user }) => ({
+    id: user.id,
+    displayName: user.displayName,
+    pictureVersion: user.pictureVersion,
+  })),
+);
 
 const FILTER_KEYS = ['mentioned', 'author', 'meeting'] as const;
 /** The filter lives in the URL (`?mentioned=&author=&meeting=`), so it survives reloads and links. */
@@ -134,6 +142,7 @@ watch(
           :key="status"
           :status="status"
           :tasks="store.columns[status]"
+          :people="people"
         />
       </div>
     </div>

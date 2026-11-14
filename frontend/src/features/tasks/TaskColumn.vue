@@ -4,11 +4,11 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { VueDraggable } from 'vue-draggable-plus';
 
-import type { TaskDto, TaskStatus } from '@/api/client';
+import type { PersonDto, TaskDto, TaskStatus } from '@/api/client';
 import TaskCard from '@/features/tasks/TaskCard.vue';
 import { useTasksStore } from '@/stores/tasks';
 
-const props = defineProps<{ status: TaskStatus; tasks: TaskDto[] }>();
+const props = defineProps<{ status: TaskStatus; tasks: TaskDto[]; people: PersonDto[] }>();
 const { t } = useI18n();
 const store = useTasksStore();
 
@@ -46,7 +46,7 @@ function onDrop(event: DropEvent): void {
       @add="onDrop"
       @update="onDrop"
     >
-      <TaskCard v-for="task in cards" :key="task.id" :task="task" />
+      <TaskCard v-for="task in cards" :key="task.id" :task="task" :people="people" />
     </VueDraggable>
   </section>
 </template>

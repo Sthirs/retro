@@ -1,15 +1,47 @@
 <script setup lang="ts">
 /** One task on the board (spec §10.1): date, content, author. */
+import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
-import type { TaskDto } from '@/api/client';
-import AppIcon from '@/components/AppIcon.vue';
+import { errorCode, type PersonDto, type TaskDto } from '@/api/client';
 import RichText from '@/components/RichText.vue';
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
+import EditTaskDialog from '@/features/tasks/EditTaskDialog.vue';
+import TaskMenu from '@/features/tasks/TaskMenu.vue';
 import { formatDayMonth } from '@/lib/time';
+import { useTasksStore } from '@/stores/tasks';
 
-defineProps<{ task: TaskDto }>();
-const { t } = useI18n();
+const props = defineProps<{ task: TaskDto; people: PersonDto[] }>();
+const { t, te } = useI18n();
+const store = useTasksStore();
+
+const editing = ref(false);
+const deleting = ref(false);
+const deleteBusy = ref(false);
+const deleteError = ref<string | null>(null);
+
+function askDelete(): void {
+  deleteError.value = null;
+  deleting.value = true;
+}
+
+async function confirmDelete(): Promise<void> {
+  if (deleteBusy.value) return;
+  deleteBusy.value = true;
+  deleteError.value = null;
+  try {
+    await store.remove(props.task.id);
+    deleting.value = false;
+  } catch (e) {
+    const code = errorCode(e);
+    deleteError.value = te(`errors.${code}`) ? t(`errors.${code}`) : t('errors.unknown');
+    // The dialog shows it: keep the board's own alert quiet.
+    store.error = null;
+  } finally {
+    deleteBusy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -21,9 +53,7 @@ const { t } = useI18n();
           · <span class="card__meeting">{{ t('tasks.meeting') }}</span></template
         ></span
       >
-      <button type="button" class="card__actions" :aria-label="t('tasks.actions')">
-        <AppIcon name="moreVertical" :size="18" />
-      </button>
+      <TaskMenu :task="task" @edit="editing = true" @delete="askDelete" />
     </div>
     <RichText :html="task.contentHtml" class="card__content" />
     <span class="card__author">
@@ -36,6 +66,18 @@ const { t } = useI18n();
       />
       {{ task.author.displayName }}
     </span>
+    <EditTaskDialog :open="editing" :task="task" :members="people" @close="editing = false" />
+    <ConfirmDialog
+      :open="deleting"
+      :title="t('tasks.deleteTitle')"
+      :text="t('tasks.deleteText')"
+      :confirm-label="t('tasks.delete')"
+      danger
+      :busy="deleteBusy"
+      :error="deleteError"
+      @close="deleting = false"
+      @confirm="confirmDelete"
+    />
   </article>
 </template>
 
@@ -63,26 +105,6 @@ const { t } = useI18n();
 .card__meeting {
   color: var(--accent-text);
   font-weight: 600;
-}
-.card__actions {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  /* 44 px hit area without growing the card: the glyph box stays 28 px. */
-  width: 44px;
-  height: 44px;
-  margin: -8px -10px -8px 0;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-.card__actions:hover {
-  background: var(--accent-soft);
-  color: var(--accent-text);
 }
 .card__content {
   font-size: 14px;

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { VueDraggable } from 'vue-draggable-plus';
 
 import type { TaskDto } from '@/api/client';
+import RichTextEditor from '@/components/RichTextEditor.vue';
 import TaskFilters from '@/features/tasks/TaskFilters.vue';
 import { buildI18n } from '@/i18n';
 
@@ -426,6 +427,243 @@ describe('Tasks board', () => {
 
       expect(router.currentRoute.value.query).toEqual({ meeting: 'm2' });
       expect(taskCalls(calls).at(-1)).toBe(`${TASKS_PATH}?meeting=m2`);
+    });
+  });
+
+  describe('task actions menu', () => {
+    const actions = (wrapper: VueWrapper, name: string, index = 0) =>
+      column(wrapper, name).findAll('button[aria-label="Task actions"]')[index]!;
+    // The app shell has menus of its own: look only inside the board.
+    const board = (wrapper: VueWrapper) => wrapper.get('.board');
+    const items = (wrapper: VueWrapper) =>
+      board(wrapper)
+        .findAll('[role="menu"] [role="menuitem"]')
+        .map((i) => i.text());
+    const item = (wrapper: VueWrapper, label: string) =>
+      board(wrapper)
+        .findAll('[role="menuitem"]')
+        .find((i) => i.text() === label)!;
+    // Each card holds two dialogs; the open one is the one that renders a title.
+    const dialog = (wrapper: VueWrapper) =>
+      board(wrapper)
+        .findAll('dialog')
+        .find((d) => d.find('h2').exists())!;
+    const hasMenu = (wrapper: VueWrapper) => board(wrapper).find('[role="menu"]').exists();
+
+    it('menu shows Edit and Delete only when canEdit', async () => {
+      mockFetch(
+        routes([
+          task('a1', 'active', 'a0', { canEdit: true }),
+          task('a2', 'active', 'a1', { canEdit: false }),
+        ]),
+      );
+      const { wrapper } = await open();
+      expect(hasMenu(wrapper)).toBe(false);
+
+      const button = actions(wrapper, 'Active', 0);
+      expect(button.attributes('aria-expanded')).toBe('false');
+      await button.trigger('click');
+      expect(button.attributes('aria-expanded')).toBe('true');
+      expect(items(wrapper)).toEqual(['Edit', 'Move to…', 'Delete']);
+      await button.trigger('click');
+      expect(hasMenu(wrapper)).toBe(false);
+
+      await actions(wrapper, 'Active', 1).trigger('click');
+      expect(items(wrapper)).toEqual(['Move to…']);
+    });
+
+    it('Move to lists the other columns, and Escape returns focus to the button', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper } = await open();
+      document.body.appendChild(wrapper.element);
+
+      const button = actions(wrapper, 'Active');
+      await button.trigger('click');
+      await item(wrapper, 'Move to…').trigger('click');
+      const submenu = board(wrapper).get('[role="menu"][aria-label="Move to…"]');
+      expect(submenu.findAll('[role="menuitem"]').map((i) => i.text())).toEqual([
+        'Future',
+        'Stuck',
+        'Done',
+      ]);
+
+      await submenu.trigger('keydown', { key: 'Escape' });
+      expect(board(wrapper).find('[role="menu"][aria-label="Move to…"]').exists()).toBe(false);
+      expect(board(wrapper).find('[role="menu"][aria-label="Task actions"]').exists()).toBe(true);
+
+      await board(wrapper).get('[role="menu"]').trigger('keydown', { key: 'Escape' });
+      expect(hasMenu(wrapper)).toBe(false);
+      expect(document.activeElement).toBe(button.element);
+    });
+
+    it('arrow keys move between the menu items', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper } = await open();
+      document.body.appendChild(wrapper.element);
+
+      await actions(wrapper, 'Active').trigger('click');
+      await flushPromises();
+      const all = board(wrapper).findAll('[role="menu"] [role="menuitem"]');
+      expect(document.activeElement).toBe(all[0]!.element);
+      await all[0]!.trigger('keydown', { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(all[1]!.element);
+      await all[1]!.trigger('keydown', { key: 'ArrowDown' });
+      await all[2]!.trigger('keydown', { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(all[0]!.element);
+      await all[0]!.trigger('keydown', { key: 'ArrowUp' });
+      expect(document.activeElement).toBe(all[2]!.element);
+    });
+
+    it('Move to Done appends to Done', async () => {
+      const { calls } = mockFetch({
+        ...routes([task('a1', 'active', 'a0'), task('d1', 'done', 'a0'), task('d2', 'done', 'a1')]),
+        'PUT /api/v1/tasks/a1/position': { status: 200, body: task('a1', 'done', 'a2') },
+      });
+      const { wrapper } = await open();
+
+      await actions(wrapper, 'Active').trigger('click');
+      await item(wrapper, 'Move to…').trigger('click');
+      await item(wrapper, 'Done').trigger('click');
+      await flushPromises();
+
+      expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({
+        status: 'done',
+        afterId: 'd2',
+      });
+      expect(hasMenu(wrapper)).toBe(false);
+      expect(column(wrapper, 'Done').findAll('article')).toHaveLength(3);
+      expect(column(wrapper, 'Active').findAll('article')).toHaveLength(0);
+    });
+
+    it('Move to an empty column sends only the status', async () => {
+      const { calls } = mockFetch({
+        ...routes([task('a1', 'active', 'a0')]),
+        'PUT /api/v1/tasks/a1/position': { status: 200, body: task('a1', 'done', 'a0') },
+      });
+      const { wrapper } = await open();
+
+      await actions(wrapper, 'Active').trigger('click');
+      await item(wrapper, 'Move to…').trigger('click');
+      await item(wrapper, 'Done').trigger('click');
+      await flushPromises();
+
+      expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ status: 'done' });
+    });
+
+    it('edit saves new content', async () => {
+      const { calls } = mockFetch({
+        ...routes([task('a1', 'active', 'a0')]),
+        'PATCH /api/v1/tasks/a1': {
+          status: 200,
+          body: task('a1', 'active', 'a0', { contentHtml: '<p>Rewritten</p>' }),
+        },
+      });
+      const { wrapper } = await open();
+
+      await actions(wrapper, 'Active').trigger('click');
+      await item(wrapper, 'Edit').trigger('click');
+      await flushPromises();
+      expect(hasMenu(wrapper)).toBe(false);
+      expect(dialog(wrapper).get('h2').text()).toBe('Edit task');
+      const editor = wrapper.findComponent(RichTextEditor);
+      expect(editor.props('label')).toBe('Task');
+      expect(editor.props('modelValue')).toBe('<p>a1</p>');
+      expect(editor.props('members').map((m: { id: string }) => m.id)).toEqual([ALICE.id, BOB.id]);
+
+      editor.vm.$emit('update:modelValue', '<p>Rewritten</p>');
+      await flushPromises();
+      const save = dialog(wrapper)
+        .findAll('button')
+        .find((b) => b.text() === 'Save')!;
+      await save.trigger('click');
+      await flushPromises();
+
+      const put = calls.find((c) => c.method === 'PATCH');
+      expect(put?.path).toBe('/api/v1/tasks/a1');
+      expect(put?.body).toEqual({ content: '<p>Rewritten</p>' });
+      expect(column(wrapper, 'Active').get('article').text()).toContain('Rewritten');
+      expect(board(wrapper).find('dialog h2').exists()).toBe(false);
+    });
+
+    it('edit keeps the dialog open and shows the error when saving fails', async () => {
+      mockFetch({
+        ...routes([task('a1', 'active', 'a0')]),
+        'PATCH /api/v1/tasks/a1': {
+          status: 400,
+          body: { type: 'about:blank', title: 'Bad', status: 400, code: 'invalid_task_content' },
+        },
+      });
+      const { wrapper } = await open();
+
+      await actions(wrapper, 'Active').trigger('click');
+      await item(wrapper, 'Edit').trigger('click');
+      await flushPromises();
+      await dialog(wrapper)
+        .findAll('button')
+        .find((b) => b.text() === 'Save')!
+        .trigger('click');
+      await flushPromises();
+
+      expect(dialog(wrapper).get('[role="alert"]').text()).toContain('task text is empty');
+      expect(dialog(wrapper).get('h2').text()).toBe('Edit task');
+      expect(board(wrapper).findAll('[role="alert"]')).toHaveLength(1);
+
+      await dialog(wrapper)
+        .findAll('button')
+        .find((b) => b.text() === 'Cancel')!
+        .trigger('click');
+      await flushPromises();
+      expect(board(wrapper).find('dialog h2').exists()).toBe(false);
+    });
+
+    it('delete asks for confirmation then removes the card', async () => {
+      const { calls } = mockFetch({
+        ...routes([task('a1', 'active', 'a0'), task('a2', 'active', 'a1')]),
+        'DELETE /api/v1/tasks/a1': { status: 204 },
+      });
+      const { wrapper } = await open();
+
+      await actions(wrapper, 'Active').trigger('click');
+      await item(wrapper, 'Delete').trigger('click');
+      await flushPromises();
+      expect(hasMenu(wrapper)).toBe(false);
+      expect(dialog(wrapper).get('h2').text()).toBe('Delete this task?');
+      expect(dialog(wrapper).text()).toContain("This can't be undone.");
+      expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+
+      await dialog(wrapper)
+        .findAll('button')
+        .find((b) => b.text() === 'Delete')!
+        .trigger('click');
+      await flushPromises();
+
+      expect(calls.find((c) => c.method === 'DELETE')?.path).toBe('/api/v1/tasks/a1');
+      expect(column(wrapper, 'Active').findAll('article')).toHaveLength(1);
+      expect(column(wrapper, 'Active').get('article').text()).toContain('a2');
+    });
+
+    it('delete shows the error in the dialog when it fails', async () => {
+      mockFetch({
+        ...routes([task('a1', 'active', 'a0')]),
+        'DELETE /api/v1/tasks/a1': {
+          status: 404,
+          body: { type: 'about:blank', title: 'Not found', status: 404, code: 'task_not_found' },
+        },
+      });
+      const { wrapper } = await open();
+
+      await actions(wrapper, 'Active').trigger('click');
+      await item(wrapper, 'Delete').trigger('click');
+      await flushPromises();
+      await dialog(wrapper)
+        .findAll('button')
+        .find((b) => b.text() === 'Delete')!
+        .trigger('click');
+      await flushPromises();
+
+      expect(dialog(wrapper).get('[role="alert"]').text()).toContain('no longer exists');
+      expect(board(wrapper).findAll('[role="alert"]')).toHaveLength(1);
+      expect(column(wrapper, 'Active').findAll('article')).toHaveLength(1);
     });
   });
 });

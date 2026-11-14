@@ -40,6 +40,9 @@ export const ICONS = {
   ],
   filter: ['M3 5h18l-7 8v6l-4 2v-8z'],
   atSign: ['circle:12,12,4', 'M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8'],
+  pencil: ['M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z'],
+  move: ['M5 9 2 12l3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20'],
+  chevronRight: ['m9 6 6 6-6 6'],
   moreVertical: ['circle:12,5,1.4', 'circle:12,12,1.4', 'circle:12,19,1.4'],
 } as const;
 

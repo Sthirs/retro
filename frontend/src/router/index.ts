@@ -67,13 +67,11 @@ export function buildRouter(history: RouterHistory = createWebHistory()): Router
             path: 'meetings',
             name: 'team-meetings',
             component: () => import('@/features/teams/ComingSoonView.vue'),
-            props: { section: 'meetings' },
           },
           {
             path: 'tasks',
             name: 'team-tasks',
-            component: () => import('@/features/teams/ComingSoonView.vue'),
-            props: { section: 'tasks' },
+            component: () => import('@/features/tasks/TasksBoardView.vue'),
           },
           {
             path: 'settings',

@@ -32,7 +32,23 @@ export default {
     invalid_display_name: 'Enter a display name of 1 to 80 characters.',
     picture_too_large: 'This picture is larger than 5 MB. Choose a smaller one.',
     unsupported_picture_type: 'Use a PNG, JPEG, GIF or WebP picture.',
+    stale_position: 'The board changed in the meantime. We reloaded it, so try the move again.',
+    task_not_found: 'This task no longer exists.',
     unknown: 'Something went wrong. Try again.',
+  },
+  tasks: {
+    title: 'Tasks',
+    subtitle:
+      'Created during the Discuss phase of a meeting. Drag cards between columns, or use Move to… from the keyboard.',
+    empty: 'No tasks yet. Tasks are created in the Discuss phase of a meeting.',
+    actions: 'Task actions',
+    meeting: 'Meeting',
+    columns: {
+      future: 'Future',
+      stuck: 'Stuck',
+      active: 'Active',
+      done: 'Done',
+    },
   },
   signIn: {
     title: 'Sign in to Retro',
@@ -213,7 +229,6 @@ export default {
   comingSoon: {
     subtitle: '{team} · {count} member | {team} · {count} members',
     meetings: 'Meetings',
-    tasks: 'Tasks',
     text: 'This part of Retro is on its way. Meanwhile, invite your team from Team settings.',
     toSettings: 'Open team settings',
   },

@@ -38,6 +38,7 @@ export const ICONS = {
     'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71',
     'M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
   ],
+  moreVertical: ['circle:12,5,1.4', 'circle:12,12,1.4', 'circle:12,19,1.4'],
 } as const;
 
 export type IconName = keyof typeof ICONS;

@@ -27,3 +27,12 @@ export function formatDate(iso: string): string {
   const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
   return `${get('day')} ${get('month').slice(0, 3)} ${get('year')}`;
 }
+
+/** "10 Nov" (`d MMM`), with the same three-letter month as `formatDate`. */
+export function formatDayMonth(iso: string): string {
+  const parts = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).formatToParts(
+    new Date(iso),
+  );
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('day')} ${get('month').slice(0, 3)}`;
+}

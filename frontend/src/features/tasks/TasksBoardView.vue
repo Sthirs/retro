@@ -1,12 +1,21 @@
 <script setup lang="ts">
 /** The team's task board (spec §10): four columns of cards, drag and drop. */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
-import { api, TaskStatus, type MemberDto, type PersonDto } from '@/api/client';
+import {
+  api,
+  errorCode,
+  TaskStatus,
+  type MemberDto,
+  type PersonDto,
+  type TaskDto,
+} from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
 import AppAlert from '@/components/ui/AppAlert.vue';
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
+import EditTaskDialog from '@/features/tasks/EditTaskDialog.vue';
 import TaskColumn from '@/features/tasks/TaskColumn.vue';
 import TaskFilters from '@/features/tasks/TaskFilters.vue';
 import { useSessionStore } from '@/stores/session';
@@ -22,6 +31,7 @@ const store = useTasksStore();
 
 const teamId = computed(() => String(route.params.teamId));
 const loaded = ref(false);
+const grid = ref<HTMLElement | null>(null);
 const members = ref<MemberDto[]>([]);
 const membersLoaded = ref(false);
 /** The members as the editor's @-mention candidates. */
@@ -74,6 +84,46 @@ async function loadMembers(): Promise<void> {
   } catch {
     if (id === teamId.value) members.value = [];
   }
+}
+
+// The Edit and Delete dialogs are rendered once, here, not inside the cards:
+// a card is draggable, and its dialog controls must not start a drag.
+const editingId = ref<string | null>(null);
+const deletingId = ref<string | null>(null);
+const deleteBusy = ref(false);
+const deleteError = ref<string | null>(null);
+const editingTask = computed(() => store.tasks.find((task) => task.id === editingId.value));
+const deletingTask = computed(() => store.tasks.find((task) => task.id === deletingId.value));
+
+function askDelete(task: TaskDto): void {
+  deleteError.value = null;
+  deletingId.value = task.id;
+}
+
+async function confirmDelete(): Promise<void> {
+  const task = deletingTask.value;
+  if (!task || deleteBusy.value) return;
+  deleteBusy.value = true;
+  deleteError.value = null;
+  try {
+    await store.remove(task.id);
+    deletingId.value = null;
+    // The card is gone, and so is its button: keep focus on the column it was in.
+    await focusColumn(task.status);
+  } catch (e) {
+    const code = errorCode(e);
+    deleteError.value = te(`errors.${code}`) ? t(`errors.${code}`) : t('errors.unknown');
+    // The dialog shows it: keep the board's own alert quiet.
+    store.error = null;
+  } finally {
+    deleteBusy.value = false;
+  }
+}
+
+/** A moved or deleted card takes its button with it; focus goes to a column instead. */
+async function focusColumn(status: TaskStatus): Promise<void> {
+  await nextTick();
+  grid.value?.querySelector<HTMLElement>(`section[data-column="${status}"]`)?.focus();
 }
 
 function setFilter(next: TaskFilter): void {
@@ -136,16 +186,38 @@ watch(
     </section>
 
     <div class="board__scroll">
-      <div class="board__grid">
+      <div ref="grid" class="board__grid">
         <TaskColumn
           v-for="status in COLUMNS"
           :key="status"
           :status="status"
           :tasks="store.columns[status]"
-          :people="people"
+          @edit="editingId = $event.id"
+          @delete="askDelete"
+          @moved="focusColumn"
         />
       </div>
     </div>
+
+    <EditTaskDialog
+      v-if="editingTask"
+      open
+      :task="editingTask"
+      :members="people"
+      @close="editingId = null"
+    />
+    <ConfirmDialog
+      v-if="deletingTask"
+      open
+      :title="t('tasks.deleteTitle')"
+      :text="t('tasks.deleteText')"
+      :confirm-label="t('tasks.delete')"
+      danger
+      :busy="deleteBusy"
+      :error="deleteError"
+      @close="deletingId = null"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>
 

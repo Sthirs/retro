@@ -1,5 +1,5 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VueDraggable } from 'vue-draggable-plus';
 
 import type { TaskDto } from '@/api/client';
@@ -512,6 +512,138 @@ describe('Tasks board', () => {
       expect(document.activeElement).toBe(all[0]!.element);
       await all[0]!.trigger('keydown', { key: 'ArrowUp' });
       expect(document.activeElement).toBe(all[2]!.element);
+    });
+
+    it('arrow keys, Home and End walk the Move to submenu, and Escape leaves it', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper } = await open();
+      document.body.appendChild(wrapper.element);
+
+      await actions(wrapper, 'Active').trigger('click');
+      await flushPromises();
+      const move = item(wrapper, 'Move to…');
+      await move.trigger('click');
+      await flushPromises();
+      const sub = board(wrapper).findAll('[role="menu"][aria-label="Move to…"] [role="menuitem"]');
+      expect(sub.map((i) => i.text())).toEqual(['Future', 'Stuck', 'Done']);
+      expect(document.activeElement).toBe(sub[0]!.element);
+
+      await sub[0]!.trigger('keydown', { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(sub[1]!.element);
+      await sub[1]!.trigger('keydown', { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(sub[2]!.element);
+      await sub[2]!.trigger('keydown', { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(sub[0]!.element);
+      await sub[0]!.trigger('keydown', { key: 'ArrowUp' });
+      expect(document.activeElement).toBe(sub[2]!.element);
+      await sub[2]!.trigger('keydown', { key: 'Home' });
+      expect(document.activeElement).toBe(sub[0]!.element);
+      await sub[0]!.trigger('keydown', { key: 'End' });
+      expect(document.activeElement).toBe(sub[2]!.element);
+
+      await sub[2]!.trigger('keydown', { key: 'Escape' });
+      expect(document.activeElement).toBe(move.element);
+      expect(board(wrapper).find('[role="menu"][aria-label="Move to…"]').exists()).toBe(false);
+      expect(hasMenu(wrapper)).toBe(true);
+    });
+
+    it('ArrowDown or ArrowRight on Move to enters the open submenu', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper } = await open();
+      document.body.appendChild(wrapper.element);
+
+      await actions(wrapper, 'Active').trigger('click');
+      await flushPromises();
+      const move = item(wrapper, 'Move to…');
+      await move.trigger('keydown', { key: 'ArrowRight' });
+      await flushPromises();
+      const sub = () =>
+        board(wrapper).findAll('[role="menu"][aria-label="Move to…"] [role="menuitem"]');
+      expect(document.activeElement).toBe(sub()[0]!.element);
+
+      (move.element as HTMLElement).focus();
+      await move.trigger('keydown', { key: 'ArrowDown' });
+      await flushPromises();
+      expect(document.activeElement).toBe(sub()[0]!.element);
+    });
+
+    it('the panel is fixed, so the board scroll box cannot clip it, and flips up near the bottom', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper } = await open();
+      const button = actions(wrapper, 'Active');
+      const panel = () => board(wrapper).get('[role="menu"]').element as HTMLElement;
+
+      await button.trigger('click');
+      await flushPromises();
+      expect(panel().style.position).toBe('fixed');
+      expect(panel().style.top).not.toBe('');
+      expect(panel().style.bottom).toBe('');
+      await button.trigger('click');
+
+      // A button near the bottom of the window, with a panel too tall to hang below it.
+      const rect = { top: 700, bottom: 744, left: 900, right: 944, width: 44, height: 44 };
+      vi.spyOn(button.element, 'getBoundingClientRect').mockReturnValue(rect as DOMRect);
+      const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(230);
+      try {
+        await button.trigger('click');
+        await flushPromises();
+        expect(panel().style.position).toBe('fixed');
+        expect(panel().style.top).toBe('');
+        expect(panel().style.bottom).toBe(`${window.innerHeight - rect.top + 4}px`);
+      } finally {
+        height.mockRestore();
+      }
+    });
+
+    it('closes when the page scrolls', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper } = await open();
+
+      await actions(wrapper, 'Active').trigger('click');
+      expect(hasMenu(wrapper)).toBe(true);
+      document.dispatchEvent(new Event('scroll'));
+      await flushPromises();
+      expect(hasMenu(wrapper)).toBe(false);
+    });
+
+    it('the Edit and Delete dialogs are not inside the draggable cards', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper } = await open();
+
+      await actions(wrapper, 'Active').trigger('click');
+      await item(wrapper, 'Edit').trigger('click');
+      await flushPromises();
+      expect(dialog(wrapper).exists()).toBe(true);
+      expect(board(wrapper).find('article dialog').exists()).toBe(false);
+      expect(board(wrapper).find('.board__grid dialog').exists()).toBe(false);
+    });
+
+    it('focus moves to the target column after Move to, and to the source column after Delete', async () => {
+      mockFetch({
+        ...routes([task('a1', 'active', 'a0'), task('a2', 'active', 'a1')]),
+        'PUT /api/v1/tasks/a1/position': { status: 200, body: task('a1', 'done', 'a0') },
+        'DELETE /api/v1/tasks/a2': { status: 204 },
+      });
+      const { wrapper } = await open();
+      document.body.appendChild(wrapper.element);
+
+      await actions(wrapper, 'Active', 0).trigger('click');
+      await item(wrapper, 'Move to…').trigger('click');
+      await item(wrapper, 'Done').trigger('click');
+      await flushPromises();
+      expect(document.activeElement).toBe(column(wrapper, 'Done').element);
+      expect(column(wrapper, 'Done').attributes('tabindex')).toBe('-1');
+
+      await actions(wrapper, 'Active', 0).trigger('click');
+      await item(wrapper, 'Delete').trigger('click');
+      await flushPromises();
+      await dialog(wrapper)
+        .findAll('button')
+        .find((b) => b.text() === 'Delete')!
+        .trigger('click');
+      await flushPromises();
+      expect(column(wrapper, 'Active').findAll('article')).toHaveLength(0);
+      expect(document.activeElement).toBe(column(wrapper, 'Active').element);
     });
 
     it('Move to Done appends to Done', async () => {

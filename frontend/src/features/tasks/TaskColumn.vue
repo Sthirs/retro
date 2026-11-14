@@ -4,11 +4,16 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { VueDraggable } from 'vue-draggable-plus';
 
-import type { PersonDto, TaskDto, TaskStatus } from '@/api/client';
+import type { TaskDto, TaskStatus } from '@/api/client';
 import TaskCard from '@/features/tasks/TaskCard.vue';
 import { useTasksStore } from '@/stores/tasks';
 
-const props = defineProps<{ status: TaskStatus; tasks: TaskDto[]; people: PersonDto[] }>();
+const props = defineProps<{ status: TaskStatus; tasks: TaskDto[] }>();
+const emit = defineEmits<{
+  edit: [task: TaskDto];
+  delete: [task: TaskDto];
+  moved: [status: TaskStatus];
+}>();
 const { t } = useI18n();
 const store = useTasksStore();
 
@@ -31,7 +36,8 @@ function onDrop(event: DropEvent): void {
 </script>
 
 <template>
-  <section class="column" :aria-label="name">
+  <!-- tabindex -1: focus lands here after a card is moved or deleted from its menu. -->
+  <section class="column" :aria-label="name" :data-column="status" tabindex="-1">
     <div class="column__header">
       <span class="pill" :class="`pill--${status}`">{{ name }}</span>
       <span class="column__count" data-testid="count">{{ tasks.length }}</span>
@@ -46,7 +52,14 @@ function onDrop(event: DropEvent): void {
       @add="onDrop"
       @update="onDrop"
     >
-      <TaskCard v-for="task in cards" :key="task.id" :task="task" :people="people" />
+      <TaskCard
+        v-for="task in cards"
+        :key="task.id"
+        :task="task"
+        @edit="emit('edit', $event)"
+        @delete="emit('delete', $event)"
+        @moved="emit('moved', $event)"
+      />
     </VueDraggable>
   </section>
 </template>
@@ -60,6 +73,10 @@ function onDrop(event: DropEvent): void {
   padding: 14px 12px;
   background: var(--well);
   border-radius: var(--radius-panel);
+}
+.column:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .column__header {
   display: flex;

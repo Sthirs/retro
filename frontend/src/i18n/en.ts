@@ -304,6 +304,7 @@ export default {
     italic: 'Italic',
     link: 'Link',
     linkUrl: 'Link address',
+    linkInvalid: 'Enter a web address (http or https) or an email address (mailto:).',
     linkApply: 'Apply',
     linkCancel: 'Cancel',
     mentions: 'Mention a team member',

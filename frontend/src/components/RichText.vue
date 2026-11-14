@@ -1,10 +1,18 @@
 <script setup lang="ts">
 /**
- * Read-only rich text (ADR-0010). The HTML is re-sanitised here with the same
- * allowlist the server applies, so nothing but the stored subset is rendered.
+ * Read-only rich text (ADR-0010). The HTML is re-sanitised here against the
+ * stored subset (same tags, attributes and link schemes the server keeps), so
+ * nothing outside it is rendered.
  */
 import DOMPurify from 'dompurify';
 import { computed } from 'vue';
+
+// The server always sets rel on links; do the same so stored HTML can't opt out.
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.tagName === 'A' && node.hasAttribute('href')) {
+    node.setAttribute('rel', 'noopener noreferrer');
+  }
+});
 
 const props = defineProps<{ html: string }>();
 
@@ -12,6 +20,10 @@ const safeHtml = computed(() =>
   DOMPurify.sanitize(props.html, {
     ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'a', 'span'],
     ALLOWED_ATTR: ['href', 'rel', 'data-type', 'data-id', 'data-label'],
+    ALLOW_DATA_ATTR: false,
+    // Plain-text values, not URIs: exempt them from the scheme check below.
+    ADD_URI_SAFE_ATTR: ['rel', 'data-type', 'data-id', 'data-label'],
+    ALLOWED_URI_REGEXP: /^(?:https?|mailto):/i,
   }),
 );
 </script>

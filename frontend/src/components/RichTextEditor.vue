@@ -18,6 +18,9 @@ const emit = defineEmits<{ 'update:modelValue': [html: string] }>();
 const { t } = useI18n();
 
 const MAX_SUGGESTIONS = 6;
+/** The only link schemes the server keeps (ADR-0010); Tiptap's own list is broader. */
+const ALLOWED_LINK = /^(?:https?|mailto):/i;
+const isAllowedLink = (url: string): boolean => ALLOWED_LINK.test(url.trim());
 const uid = useId();
 const listId = `mentions-${uid}`;
 const urlId = `link-url-${uid}`;
@@ -54,6 +57,7 @@ const editor = useEditor({
     attributes: {
       role: 'textbox',
       'aria-multiline': 'true',
+      'aria-autocomplete': 'list',
       'aria-label': props.label,
       class: 'rte-content',
     },
@@ -75,6 +79,8 @@ const editor = useEditor({
         openOnClick: false,
         autolink: true,
         protocols: ['http', 'https', 'mailto'],
+        isAllowedUri: (url) => isAllowedLink(url),
+        shouldAutoLink: (url) => isAllowedLink(url),
         HTMLAttributes: { rel: 'noopener noreferrer', target: null, class: null },
       },
     }),
@@ -103,6 +109,12 @@ const editor = useEditor({
           onKeyDown: ({ event }) => {
             const count = suggestion.value?.items.length ?? 0;
             if (count === 0) return false;
+            if (event.key === 'Escape') {
+              // The plugin closes the menu; keep the Esc from also closing a parent dialog.
+              event.stopPropagation();
+              event.preventDefault();
+              return true;
+            }
             if (event.key === 'ArrowDown') {
               selectedIndex.value = (selectedIndex.value + 1) % count;
               return true;
@@ -141,10 +153,12 @@ watch(
 watch([suggestion, selectedIndex], () => {
   const dom = editor.value?.view.dom;
   if (!dom) return;
-  if (suggestion.value) {
+  if (suggestion.value && suggestion.value.items.length > 0) {
+    dom.setAttribute('aria-expanded', 'true');
     dom.setAttribute('aria-controls', listId);
     dom.setAttribute('aria-activedescendant', optionId(selectedIndex.value));
   } else {
+    dom.removeAttribute('aria-expanded');
     dom.removeAttribute('aria-controls');
     dom.removeAttribute('aria-activedescendant');
   }
@@ -153,6 +167,8 @@ watch([suggestion, selectedIndex], () => {
 // --- Link field -------------------------------------------------------------
 
 const linkOpen = ref(false);
+const linkError = ref(false);
+const errorId = `link-error-${uid}`;
 const linkUrl = ref('');
 const linkInput = ref<HTMLInputElement | null>(null);
 const linkButton = ref<HTMLButtonElement | null>(null);
@@ -166,6 +182,7 @@ async function toggleLink(): Promise<void> {
   }
   const attrs = editor.value?.getAttributes('link') as { href?: string } | undefined;
   linkUrl.value = attrs?.href ?? '';
+  linkError.value = false;
   linkOpen.value = true;
   await nextTick();
   linkInput.value?.focus();
@@ -177,7 +194,7 @@ function closeLink(refocus: boolean): void {
   if (refocus) editor.value?.commands.focus();
 }
 
-/** Bare domains get https://; anything with another scheme is left to the Link extension to reject. */
+/** Bare domains get https://; schemes are validated by `isAllowedLink` afterwards. */
 function normaliseUrl(raw: string): string {
   const value = raw.trim();
   if (value === '' || /^[a-z][a-z0-9+.-]*:/i.test(value)) return value;
@@ -188,6 +205,11 @@ function applyLink(): void {
   const e = editor.value;
   if (!e) return;
   const href = normaliseUrl(linkUrl.value);
+  if (href !== '' && !isAllowedLink(href)) {
+    linkError.value = true;
+    linkInput.value?.focus();
+    return;
+  }
   const chain = e.chain().focus();
   if (href === '') {
     chain.extendMarkRange('link').unsetLink().run();
@@ -252,12 +274,18 @@ onBeforeUnmount(() => {
         :id="urlId"
         ref="linkInput"
         v-model="linkUrl"
+        :aria-invalid="linkError"
+        :aria-describedby="linkError ? errorId : undefined"
+        @input="linkError = false"
         class="rte-link-input"
         type="text"
         inputmode="url"
         autocomplete="off"
         placeholder="https://"
       />
+      <p v-if="linkError" :id="errorId" class="rte-link-error" role="alert">
+        {{ t('richText.linkInvalid') }}
+      </p>
       <button type="submit" class="rte-link-btn rte-link-apply">
         {{ t('richText.linkApply') }}
       </button>
@@ -362,6 +390,13 @@ onBeforeUnmount(() => {
   background: var(--surface);
   color: var(--text);
   font: inherit;
+}
+
+.rte-link-error {
+  flex: 1 0 100%;
+  margin: 0;
+  font-size: 13px;
+  color: var(--danger);
 }
 
 .rte-link-btn {

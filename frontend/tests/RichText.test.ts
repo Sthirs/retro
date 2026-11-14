@@ -72,6 +72,31 @@ describe('RichText', () => {
   });
 });
 
+describe('RichText allowlist', () => {
+  it('RichText drops links outside http, https and mailto', () => {
+    const wrapper = mount(RichText, {
+      props: {
+        html: '<p><a href="ftp://x">f</a> <a href="mailto:a@b.c">m</a> <a href="tel:1">t</a></p>',
+      },
+    });
+    const links = wrapper.findAll('a');
+    expect(links[0]?.attributes('href')).toBeUndefined();
+    expect(links[1]?.attributes('href')).toBe('mailto:a@b.c');
+    expect(links[2]?.attributes('href')).toBeUndefined();
+  });
+
+  it('RichText drops unlisted data attributes', () => {
+    const wrapper = mount(RichText, {
+      props: {
+        html: `<p data-foo="1"><span data-type="mention" data-id="${ALICE.id}" data-label="A" data-x="2">@A</span></p>`,
+      },
+    });
+    expect(wrapper.html()).not.toContain('data-foo');
+    expect(wrapper.html()).not.toContain('data-x');
+    expect(wrapper.get('span').attributes('data-id')).toBe(ALICE.id);
+  });
+});
+
 describe('RichTextEditor', () => {
   beforeAll(() => {
     // ProseMirror measures client rects when scrolling the selection into view.
@@ -183,6 +208,72 @@ describe('RichTextEditor', () => {
     await vi.waitFor(() =>
       expect(wrapper.get('button[aria-label="Bold"]').attributes('aria-pressed')).toBe('true'),
     );
+    wrapper.unmount();
+  });
+  it.each([
+    ['selection', true],
+    ['empty selection', false],
+  ])('RichTextEditor rejects unsupported link schemes (%s)', async (_name, selected) => {
+    const wrapper = mountEditor('<p>site</p>');
+    const editor = await editorOf(wrapper);
+    if (selected) editor.commands.selectAll();
+    else editor.commands.setTextSelection(1);
+    const before = editor.getHTML();
+    await wrapper.get('button[aria-label="Link"]').trigger('click');
+    for (const bad of ['ftp://x', 'javascript:alert(1)']) {
+      const input = wrapper.get('form input');
+      await input.setValue(bad);
+      await wrapper.get('form').trigger('submit');
+      await flushPromises();
+      expect(wrapper.find('form').exists()).toBe(true);
+      expect(input.attributes('aria-invalid')).toBe('true');
+      const errorId = input.attributes('aria-describedby');
+      expect(errorId).toBeTruthy();
+      expect(wrapper.get(`#${errorId}`).text()).not.toBe('');
+      expect(editor.getHTML()).toBe(before);
+    }
+    wrapper.unmount();
+  });
+
+  it('RichTextEditor inserts a mailto link at an empty selection', async () => {
+    const wrapper = mountEditor('<p>site</p>');
+    const editor = await editorOf(wrapper);
+    editor.commands.setTextSelection(1);
+    await wrapper.get('button[aria-label="Link"]').trigger('click');
+    await wrapper.get('form input').setValue('mailto:a@b.c');
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+    expect(editor.getHTML()).toContain('href="mailto:a@b.c"');
+    wrapper.unmount();
+  });
+
+  it('RichTextEditor drops links with unsupported schemes from content', async () => {
+    const wrapper = mountEditor();
+    const editor = await editorOf(wrapper);
+    editor.commands.setContent('<p><a href="ftp://x">f</a> <a href="https://ok.example">o</a></p>');
+    expect(editor.getHTML()).not.toContain('ftp:');
+    expect(editor.getHTML()).toContain('href="https://ok.example"');
+    wrapper.unmount();
+  });
+
+  it('RichTextEditor Escape closes the mention menu without reaching a parent', async () => {
+    const wrapper = mountEditor();
+    const editor = await editorOf(wrapper);
+    const parentKeys: string[] = [];
+    document.body.addEventListener('keydown', (e) => parentKeys.push(e.key));
+    editor.commands.focus();
+    editor.commands.insertContent('@');
+    await flushPromises();
+    const dom = editor.view.dom;
+    expect(dom.getAttribute('aria-expanded')).toBe('true');
+    expect(dom.getAttribute('aria-autocomplete')).toBe('list');
+    expect(dom.getAttribute('aria-activedescendant')).toBeTruthy();
+    dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flushPromises();
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false);
+    expect(parentKeys).not.toContain('Escape');
+    expect(dom.getAttribute('aria-activedescendant')).toBeNull();
+    expect(dom.getAttribute('aria-expanded')).toBeNull();
     wrapper.unmount();
   });
 });

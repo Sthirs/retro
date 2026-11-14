@@ -31,7 +31,7 @@ pub fn router(state: AppState) -> Router {
 
     let v1 = Router::new()
         .nest("/auth", auth)
-        .route("/me", get(api::me::me))
+        .route("/me", get(api::me::me).patch(api::me::update_me))
         .route(
             "/teams",
             get(api::teams::list_teams).post(api::teams::create_team),

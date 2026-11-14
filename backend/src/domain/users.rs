@@ -32,6 +32,32 @@ pub async fn find_by_login(
         .await?)
 }
 
+/// Longest allowed display name, in characters.
+pub const DISPLAY_NAME_MAX: usize = 80;
+
+/// Trims a display name and checks its length.
+pub fn validate_display_name(raw: &str) -> Result<String, AppError> {
+    let name = raw.trim();
+    if name.is_empty() || name.chars().count() > DISPLAY_NAME_MAX {
+        return Err(AppError::Invalid("invalid_display_name"));
+    }
+    Ok(name.to_owned())
+}
+
+/// Sets the user's display name and pins it so SSO sign-ins no longer overwrite it.
+pub async fn update_display_name(
+    db: &impl ConnectionTrait,
+    user: user::Model,
+    raw: &str,
+) -> Result<user::Model, AppError> {
+    let name = validate_display_name(raw)?;
+    let mut active: user::ActiveModel = user.into();
+    active.display_name = Set(name);
+    active.display_name_custom = Set(true);
+    active.updated_at = Set(OffsetDateTime::now_utc());
+    Ok(active.update(db).await?)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum SsoOutcome {
     Existing,
@@ -84,7 +110,10 @@ pub async fn sign_in_with_identity(
             {
                 active.email = Set(identity.email.clone());
             }
-            if let Some(name) = &identity.name {
+            // A name the user chose themselves is never overwritten by the provider.
+            if !user.display_name_custom
+                && let Some(name) = &identity.name
+            {
                 active.display_name = Set(name.clone());
             }
             if identity.picture.is_some() {

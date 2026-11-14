@@ -21,6 +21,7 @@ use crate::{api, error::Problem};
         api::auth::oidc_start,
         api::auth::oidc_callback,
         api::me::me,
+        api::me::update_me,
         api::teams::list_teams,
         api::teams::create_team,
         api::teams::get_team,

@@ -1,6 +1,6 @@
 import { request, type APIRequestContext } from '@playwright/test';
 
-import { PASSWORD } from './fixtures';
+import { PASSWORD, USERS } from './fixtures';
 
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173';
 
@@ -28,7 +28,8 @@ async function signedIn(login: string): Promise<{ api: APIRequestContext; userId
 
 /**
  * Brings a dev account back to "no team, no invitation": deletes the teams it
- * administers, leaves the others and declines open invitations. The e2e suite
+ * administers, leaves the others, declines open invitations and restores the
+ * display name and picture. The e2e suite
  * owns the alice and bob accounts of the dev cluster.
  */
 export async function resetAccount(login: string): Promise<void> {
@@ -45,6 +46,10 @@ export async function resetAccount(login: string): Promise<void> {
     for (const invitation of me.invitations) {
       await api.post(`/api/v1/invitations/${invitation.token}/decline`);
     }
+    // The account page lets people rename themselves and upload a picture.
+    const known = Object.values(USERS).find((user) => user.username === login);
+    if (known) await api.patch('/api/v1/me', { data: { displayName: known.name } });
+    await api.delete('/api/v1/me/picture'); // 200 with or without a picture
   } finally {
     await api.dispose();
   }

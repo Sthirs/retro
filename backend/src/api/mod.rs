@@ -1,6 +1,7 @@
 //! HTTP routers and handlers, one module per resource (spec §14).
 
 pub mod auth;
+pub mod dev;
 pub mod health;
 pub mod invitations;
 pub mod join;

@@ -29,7 +29,7 @@ pub fn router(state: AppState) -> Router {
         .route("/oidc", get(api::auth::oidc_start))
         .route("/oidc/callback", get(api::auth::oidc_callback));
 
-    let v1 = Router::new()
+    let mut v1 = Router::new()
         .nest("/auth", auth)
         .route("/me", get(api::me::me).patch(api::me::update_me))
         // One byte over the limit, so the handler (not axum) rejects an
@@ -86,7 +86,12 @@ pub fn router(state: AppState) -> Router {
             post(api::invitations::decline_invitation),
         )
         .route("/join/{token}", post(api::join::join_team))
-        .route("/openapi.json", get(openapi_json))
+        .route("/openapi.json", get(openapi_json));
+    // Development-only: refused in production by the configuration.
+    if state.config.seed_dev_users {
+        v1 = v1.route("/dev/teams/{team_id}/tasks", post(api::dev::seed_task));
+    }
+    let v1 = v1
         // Responses carry tokens and personal data (access and refresh tokens,
         // invitation and join links): never cache any of them.
         .layer(SetResponseHeaderLayer::overriding(

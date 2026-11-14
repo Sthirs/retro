@@ -131,6 +131,19 @@ async fn views(
         .collect()
 }
 
+/// A single task with its author, mentions and `can_edit`, as `list` returns it.
+pub async fn view(
+    db: &impl ConnectionTrait,
+    task: task::Model,
+    role: Role,
+    actor: Uuid,
+) -> Result<TaskView, AppError> {
+    views(db, vec![task], role, actor)
+        .await?
+        .pop()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("task is missing")))
+}
+
 /// Adds a task at the end of its column. The content is sanitized; mentions of
 /// users who are not team members are dropped.
 pub async fn insert(
@@ -393,10 +406,7 @@ pub async fn edit(
     insert_mentions(&txn, task.team_id, task.id, content.mention_ids).await?;
     txn.commit().await?;
 
-    views(db, vec![edited], role, actor)
-        .await?
-        .pop()
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("edited task is missing")))
+    view(db, edited, role, actor).await
 }
 
 /// Deletes a task and its mentions. Only its author or a team admin may; any

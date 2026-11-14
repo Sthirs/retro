@@ -48,14 +48,16 @@ In dev mode the backend seeds `alice` and `bob` at startup, and dex has the same
 people, so each can sign in **with a password or through single sign-on**. `carol`
 exists only in dex: she can sign in **only through single sign-on**, and her Retro
 account is created on her first sign-in (`OIDC_AUTO_REGISTER`). The backend also
-seeds `dana` (password only, not in dex), the account the end-to-end account spec
-owns.
+seeds `dana`, `erin` and `finn` (password only, not in dex); the end-to-end suite
+owns them, `dana` for the account spec, `erin` and `finn` only for the tasks spec.
 
 | Username | Email | Name | Password | Sign-in methods |
 | --- | --- | --- | --- | --- |
 | `alice` | `alice@retro.local` | Alice Rossi | `password` | password, SSO |
 | `bob` | `bob@retro.local` | Bob Bianchi | `password` | password, SSO |
 | `dana` | `dana@retro.local` | Dana Neri | `password` | password only (not in dex) |
+| `erin` | `erin@retro.local` | Erin Gallo | `password` | password only (not in dex) |
+| `finn` | `finn@retro.local` | Finn Moretti | `password` | password only (not in dex) |
 | — | `carol@retro.local` | Carol Verdi | `password` (in dex) | SSO only |
 
 On the first SSO sign-in, the backend links the dex identity to the existing account
@@ -168,7 +170,7 @@ The chart sets them from `values.yaml` (ConfigMap and Secrets).
 | `OIDC_BUTTON_TEXT` | `Continue with single sign-on` | |
 | `OIDC_AUTO_REGISTER` | `true` | Create accounts for unknown SSO users |
 | `OIDC_CA_CERT_FILE` | — | PEM file of extra root CAs trusted for calls to the provider (chart: `oidc.caSecret`) |
-| `SEED_DEV_USERS` | `false` | Seed `alice`, `bob` and `dana`; refused in production |
+| `SEED_DEV_USERS` | `false` | Seed `alice`, `bob`, `dana`, `erin` and `finn`; refused in production |
 
 The OIDC redirect URI to register with the provider is
 `<PUBLIC_URL>/api/v1/auth/oidc/callback`.

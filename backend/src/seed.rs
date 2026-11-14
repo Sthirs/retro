@@ -36,6 +36,18 @@ pub const DEV_USERS: &[DevUser] = &[
         email: "dana@retro.local",
         display_name: "Dana Neri",
     },
+    // Also password only. The end-to-end tasks spec owns these two, so it can
+    // build boards with several members without touching alice, bob and dana.
+    DevUser {
+        username: "erin",
+        email: "erin@retro.local",
+        display_name: "Erin Gallo",
+    },
+    DevUser {
+        username: "finn",
+        email: "finn@retro.local",
+        display_name: "Finn Moretti",
+    },
 ];
 
 /// Creates the dev users, or resets their name and password. Idempotent.

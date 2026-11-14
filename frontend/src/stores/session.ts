@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 
 import { api, setTokenSource, type SessionResponse, type User } from '@/api/client';
+import { clearImageCache } from '@/lib/images';
 
 /** Error codes the sign-in page knows how to explain. */
 export type LoginErrorCode = 'invalid_credentials' | 'too_many_requests' | 'unknown';
@@ -33,6 +34,7 @@ export const useSessionStore = defineStore('session', () => {
   function clear(): void {
     accessToken.value = null;
     user.value = null;
+    clearImageCache();
   }
 
   async function login(login: string, password: string, remember: boolean): Promise<void> {

@@ -107,7 +107,11 @@ defineExpose({ toggle });
       aria-controls="user-menu"
       @click="toggle"
     >
-      <UserAvatar :user-id="session.user.id" :name="session.user.displayName" />
+      <UserAvatar
+        :user-id="session.user.id"
+        :name="session.user.displayName"
+        :picture-version="session.user.pictureVersion"
+      />
       <span class="trigger__name" data-testid="current-user">{{ session.user.displayName }}</span>
       <AppIcon name="chevronDown" :size="16" />
     </button>
@@ -120,7 +124,12 @@ defineExpose({ toggle });
       :aria-label="t('topBar.userMenu')"
     >
       <div class="panel__identity">
-        <UserAvatar :user-id="session.user.id" :name="session.user.displayName" :size="40" />
+        <UserAvatar
+          :user-id="session.user.id"
+          :name="session.user.displayName"
+          :picture-version="session.user.pictureVersion"
+          :size="40"
+        />
         <div class="panel__who">
           <span class="panel__name">{{ session.user.displayName }}</span>
           <span class="panel__email">{{ session.user.email }}</span>

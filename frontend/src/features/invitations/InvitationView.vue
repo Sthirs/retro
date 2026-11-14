@@ -129,6 +129,7 @@ const closedText = computed(() => {
           <UserAvatar
             :user-id="state.invitation.invitedBy.id"
             :name="state.invitation.invitedBy.displayName"
+            :picture-version="state.invitation.invitedBy.pictureVersion"
             :size="36"
           />
           <i18n-t keypath="invitation.invitedBy" tag="p" class="inviter__text">
@@ -149,6 +150,7 @@ const closedText = computed(() => {
               :key="member.id"
               :user-id="member.id"
               :name="member.displayName"
+              :picture-version="member.pictureVersion"
               :size="26"
               ring="var(--well)"
               :title="member.displayName"

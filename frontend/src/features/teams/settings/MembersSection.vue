@@ -115,7 +115,12 @@ const dialog = computed(() => {
     <AppAlert v-if="error" class="error">{{ t(`errors.${error}`) }}</AppAlert>
     <ul class="list">
       <li v-for="member in ordered" :key="member.user.id" class="item" data-testid="member">
-        <UserAvatar :user-id="member.user.id" :name="member.user.displayName" :size="36" />
+        <UserAvatar
+          :user-id="member.user.id"
+          :name="member.user.displayName"
+          :picture-version="member.user.pictureVersion"
+          :size="36"
+        />
         <div class="item__text">
           <span class="item__name">
             {{

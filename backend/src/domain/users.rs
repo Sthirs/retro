@@ -103,6 +103,8 @@ pub async fn sign_in_with_identity(
                     .clone()
                     .unwrap_or_else(|| identity.email.split('@').next().unwrap_or("").to_owned())),
                 avatar_url: Set(identity.picture.clone()),
+                display_name_custom: Set(false),
+                picture_version: Set(None),
                 password_hash: Set(None),
                 created_at: Set(now),
                 updated_at: Set(now),

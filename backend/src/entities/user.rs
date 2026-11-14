@@ -13,6 +13,11 @@ pub struct Model {
     pub username: Option<String>,
     pub display_name: String,
     pub avatar_url: Option<String>,
+    /// True once the user edited their display name; SSO sign-ins then stop
+    /// overwriting it.
+    pub display_name_custom: bool,
+    /// Content hash of the uploaded picture, `None` when there is none.
+    pub picture_version: Option<String>,
     /// Argon2id PHC string. `None` for accounts that only sign in through SSO.
     pub password_hash: Option<String>,
     pub created_at: TimeDateTimeWithTimeZone,

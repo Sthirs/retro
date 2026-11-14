@@ -134,6 +134,8 @@ impl TestApp {
             username: Set(Some(username.to_owned())),
             display_name: Set(name.to_owned()),
             avatar_url: Set(None),
+            display_name_custom: Set(false),
+            picture_version: Set(None),
             password_hash: Set(Some(password::hash("password").unwrap())),
             created_at: Set(now),
             updated_at: Set(now),

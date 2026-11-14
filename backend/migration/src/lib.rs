@@ -5,6 +5,7 @@ pub use sea_orm_migration::prelude::*;
 mod m20261112_000001_auth;
 mod m20261113_000001_teams;
 mod m20261113_000002_open_invitation_unique;
+mod m20261114_000001_account;
 
 pub struct Migrator;
 
@@ -15,6 +16,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261112_000001_auth::Migration),
             Box::new(m20261113_000001_teams::Migration),
             Box::new(m20261113_000002_open_invitation_unique::Migration),
+            Box::new(m20261114_000001_account::Migration),
         ]
     }
 }

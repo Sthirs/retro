@@ -55,6 +55,8 @@ pub async fn seed_dev_users(db: &impl ConnectionTrait) -> Result<(), AppError> {
                     username: Set(Some(dev.username.into())),
                     display_name: Set(dev.display_name.into()),
                     avatar_url: Set(None),
+                    display_name_custom: Set(false),
+                    picture_version: Set(None),
                     password_hash: Set(Some(hash.clone())),
                     created_at: Set(now),
                     updated_at: Set(now),

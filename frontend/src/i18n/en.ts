@@ -54,6 +54,7 @@ export default {
       me: 'me',
       meetingN: 'Meeting {n}',
       unknown: 'Unknown member',
+      selectedMember: 'Selected member',
       clear: 'Clear filters',
     },
     columns: {

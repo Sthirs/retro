@@ -1,8 +1,10 @@
-import { flushPromises, type VueWrapper } from '@vue/test-utils';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import { afterEach, describe, expect, it } from 'vitest';
 import { VueDraggable } from 'vue-draggable-plus';
 
 import type { TaskDto } from '@/api/client';
+import TaskFilters from '@/features/tasks/TaskFilters.vue';
+import { buildI18n } from '@/i18n';
 
 import {
   ALICE,
@@ -292,7 +294,7 @@ describe('Tasks board', () => {
       expect(result.wrapper.text()).toContain('Clear filters');
     });
 
-    it('does not call the unknown-member label when the member list failed', async () => {
+    it('keeps the select on the URL value, with a neutral label, when members fail to load', async () => {
       mockFetch({
         ...routes([task('a1', 'active', 'a0')]),
         [`GET /api/v1/teams/${TEAM_ID}/members`]: { status: 500 },
@@ -300,7 +302,50 @@ describe('Tasks board', () => {
       const result = await renderAt(`/teams/${TEAM_ID}/tasks?author=gone`);
       mounted.push(result.wrapper);
 
+      const select = result.wrapper.get('select[aria-label="Author"]');
+      expect((select.element as HTMLSelectElement).value).toBe('gone');
+      const selected = select.findAll('option').find((o) => o.element.selected);
+      expect(selected?.text()).toBe('Selected member');
       expect(result.wrapper.text()).not.toContain('Unknown member');
+    });
+
+    it('keeps the select on the URL value while members are loading', async () => {
+      let release: () => void = () => {};
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const { fetchMock } = mockFetch(routes([task('a1', 'active', 'a0')]));
+      const inner = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input: Request) => {
+        if (new URL(input.url).pathname.endsWith('/members')) await gate;
+        return inner(input);
+      });
+      const result = await renderAt(`/teams/${TEAM_ID}/tasks?author=${BOB.id}`);
+      mounted.push(result.wrapper);
+
+      const select = result.wrapper.get('select[aria-label="Author"]');
+      expect((select.element as HTMLSelectElement).value).toBe(BOB.id);
+      expect(
+        select
+          .findAll('option')
+          .find((o) => o.element.selected)
+          ?.text(),
+      ).toBe('Selected member');
+
+      release();
+      await flushPromises();
+      expect(
+        select
+          .findAll('option')
+          .find((o) => o.element.selected)
+          ?.text(),
+      ).toBe('Bob Bianchi');
+    });
+
+    it('disables My tasks without a current user', () => {
+      const wrapper = mount(TaskFilters, {
+        props: { filter: {}, members: [], membersLoaded: false, meetingIds: [], meId: null },
+        global: { plugins: [buildI18n()] },
+      });
+      expect(wrapper.get('button[aria-pressed]').attributes('disabled')).toBeDefined();
     });
 
     it('reloads once on mount, once per filter change and once per team switch', async () => {

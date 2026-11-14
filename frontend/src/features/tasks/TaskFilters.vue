@@ -26,11 +26,15 @@ const meetings = computed(() => {
   return [...ids];
 });
 
-/** The people to pick from, plus a stale URL value once we know the member list is complete. */
+/**
+ * The people to pick from, plus the current URL value when it is not among them, so the select
+ * never claims "anyone" while filtering. It is "unknown" only once the member list has loaded.
+ */
 function people(current: string | undefined): { id: string; name: string }[] {
   const list = props.members.map((m) => ({ id: m.user.id, name: m.user.displayName }));
-  if (props.membersLoaded && current && !list.some((p) => p.id === current)) {
-    list.push({ id: current, name: t('tasks.filters.unknown') });
+  if (current && !list.some((p) => p.id === current)) {
+    const name = props.membersLoaded ? 'tasks.filters.unknown' : 'tasks.filters.selectedMember';
+    list.push({ id: current, name: t(name) });
   }
   return list;
 }

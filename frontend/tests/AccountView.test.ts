@@ -375,6 +375,27 @@ describe('account page: preferences and log out', () => {
     expect(wrapper.findAll('.tag--current')).toHaveLength(1);
   });
 
+  it('stays mounted when the default team changes', async () => {
+    const { calls } = mockFetch(
+      base({
+        'GET /api/v1/me': me([team(), team({ id: OTHER_TEAM_ID, name: 'Mobile Squad' })]),
+      }),
+    );
+    const { wrapper } = await renderAt('/account');
+    const meCalls = () => calls.filter((c) => c.method === 'GET' && c.path === '/api/v1/me');
+    // One from the teams store (route guard), one from the page itself.
+    const before = meCalls().length;
+    expect(before).toBe(2);
+    await wrapper.find('#display-name').setValue('Ali');
+    const select = wrapper.find('#default-team');
+    (select.element as HTMLSelectElement).focus();
+    await select.setValue(OTHER_TEAM_ID);
+    await flushPromises();
+    expect((wrapper.find('#display-name').element as HTMLInputElement).value).toBe('Ali');
+    expect(wrapper.find('#default-team').element).toBe(select.element);
+    expect(meCalls()).toHaveLength(before);
+  });
+
   it('the language select offers English only', async () => {
     mockFetch(base());
     const { wrapper } = await renderAt('/account');

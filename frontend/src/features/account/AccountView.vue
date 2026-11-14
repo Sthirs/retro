@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** Account page: the signed-in user's own settings (spec §7.2). */
+/** Account page: the signed-in user's own settings (spec §4, §7.1). */
 import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';

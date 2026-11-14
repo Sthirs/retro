@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** "Preferences": theme, language and the team Retro opens by default (spec §7.2). */
+/** "Preferences": theme, language and the team Retro opens by default (spec §4, §7.1). */
 import { useI18n } from 'vue-i18n';
 
 import AppIcon from '@/components/AppIcon.vue';

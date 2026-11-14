@@ -20,6 +20,12 @@ const teamId = computed(() => {
   const param = route.params.teamId;
   return typeof param === 'string' ? param : teams.defaultTeam()?.id;
 });
+// Team pages remount when the team changes. Other pages (the account page)
+// must stay mounted when the remembered or default team changes, so they key
+// on the route, not on the resolved team.
+const viewKey = computed(() =>
+  typeof route.params.teamId === 'string' ? route.params.teamId : String(route.name),
+);
 
 const entries: { name: string; label: string; icon: IconName }[] = [
   { name: 'team-meetings', label: 'nav.meetings', icon: 'calendar' },
@@ -45,7 +51,7 @@ const entries: { name: string; label: string; icon: IconName }[] = [
         </RouterLink>
       </nav>
       <main class="shell__main">
-        <RouterView :key="teamId ?? String(route.name)" />
+        <RouterView :key="viewKey" />
       </main>
     </div>
   </div>

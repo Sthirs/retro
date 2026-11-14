@@ -18,9 +18,24 @@ const emit = defineEmits<{ 'update:modelValue': [html: string] }>();
 const { t } = useI18n();
 
 const MAX_SUGGESTIONS = 6;
+/** Tiptap's own guard: no autolink for bare IPv4 addresses or dotless hostnames. */
+function defaultShouldAutoLink(url: string): boolean {
+  if (HAS_SCHEME.test(url) && !url.includes('@')) return true;
+  const hostname = (url.includes('@') ? url.split('@').pop() : url)?.split(/[/?#:]/)[0] ?? '';
+  return !/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) && hostname.includes('.');
+}
+
 /** The only link schemes the server keeps (ADR-0010); Tiptap's own list is broader. */
 const ALLOWED_LINK = /^(?:https?|mailto):/i;
-const isAllowedLink = (url: string): boolean => ALLOWED_LINK.test(url.trim());
+const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+const isAllowedScheme = (url: string): boolean => ALLOWED_LINK.test(url.trim());
+/**
+ * Tiptap hands autolink the text it matched (`example.com`, `a@b.c`), not the
+ * href, and completes the scheme itself (http, or mailto for emails). So a
+ * scheme-less value is fine; any explicit scheme must be an allowed one.
+ */
+const isAllowedLink = (url: string): boolean =>
+  !HAS_SCHEME.test(url.trim()) || isAllowedScheme(url);
 const uid = useId();
 const listId = `mentions-${uid}`;
 const urlId = `link-url-${uid}`;
@@ -80,7 +95,7 @@ const editor = useEditor({
         autolink: true,
         protocols: ['http', 'https', 'mailto'],
         isAllowedUri: (url) => isAllowedLink(url),
-        shouldAutoLink: (url) => isAllowedLink(url),
+        shouldAutoLink: (url) => isAllowedLink(url) && defaultShouldAutoLink(url),
         HTMLAttributes: { rel: 'noopener noreferrer', target: null, class: null },
       },
     }),
@@ -205,7 +220,7 @@ function applyLink(): void {
   const e = editor.value;
   if (!e) return;
   const href = normaliseUrl(linkUrl.value);
-  if (href !== '' && !isAllowedLink(href)) {
+  if (href !== '' && !isAllowedScheme(href)) {
     linkError.value = true;
     linkInput.value?.focus();
     return;

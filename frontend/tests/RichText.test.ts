@@ -3,6 +3,7 @@
 // @vitest-environment jsdom
 
 import { flushPromises, mount } from '@vue/test-utils';
+import DOMPurify from 'dompurify';
 import type { Editor } from '@tiptap/vue-3';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
@@ -73,6 +74,26 @@ describe('RichText', () => {
 });
 
 describe('RichText allowlist', () => {
+  it('RichText mounts without registering sanitizer hooks', () => {
+    const addHook = vi.spyOn(DOMPurify, 'addHook');
+    for (let i = 0; i < 3; i++) {
+      mount(RichText, { props: { html: '<p><a href="https://x.y">x</a></p>' } }).unmount();
+    }
+    expect(addHook).not.toHaveBeenCalled();
+  });
+
+  it('sanitizeRichText registers its hook once and keeps output stable', async () => {
+    vi.resetModules();
+    const { default: fresh } = await import('dompurify');
+    const addHook = vi.spyOn(fresh, 'addHook');
+    const { sanitizeRichText } = await import('@/lib/sanitize');
+    const html = '<p><a href="https://x.y" rel="nofollow">x</a></p>';
+    const first = sanitizeRichText(html);
+    for (let i = 0; i < 3; i++) expect(sanitizeRichText(html)).toBe(first);
+    expect(first).toBe('<p><a href="https://x.y" rel="noopener noreferrer">x</a></p>');
+    expect(addHook).toHaveBeenCalledTimes(1);
+  });
+
   it('RichText drops links outside http, https and mailto', () => {
     const wrapper = mount(RichText, {
       props: {
@@ -260,7 +281,8 @@ describe('RichTextEditor', () => {
     const wrapper = mountEditor();
     const editor = await editorOf(wrapper);
     const parentKeys: string[] = [];
-    document.body.addEventListener('keydown', (e) => parentKeys.push(e.key));
+    const onKey = (e: KeyboardEvent) => parentKeys.push(e.key);
+    document.body.addEventListener('keydown', onKey);
     editor.commands.focus();
     editor.commands.insertContent('@');
     await flushPromises();
@@ -274,6 +296,29 @@ describe('RichTextEditor', () => {
     expect(parentKeys).not.toContain('Escape');
     expect(dom.getAttribute('aria-activedescendant')).toBeNull();
     expect(dom.getAttribute('aria-expanded')).toBeNull();
+    document.body.removeEventListener('keydown', onKey);
+    wrapper.unmount();
+  });
+  it('RichTextEditor autolinks bare domains and emails but not other schemes', async () => {
+    const wrapper = mountEditor();
+    const editor = await editorOf(wrapper);
+    editor.commands.focus();
+    editor.commands.insertContent('example.com ');
+    expect(editor.getHTML()).toContain(
+      '<a rel="noopener noreferrer" href="http://example.com">example.com</a>',
+    );
+    editor.commands.setContent('');
+    editor.commands.insertContent('a@b.co ');
+    expect(editor.getHTML()).toContain('href="mailto:a@b.co"');
+    editor.commands.setContent('');
+    editor.commands.insertContent('ftp://x.y ');
+    expect(editor.getHTML()).not.toContain('<a ');
+    editor.commands.setContent('');
+    editor.commands.insertContent('10.0.0.1 ');
+    expect(editor.getHTML()).not.toContain('<a ');
+    editor.commands.setContent('');
+    editor.commands.insertContent('localhost ');
+    expect(editor.getHTML()).not.toContain('<a ');
     wrapper.unmount();
   });
 });

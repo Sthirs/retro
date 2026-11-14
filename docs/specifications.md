@@ -299,13 +299,13 @@ The individual meeting phases cannot be replayed.
   - rich text (including images), which can contain **@mentions** of team members (rendered as chips; mentioned users can filter "my tasks"). Mentions do **not** trigger notifications;
   - author at the bottom (avatar + name).
 - Cards can be **dragged and dropped** between columns and reordered within a column. Any team member can move cards.
-- Changes are broadcast in real time to anyone viewing the board.
+- Changes are broadcast in real time to anyone viewing the board. Until the real-time hub (§11) exists, the board refreshes when the window regains focus.
 - The task author and team admins can edit or delete a task.
 - Filters: mentioned user, author, meeting.
 
 ### 10.2 Ordering
 
-- Each task has `status` and a `position`. Positions use fractional indexing (or sparse integers) so that a move updates a single row.
+- Each task has `status` and a `position`. Positions are fractional-index string keys (base 62, compared byte-wise), so that a move updates a single row; concurrent moves to the same slot conflict and the client reloads.
 
 ---
 
@@ -466,8 +466,9 @@ reactions(reflection_id, user_id, emoji, created_at)
     PK(reflection_id, user_id, emoji)
 
 tasks(id, team_id, meeting_id NULL, group_id NULL, author_id → users,
-      content, status ENUM('future','stuck','active','done'), position,
+      content, status ENUM('future','stuck','active','done'), position TEXT,
       created_at, updated_at)
+    UNIQUE(team_id, status, position)
 
 task_mentions(task_id, user_id)  PK(task_id, user_id)
 
@@ -574,7 +575,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | GET | `/teams/{teamId}/tasks` | Board, with filters |
 | POST | `/meetings/{id}/tasks` | Create a task (Discuss phase) |
 | PATCH | `/tasks/{tid}` | Edit content (author/admin) |
-| PUT | `/tasks/{tid}/position` | `{ status, before_id?, after_id? }` |
+| PUT | `/tasks/{tid}/position` | `{ status, beforeId?, afterId? }`: the moved task ends up directly after `afterId` and before `beforeId`; with neither, at the end of the column |
 | DELETE | `/tasks/{tid}` | Delete (author/admin) |
 
 ### 14.6 Operational

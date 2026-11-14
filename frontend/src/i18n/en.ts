@@ -29,6 +29,9 @@ export default {
     invitation_revoked: 'This invitation was revoked.',
     invitation_used: 'This invitation has already been answered.',
     too_many_requests: 'Too many attempts. Try again in a few minutes.',
+    invalid_display_name: 'Enter a display name of 1 to 80 characters.',
+    picture_too_large: 'This picture is larger than 5 MB. Choose a smaller one.',
+    unsupported_picture_type: 'Use a PNG, JPEG, GIF or WebP picture.',
     unknown: 'Something went wrong. Try again.',
   },
   signIn: {
@@ -64,6 +67,7 @@ export default {
   topBar: {
     home: 'Retro home',
     team: 'Team',
+    noTeam: 'No team yet',
     teams: 'Teams',
     addTeam: 'Add team',
     invitations: 'Pending invitations',
@@ -84,6 +88,29 @@ export default {
   },
   account: {
     title: 'Your account',
+    subtitle: 'Your profile, teams and preferences',
+    loadFailed: 'Your account could not be loaded.',
+    profile: {
+      title: 'Profile',
+      changePicture: 'Change picture',
+      uploadPicture: 'Upload picture',
+      removePicture: 'Remove picture',
+      pictureHint: 'PNG, JPEG, GIF or WebP · up to 5 MB',
+      displayName: 'Display name',
+      displayNameHint: 'Shown to your teams in meetings, on tasks and in mentions.',
+      email: 'Email',
+      emailHintSso:
+        "Comes from your organization's sign-in and can't be changed here. Invitations are matched to this address.",
+      emailHintLocal: 'Invitations are matched to this address.',
+      signedIn: 'Signed in with {method}',
+      methodSso: 'single sign-on',
+      methodPassword: 'username and password',
+      memberSince: 'Member since {date}',
+      cancel: 'Cancel',
+      save: 'Save changes',
+      saving: 'Saving…',
+      saved: 'Saved',
+    },
   },
   nav: {
     label: 'Team',

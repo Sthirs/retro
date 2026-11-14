@@ -103,7 +103,7 @@ function onToggle(): void {
       <TeamTile v-if="current" :name="current.name" :size="28" />
       <span class="selector__text">
         <span class="selector__label">{{ t('topBar.team') }}</span>
-        <span class="selector__name">{{ current?.name }}</span>
+        <span class="selector__name">{{ current?.name ?? t('topBar.noTeam') }}</span>
       </span>
       <AppIcon name="chevronDown" :size="16" />
     </button>

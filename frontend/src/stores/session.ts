@@ -31,6 +31,11 @@ export const useSessionStore = defineStore('session', () => {
     user.value = session.user;
   }
 
+  /** Replaces the signed-in user after they changed their own profile. */
+  function setUser(next: User): void {
+    user.value = next;
+  }
+
   function clear(): void {
     accessToken.value = null;
     user.value = null;
@@ -88,5 +93,5 @@ export const useSessionStore = defineStore('session', () => {
 
   setTokenSource({ token: () => accessToken.value, renew: refresh });
 
-  return { accessToken, user, ready, isAuthenticated, login, refresh, restore, logout };
+  return { accessToken, user, ready, isAuthenticated, login, refresh, restore, logout, setUser };
 });

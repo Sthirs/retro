@@ -155,6 +155,7 @@ describe('app shell', () => {
     const { wrapper } = await renderAt('/account');
     expect(wrapper.find('nav[aria-label="Team"]').exists()).toBe(false);
     expect(wrapper.find('h1').text()).toBe('Your account');
+    expect(wrapper.find('[data-testid="team-selector"]').text()).toContain('No team yet');
   });
 
   it('links to the account page from the user menu and closes the menu', async () => {

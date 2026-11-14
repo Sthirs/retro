@@ -119,9 +119,17 @@ export const me = (
   teams: unknown[] = [],
   invitations: unknown[] = [],
   user: typeof ALICE = ALICE,
+  extra: Record<string, unknown> = {},
 ) => ({
   status: 200,
-  body: { user, teams, invitations },
+  body: {
+    user,
+    teams,
+    invitations,
+    memberSince: '2026-09-29T10:00:00Z',
+    signInMethod: 'password',
+    ...extra,
+  },
 });
 
 export const problem = (status: number, code: string) => ({

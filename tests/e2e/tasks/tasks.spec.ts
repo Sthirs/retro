@@ -74,9 +74,15 @@ test.describe('tasks board', () => {
       authorId: finnId,
     });
     for (const text of FUTURE.slice(1)) {
-      await seedTask(ERIN, teamId, { status: 'future', content: `<p>${text}</p>` });
+      await seedTask(ERIN, teamId, {
+        status: 'future',
+        content: `<p>${text}</p>`,
+      });
     }
-    await seedTask(ERIN, teamId, { status: 'stuck', content: `<p>${STUCK}</p>` });
+    await seedTask(ERIN, teamId, {
+      status: 'stuck',
+      content: `<p>${STUCK}</p>`,
+    });
 
     // Erin sees all four columns with their counts.
     const tasks = new TasksPage(page);
@@ -149,6 +155,69 @@ test.describe('tasks board', () => {
     await expect(tasks.heading).toBeVisible();
     await expect(tasks.card(STUCK)).toHaveCount(0);
     await expect(page.getByRole('article')).toHaveCount(4);
+  });
+
+  test('touch: a quick swipe over a card scrolls and never starts a drag', async ({ browser }) => {
+    // Phone-like context: touch events, 390 px wide.
+    const context = await browser.newContext({
+      hasTouch: true,
+      isMobile: true,
+      viewport: { width: 390, height: 844 },
+      ignoreHTTPSErrors: true,
+    });
+    try {
+      const phone = await context.newPage();
+      await signIn(phone, 'erin');
+
+      // Tall enough to scroll: three columns of tall-ish cards.
+      const texts: string[] = [];
+      for (const status of ['future', 'stuck', 'active', 'done'] as const) {
+        for (let i = 0; i < 4; i++) {
+          const text = `${status} card ${i}`;
+          texts.push(text);
+          await seedTask(ERIN, teamId, { status, content: `<p>${text}</p>` });
+        }
+      }
+      const tasks = new TasksPage(phone);
+      await tasks.goto(teamId);
+      await expect(phone.getByRole('article')).toHaveCount(texts.length);
+
+      const snapshot = async () => ({
+        Future: await tasks.cards('Future').allInnerTexts(),
+        Stuck: await tasks.cards('Stuck').allInnerTexts(),
+        Active: await tasks.cards('Active').allInnerTexts(),
+        Done: await tasks.cards('Done').allInnerTexts(),
+      });
+      const before = await snapshot();
+
+      // A real touch swipe (finger moves up), dispatched through CDP: Playwright
+      // has no swipe API. It starts on the second card of the first column and
+      // ends well within the 200 ms drag delay.
+      const box = (await tasks.cards('Future').nth(1).boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = Math.min(box.y + box.height / 2, 700);
+      const scrollBefore = await phone.evaluate(() => window.scrollY);
+      const cdp = await context.newCDPSession(phone);
+      const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', ty?: number) =>
+        cdp.send('Input.dispatchTouchEvent', {
+          type,
+          touchPoints: ty === undefined ? [] : [{ x, y: ty }],
+        });
+      await touch('touchStart', y);
+      for (let step = 1; step <= 8; step++) {
+        await touch('touchMove', y - step * 30);
+      }
+      await touch('touchEnd');
+
+      // The page scrolled: the swipe was a scroll, not a drag.
+      await expect.poll(() => phone.evaluate(() => window.scrollY)).toBeGreaterThan(scrollBefore);
+      expect(await snapshot()).toEqual(before);
+      await phone.reload();
+      await expect(phone.getByRole('article')).toHaveCount(texts.length);
+      expect(await snapshot()).toEqual(before);
+    } finally {
+      await context.close();
+    }
   });
 
   for (const theme of ['Light', 'Dark'] as const) {

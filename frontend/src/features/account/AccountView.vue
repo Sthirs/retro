@@ -34,7 +34,11 @@ onMounted(async () => {
 });
 
 async function logout(): Promise<void> {
-  await session.logout();
+  try {
+    await session.logout();
+  } catch {
+    // The session is cleared locally even when the request fails.
+  }
   await router.replace({ name: 'login' });
 }
 </script>

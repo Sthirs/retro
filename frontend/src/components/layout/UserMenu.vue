@@ -14,7 +14,7 @@ import TeamTile from '@/components/TeamTile.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
 import { usePendingInvitations } from '@/composables/usePendingInvitations';
 import { usePopover } from '@/composables/usePopover';
-import { applyThemePreference, readThemePreference, type ThemePreference } from '@/lib/theme';
+import { useThemePreference, type ThemePreference } from '@/lib/theme';
 import { useSessionStore } from '@/stores/session';
 import { useTeamsStore } from '@/stores/teams';
 
@@ -26,7 +26,7 @@ const teams = useTeamsStore();
 const root = ref<HTMLElement | null>(null);
 const trigger = ref<HTMLButtonElement | null>(null);
 const { open, close } = usePopover(root, trigger);
-const theme = ref<ThemePreference>(readThemePreference());
+const { theme, setTheme } = useThemePreference();
 const { busy, error, accept, decline } = usePendingInvitations({ onAccepted: () => close() });
 
 const count = computed(() => teams.invitations.length);
@@ -37,11 +37,6 @@ const themes: { value: ThemePreference; icon: IconName }[] = [
   { value: 'system', icon: 'monitor' },
 ];
 
-function setTheme(value: ThemePreference): void {
-  theme.value = value;
-  applyThemePreference(value);
-}
-
 function toggle(): void {
   open.value = !open.value;
   error.value = null;
@@ -49,7 +44,11 @@ function toggle(): void {
 
 async function logout(): Promise<void> {
   close();
-  await session.logout();
+  try {
+    await session.logout();
+  } catch {
+    // The session is cleared locally even when the request fails.
+  }
   await router.replace({ name: 'login' });
 }
 

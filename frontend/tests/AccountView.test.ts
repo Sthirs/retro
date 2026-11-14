@@ -1,5 +1,7 @@
 import { flushPromises } from '@vue/test-utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { useThemePreference } from '@/lib/theme';
 
 import {
   ALICE,
@@ -320,6 +322,10 @@ describe('account page: invitations', () => {
 
 describe('account page: preferences and log out', () => {
   beforeEach(() => localStorage.clear());
+  afterEach(() => {
+    // Back to "system": clears `data-theme` and the stored preference.
+    useThemePreference().setTheme('system');
+  });
 
   it('switches theme', async () => {
     mockFetch(base());
@@ -328,8 +334,17 @@ describe('account page: preferences and log out', () => {
     await dark?.trigger('click');
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     expect(dark?.attributes('aria-pressed')).toBe('true');
-    document.documentElement.removeAttribute('data-theme');
-    localStorage.removeItem('retro.theme');
+  });
+
+  it('keeps the user menu theme control in sync', async () => {
+    mockFetch(base());
+    const { wrapper } = await renderAt('/account');
+    await wrapper
+      .findAll('main [role="group"] button')
+      .find((b) => b.text() === 'Dark')
+      ?.trigger('click');
+    const menuDark = wrapper.findAll('#user-menu button').find((b) => b.text() === 'Dark');
+    expect(menuDark?.attributes('aria-pressed')).toBe('true');
   });
 
   it('changing the default team remembers it', async () => {
@@ -343,6 +358,21 @@ describe('account page: preferences and log out', () => {
     expect((select.element as HTMLSelectElement).value).toBe(TEAM_ID);
     await select.setValue(OTHER_TEAM_ID);
     expect(localStorage.getItem(`retro.lastTeam.${ALICE.id}`)).toBe(OTHER_TEAM_ID);
+  });
+
+  it('moves the Current tag to the newly chosen default team', async () => {
+    mockFetch(
+      base({
+        'GET /api/v1/me': me([team(), team({ id: OTHER_TEAM_ID, name: 'Mobile Squad' })]),
+      }),
+    );
+    const { wrapper } = await renderAt('/account');
+    const currentRow = () =>
+      wrapper.findAll('[data-testid="team-row"]').find((r) => r.text().includes('Current'));
+    expect(currentRow()?.text()).toContain('Platform Team');
+    await wrapper.find('#default-team').setValue(OTHER_TEAM_ID);
+    expect(currentRow()?.text()).toContain('Mobile Squad');
+    expect(wrapper.findAll('.tag--current')).toHaveLength(1);
   });
 
   it('the language select offers English only', async () => {
@@ -379,5 +409,24 @@ describe('account page: preferences and log out', () => {
     await wrapper.find('[aria-label="Session"] button').trigger('click');
     await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'));
     expect(calls.some((c) => c.method === 'POST' && c.path === '/api/v1/auth/logout')).toBe(true);
+  });
+
+  it('still lands on the login page when the logout request fails', async () => {
+    mockFetch(
+      base({
+        'POST /api/v1/auth/logout': { status: 500 },
+        'GET /api/v1/auth/config': {
+          status: 200,
+          body: {
+            localLogin: true,
+            sso: { enabled: false, buttonText: '' },
+            passwordResetUrl: null,
+          },
+        },
+      }),
+    );
+    const { wrapper, router } = await renderAt('/account');
+    await wrapper.find('[aria-label="Session"] button').trigger('click');
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'));
   });
 });

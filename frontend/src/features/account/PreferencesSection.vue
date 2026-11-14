@@ -1,21 +1,17 @@
 <script setup lang="ts">
 /** "Preferences": theme, language and the team Retro opens by default (spec §7.2). */
-import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import AppIcon from '@/components/AppIcon.vue';
 import type { IconName } from '@/components/icons';
 import AccountPanel from '@/features/account/AccountPanel.vue';
-import { applyThemePreference, readThemePreference, type ThemePreference } from '@/lib/theme';
+import { useThemePreference, type ThemePreference } from '@/lib/theme';
 import { useTeamsStore } from '@/stores/teams';
 
 const { t } = useI18n();
 const teams = useTeamsStore();
 
-const theme = ref<ThemePreference>(readThemePreference());
-/** The user's pick on this page; until then the store's default team. */
-const picked = ref<string | null>(null);
-const defaultTeamId = computed(() => picked.value ?? teams.defaultTeam()?.id ?? '');
+const { theme, setTheme } = useThemePreference();
 
 const themes: { value: ThemePreference; icon: IconName }[] = [
   { value: 'light', icon: 'sun' },
@@ -23,14 +19,8 @@ const themes: { value: ThemePreference; icon: IconName }[] = [
   { value: 'system', icon: 'monitor' },
 ];
 
-function setTheme(value: ThemePreference): void {
-  theme.value = value;
-  applyThemePreference(value);
-}
-
 function setDefaultTeam(event: Event): void {
   const id = (event.target as HTMLSelectElement).value;
-  picked.value = id;
   teams.remember(id);
 }
 </script>
@@ -82,7 +72,7 @@ function setDefaultTeam(event: Event): void {
           <select
             id="default-team"
             class="select__input"
-            :value="defaultTeamId"
+            :value="teams.defaultTeam()?.id ?? ''"
             @change="setDefaultTeam"
           >
             <option v-for="team in teams.teams" :key="team.id" :value="team.id">

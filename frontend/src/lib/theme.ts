@@ -1,3 +1,5 @@
+import { ref } from 'vue';
+
 /** Theme preference. `system` follows `prefers-color-scheme`. */
 export type ThemePreference = 'light' | 'dark' | 'system';
 
@@ -34,4 +36,15 @@ export function applyThemePreference(
   }
   if (preference === 'system') root.removeAttribute('data-theme');
   else root.setAttribute('data-theme', preference);
+}
+
+const current = ref<ThemePreference>(readThemePreference());
+
+/** One reactive theme preference shared by every control (user menu, account page). */
+export function useThemePreference() {
+  function setTheme(value: ThemePreference): void {
+    current.value = value;
+    applyThemePreference(value);
+  }
+  return { theme: current, setTheme };
 }

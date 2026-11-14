@@ -47,6 +47,16 @@ export const useTeamsStore = defineStore('teams', () => {
     loaded.value = false;
   }
 
+  // The last used team of the current user, reactive so views follow `remember`.
+  const lastTeam = ref<string | null>(null);
+  watch(
+    () => session.user?.id,
+    (userId) => {
+      lastTeam.value = userId ? readLastTeam(userId) : null;
+    },
+    { immediate: true, flush: 'sync' },
+  );
+
   // A different user (or none) invalidates everything.
   watch(
     () => session.user?.id,
@@ -79,14 +89,15 @@ export const useTeamsStore = defineStore('teams', () => {
 
   /** The team to open by default: the last used one, else the first. */
   function defaultTeam(): TeamDto | undefined {
-    const userId = session.user?.id;
-    const last = userId ? readLastTeam(userId) : null;
+    const last = lastTeam.value;
     return (last ? byId(last) : undefined) ?? teams.value[0];
   }
 
   function remember(teamId: string): void {
     const userId = session.user?.id;
-    if (userId) writeLastTeam(userId, teamId);
+    if (!userId) return;
+    lastTeam.value = teamId;
+    writeLastTeam(userId, teamId);
   }
 
   async function createTeam(name: string): Promise<TeamDto> {

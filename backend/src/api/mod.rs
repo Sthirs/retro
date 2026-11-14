@@ -22,6 +22,8 @@ pub struct UserDto {
     pub username: Option<String>,
     pub display_name: String,
     pub avatar_url: Option<String>,
+    /// Content hash of the uploaded picture; `null` when there is none.
+    pub picture_version: Option<String>,
 }
 
 impl From<user::Model> for UserDto {
@@ -32,6 +34,7 @@ impl From<user::Model> for UserDto {
             username: u.username,
             display_name: u.display_name,
             avatar_url: u.avatar_url,
+            picture_version: u.picture_version,
         }
     }
 }
@@ -42,6 +45,8 @@ impl From<user::Model> for UserDto {
 pub struct PersonDto {
     pub id: Uuid,
     pub display_name: String,
+    /// Content hash of the uploaded picture; `null` when there is none.
+    pub picture_version: Option<String>,
 }
 
 impl From<user::Model> for PersonDto {
@@ -49,6 +54,7 @@ impl From<user::Model> for PersonDto {
         Self {
             id: u.id,
             display_name: u.display_name,
+            picture_version: u.picture_version,
         }
     }
 }

@@ -104,7 +104,11 @@ impl From<invitations::PendingForUser> for PendingInvitationDto {
             invited_by: p
                 .inviter_id
                 .zip(p.inviter_name)
-                .map(|(id, display_name)| PersonDto { id, display_name }),
+                .map(|(id, display_name)| PersonDto {
+                    id,
+                    display_name,
+                    picture_version: None,
+                }),
             expires_at: p.expires_at,
         }
     }

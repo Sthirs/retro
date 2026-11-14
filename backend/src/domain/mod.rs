@@ -1,6 +1,7 @@
 //! Business rules, independent of HTTP.
 
 pub mod invitations;
+pub mod pictures;
 pub mod teams;
 pub mod users;
 

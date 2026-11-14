@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use axum::{
     Router,
-    extract::{MatchedPath, Request},
+    extract::{DefaultBodyLimit, MatchedPath, Request},
     http::{HeaderName, HeaderValue, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -16,7 +16,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::{api, openapi, state::AppState};
+use crate::{api, domain::pictures::PICTURE_MAX_BYTES, openapi, state::AppState};
 
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
@@ -32,6 +32,14 @@ pub fn router(state: AppState) -> Router {
     let v1 = Router::new()
         .nest("/auth", auth)
         .route("/me", get(api::me::me).patch(api::me::update_me))
+        // One byte over the limit, so the handler (not axum) rejects an
+        // oversize body with problem JSON.
+        .route(
+            "/me/picture",
+            axum::routing::put(api::me::put_picture)
+                .delete(api::me::delete_picture)
+                .layer(DefaultBodyLimit::max(PICTURE_MAX_BYTES + 1)),
+        )
         .route(
             "/teams",
             get(api::teams::list_teams).post(api::teams::create_team),
@@ -79,6 +87,11 @@ pub fn router(state: AppState) -> Router {
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
         ));
+
+    // Picture bytes are immutable per `pictureVersion`, so this route sets its
+    // own `Cache-Control` and is merged in after the `no-store` layer.
+    let pictures = Router::new().route("/users/{user_id}/picture", get(api::me::get_picture));
+    let v1 = v1.merge(pictures);
 
     Router::new()
         .route("/healthz", get(api::health::healthz))

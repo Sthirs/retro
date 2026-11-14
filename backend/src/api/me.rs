@@ -1,13 +1,20 @@
 //! The current user, their teams and pending invitations (spec §14.1).
 
-use axum::{Json, extract::State};
+use axum::{
+    Json,
+    body::{Body, Bytes},
+    extract::{Path, State},
+    http::{HeaderValue, header},
+    response::Response,
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use crate::{
     api::{UserDto, invitations::PendingInvitationDto, teams::TeamDto},
     auth::CurrentUser,
-    domain::{invitations, teams, users},
+    domain::{invitations, pictures, teams, users},
     error::{AppResult, Problem},
     state::AppState,
 };
@@ -73,4 +80,82 @@ pub async fn update_me(
 ) -> AppResult<Json<UserDto>> {
     let user = users::update_display_name(&state.db, user, &body.display_name).await?;
     Ok(Json(user.into()))
+}
+
+/// Replaces the signed-in user's picture with the request body.
+#[utoipa::path(
+    put,
+    path = "/api/v1/me/picture",
+    tag = "users",
+    security(("bearer" = [])),
+    request_body(content = Vec<u8>, content_type = "image/*", description = "A PNG, JPEG, GIF or WebP image of at most 5 MB"),
+    responses(
+        (status = 200, body = UserDto, description = "The updated user"),
+        (status = 401, body = Problem, content_type = "application/problem+json", description = "Missing or invalid access token"),
+        (status = 413, body = Problem, content_type = "application/problem+json", description = "`picture_too_large`"),
+        (status = 415, body = Problem, content_type = "application/problem+json", description = "`unsupported_picture_type`"),
+    )
+)]
+pub async fn put_picture(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    body: Bytes,
+) -> AppResult<Json<UserDto>> {
+    let user = pictures::set_picture(&state.db, user, body.to_vec()).await?;
+    Ok(Json(user.into()))
+}
+
+/// Removes the signed-in user's picture.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/me/picture",
+    tag = "users",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = UserDto, description = "The updated user"),
+        (status = 401, body = Problem, content_type = "application/problem+json", description = "Missing or invalid access token"),
+    )
+)]
+pub async fn delete_picture(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+) -> AppResult<Json<UserDto>> {
+    let user = pictures::remove_picture(&state.db, user).await?;
+    Ok(Json(user.into()))
+}
+
+/// A user's picture. Visible to the user and to people sharing a team with them.
+///
+/// The URL changes with `pictureVersion`, so the bytes are cached as immutable.
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{user_id}/picture",
+    tag = "users",
+    security(("bearer" = [])),
+    params(("user_id" = Uuid, Path, description = "The picture's owner")),
+    responses(
+        (status = 200, body = Vec<u8>, content_type = "image/*", description = "The image bytes"),
+        (status = 401, body = Problem, content_type = "application/problem+json", description = "Missing or invalid access token"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`picture_not_found`"),
+    )
+)]
+pub async fn get_picture(
+    State(state): State<AppState>,
+    CurrentUser(viewer): CurrentUser,
+    Path(user_id): Path<Uuid>,
+) -> AppResult<Response> {
+    let picture = pictures::picture_for(&state.db, viewer.id, user_id).await?;
+    let content_type = HeaderValue::from_str(&picture.content_type)
+        .map_err(|e| anyhow::anyhow!("stored picture content type: {e}"))?;
+    let etag = HeaderValue::from_str(&format!("\"{}\"", picture.sha256))
+        .map_err(|e| anyhow::anyhow!("stored picture hash: {e}"))?;
+    let mut response = Response::new(Body::from(picture.data));
+    let headers = response.headers_mut();
+    headers.insert(header::CONTENT_TYPE, content_type);
+    headers.insert(header::ETAG, etag);
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    Ok(response)
 }

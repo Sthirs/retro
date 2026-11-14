@@ -56,3 +56,30 @@ export async function resetAccount(login: string): Promise<void> {
     await api.dispose();
   }
 }
+
+/** The id of a dev account (signs in to read it). */
+export async function userIdOf(login: string): Promise<string> {
+  const { api, userId } = await signedIn(login);
+  await api.dispose();
+  return userId;
+}
+
+/**
+ * Adds a task at the end of a column through the dev-only seeding route (the
+ * dev cluster runs with SEED_DEV_USERS). `login` is the caller, a team member;
+ * `authorId` defaults to the caller. `content` is rich-text HTML.
+ */
+export async function seedTask(
+  login: string,
+  teamId: string,
+  task: { status: 'future' | 'stuck' | 'active' | 'done'; content: string; authorId?: string },
+): Promise<{ id: string }> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/dev/teams/${teamId}/tasks`, { data: task });
+    if (!res.ok()) throw new Error(`seed task: ${res.status()} ${await res.text()}`);
+    return (await res.json()) as { id: string };
+  } finally {
+    await api.dispose();
+  }
+}

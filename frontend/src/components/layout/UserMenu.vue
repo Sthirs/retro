@@ -5,7 +5,7 @@
  */
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
+import { RouterLink, useRouter } from 'vue-router';
 
 import { errorCode } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
@@ -192,6 +192,10 @@ defineExpose({ toggle });
       </div>
 
       <div class="panel__separator" />
+      <RouterLink :to="{ name: 'account' }" class="panel__item" @click="close()">
+        <AppIcon name="user" />
+        {{ t('userMenu.account') }}
+      </RouterLink>
       <button type="button" class="panel__item" @click="logout">
         <AppIcon name="logout" />
         {{ t('userMenu.logout') }}
@@ -421,6 +425,7 @@ defineExpose({ toggle });
   font-size: 14px;
   font-weight: 500;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
 }
 .panel__item:hover {

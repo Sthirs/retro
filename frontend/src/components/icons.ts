@@ -12,6 +12,7 @@ export const ICONS = {
   refresh: ['M21 12a9 9 0 1 1-2.6-6.4L21 8', 'M21 3v5h-5'],
   mail: ['rect:3,5,18,14,2', 'm3 7 9 6 9-6'],
   trash: ['M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6'],
+  user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'circle:12,7,4'],
   logout: ['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9'],
   users: [
     'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2',

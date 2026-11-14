@@ -24,7 +24,10 @@ const menu = ref<HTMLElement | null>(null);
 const { open, toggle, close } = usePopover(root, trigger);
 const creating = ref(false);
 
-const current = computed(() => teams.byId(String(route.params.teamId ?? '')));
+// Outside a team (the account page) the remembered team stays selected.
+const current = computed(() =>
+  typeof route.params.teamId === 'string' ? teams.byId(route.params.teamId) : teams.defaultTeam(),
+);
 
 function items(): HTMLElement[] {
   return Array.from(menu.value?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
@@ -67,7 +70,7 @@ function onMenuKey(event: KeyboardEvent): void {
 
 async function select(teamId: string): Promise<void> {
   close(true);
-  if (teamId === current.value?.id) return;
+  if (teamId === route.params.teamId) return;
   const name =
     typeof route.name === 'string' && route.name.startsWith('team-') ? route.name : 'team-meetings';
   await router.push({ name, params: { teamId } });

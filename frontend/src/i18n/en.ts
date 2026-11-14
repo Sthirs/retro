@@ -79,7 +79,11 @@ export default {
     light: 'Light',
     dark: 'Dark',
     system: 'System',
+    account: 'Your account',
     logout: 'Log out',
+  },
+  account: {
+    title: 'Your account',
   },
   nav: {
     label: 'Team',

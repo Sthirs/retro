@@ -82,6 +82,27 @@ export function buildRouter(history: RouterHistory = createWebHistory()): Router
           },
         ],
       },
+      {
+        // Not tied to a team: the shell falls back to the remembered team.
+        path: '/account',
+        component: () => import('@/components/layout/AppShell.vue'),
+        meta: { requiresAuth: true },
+        beforeEnter: async () => {
+          try {
+            await useTeamsStore().ensureLoaded();
+          } catch {
+            // The page works without teams; the shell just has no team menu.
+          }
+          return true;
+        },
+        children: [
+          {
+            path: '',
+            name: 'account',
+            component: () => import('@/features/account/AccountView.vue'),
+          },
+        ],
+      },
       { path: '/:pathMatch(.*)*', redirect: '/' },
     ],
   });

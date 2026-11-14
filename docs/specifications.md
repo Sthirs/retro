@@ -283,6 +283,7 @@ The individual meeting phases cannot be replayed.
 - **Center**: **one group at a time** — the group title and all its reflections (rich text, anonymous, with column label).
 - **Reactions**: participants can add emoji reactions to each reflection. Multiple different reactions per reflection are allowed, and a user can add several different emojis to the same reflection (one of each kind). Counts are shown per emoji and reacting is a toggle.
 - **Right panel — Tasks**: participants create tasks linked to the current group. Each task has rich text (same editor as reflections, including pasted images) with **@mentions** of team members, plus its author and creation time. New tasks start in the **Active** column of the board.
+  - *Interim:* until image attachments ship, task text is plain rich text (bold, italic, links, mentions); pasted images are a long-term goal (see ADR-0010's follow-ups).
 - **Navigation**: the facilitator moves to the **next** or **previous** group. Everyone follows the facilitator's current group. A participant can preview other groups locally without affecting the others.
 - After the last group, the facilitator is prompted to **End meeting**.
 
@@ -297,6 +298,7 @@ The individual meeting phases cannot be replayed.
 - Task card:
   - creation date (and source meeting, as a link);
   - rich text (including images), which can contain **@mentions** of team members (rendered as chips; mentioned users can filter "my tasks"). Mentions do **not** trigger notifications;
+    - *Interim:* until image attachments ship, task text is plain rich text (bold, italic, links, mentions); images are a long-term goal (see ADR-0010's follow-ups).
   - author at the bottom (avatar + name).
 - Cards can be **dragged and dropped** between columns and reordered within a column. Any team member can move cards.
 - Changes are broadcast in real time to anyone viewing the board. Until the real-time hub (§11) exists, the board refreshes when the window regains focus.

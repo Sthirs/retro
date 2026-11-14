@@ -94,6 +94,29 @@ scripts/dev-frontend.sh                     # vite; HMR through the ingress host
 Run both intercepts, then `npm run dev` (backend and frontend side by side). Stop with
 `scripts/telepresence-leave.sh`.
 
+### Putting tasks on a local board
+
+Tasks are created in meetings, which do not exist yet. Until the Discuss phase
+creates them, a **development-only** route adds tasks to a board:
+
+```bash
+curl -X POST "https://$(scripts/dev-host.sh)/api/v1/dev/teams/$TEAM_ID/tasks" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"status":"active","content":"<p>Write the retro notes</p>"}'
+```
+
+`POST /api/v1/dev/teams/{teamId}/tasks` takes `{ "status", "content", "authorId"? }`:
+`status` is `future`, `stuck`, `active` or `done`; `content` is rich text,
+sanitized like any task (mentions use
+`<span data-type="mention" data-id="<userId>" data-label="<name>">@Name</span>`);
+`authorId` defaults to the caller and must be a team member (`invalid_author`
+otherwise). The caller must be a member of the team. The task is appended to
+the end of the column and the response is the created task. The route exists
+only when `SEED_DEV_USERS=true`, which configuration refuses in production, and
+is not part of the OpenAPI contract. The end-to-end suite uses it (`seedTask` in
+`tests/e2e/api.ts`), signing in with `POST /api/v1/auth/login` to get the bearer
+token. Remove it once meetings create tasks.
+
 ### Testing a rebuilt image
 
 Images use a fixed `:dev` tag, so a Helm upgrade does **not** restart pods after a

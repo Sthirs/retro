@@ -274,7 +274,7 @@ export interface SessionResponse {
  */
 export interface TaskDto {
   author: PersonDto;
-  /** Whether the caller may edit, move or delete the task. */
+  /** Whether the caller may edit or delete the task (any member may move it). */
   canEdit: boolean;
   /** Sanitized rich text. */
   contentHtml: string;

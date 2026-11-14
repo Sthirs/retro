@@ -2322,7 +2322,7 @@
           },
           "canEdit": {
             "type": "boolean",
-            "description": "Whether the caller may edit, move or delete the task."
+            "description": "Whether the caller may edit or delete the task (any member may move it)."
           },
           "contentHtml": {
             "type": "string",

@@ -35,7 +35,7 @@ pub struct TaskDto {
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub created_at: OffsetDateTime,
-    /// Whether the caller may edit, move or delete the task.
+    /// Whether the caller may edit or delete the task (any member may move it).
     pub can_edit: bool,
 }
 

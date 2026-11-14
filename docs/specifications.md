@@ -98,11 +98,11 @@ Authentication is performed by the **backend**, which issues Retro's own session
 
 ## 4. Users
 
-- A user has: id, email (unique), optional username (unique, local accounts), display name, avatar URL, optional password hash, created/updated timestamps, and zero or more linked SSO identities (§3.2).
+- A user has: id, email (unique), optional username (unique, local accounts), display name, avatar URL (the provider's picture claim, stored but not displayed), optional password hash, created/updated timestamps, and zero or more linked SSO identities (§3.2).
 - A user can belong to zero or more teams.
 - A user with no teams sees an empty state that invites them to create a team or accept an invitation.
 - The user's email is the key used to match pending invitations (see §6).
-- **Your account** page (`/account`, from the user menu): display name (editable, 1–80 characters), picture (upload PNG, JPEG, GIF or WebP up to 5 MB, or remove; initials otherwise), email (read-only), sign-in method, member since, the user's teams (open, leave, create), pending invitations (accept, decline), preferences (theme, language, team opened by default on this browser) and log out.
+- **Your account** page (`/account`, from the user menu): display name (editable, trimmed, 1–80 characters), picture (upload PNG, JPEG, GIF or WebP up to 5 MB, or remove; initials otherwise), email (read-only), sign-in method, member since, the user's teams (open, leave, create), pending invitations (accept, decline), preferences (theme, language, team opened by default on this browser) and log out.
 - A user's picture is visible to themselves and to members of teams they share.
 
 ---
@@ -414,7 +414,8 @@ The backend owns the schema and manages it through ORM migrations. All IDs are U
 
 ```text
 users(id, email UNIQUE, username UNIQUE NULL, display_name, display_name_custom BOOL DEFAULT false,
-      avatar_url NULL, picture_version NULL, password_hash NULL, created_at, updated_at)
+      avatar_url NULL, -- provider picture claim; not displayed (see user_pictures)
+      picture_version NULL, password_hash NULL, created_at, updated_at)
     -- email and username are stored lower-cased
 
 user_pictures(user_id PK → users, content_type, size_bytes, sha256, data BYTEA, created_at)

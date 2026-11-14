@@ -90,12 +90,18 @@ test.describe('tasks board', () => {
     await expect(tasks.count('Done')).toHaveText('0');
     await expect(tasks.card(PIN)).toContainText(`@${USERS.finn.name}`);
 
-    // The actions menu of the last card of the tallest column is not clipped.
-    await tasks.actions(FUTURE[2]).click();
-    await expect(tasks.menu.getByRole('menuitem', { name: 'Edit' })).toBeInViewport();
-    await expect(tasks.menu.getByRole('menuitem', { name: 'Delete' })).toBeInViewport();
+    // The actions menu of the last card of the tallest column is not clipped, even
+    // on a short screen with that card at the bottom edge.
+    await page.setViewportSize({ width: 1280, height: 560 });
+    const last = tasks.card(FUTURE[2]!);
+    await last.evaluate((el) => el.scrollIntoView({ block: 'end' }));
+    await expect(last).toBeInViewport();
+    await tasks.actions(FUTURE[2]!).click();
+    await expect(tasks.menu.getByRole('menuitem', { name: 'Edit' })).toBeInViewport({ ratio: 1 });
+    await expect(tasks.menu.getByRole('menuitem', { name: 'Delete' })).toBeInViewport({ ratio: 1 });
     await page.keyboard.press('Escape');
     await expect(tasks.menu).toBeHidden();
+    await page.setViewportSize({ width: 1280, height: 720 });
 
     // A real drag from Active to Done survives a reload.
     await tasks.dragToColumn(PIN, 'Done');
@@ -113,7 +119,7 @@ test.describe('tasks board', () => {
     await page.reload();
     await expect(tasks.cards('Future')).toContainText([FUTURE[1]!, FUTURE[0]!, FUTURE[2]!]);
 
-    // Move to… from the keyboard route.
+    // Move to… driven by the keyboard alone.
     await tasks.moveWithKeyboard(STUCK, 'Active');
     await expect(tasks.cards('Active')).toContainText([STUCK]);
     await expect(tasks.count('Stuck')).toHaveText('0');

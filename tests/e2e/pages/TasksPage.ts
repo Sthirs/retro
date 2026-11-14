@@ -78,13 +78,34 @@ export class TasksPage {
     await this.drag(this.card(cardText), this.column(name).locator('.column__list'));
   }
 
-  /** The keyboard route: Task actions, Move to…, then the column. */
+  /**
+   * The whole keyboard route, no pointer: Enter on "Task actions", ArrowDown to
+   * "Move to…", ArrowRight into its submenu, ArrowDown to the column, Enter.
+   * Focus must end up on the target column.
+   */
   async moveWithKeyboard(cardText: string, name: ColumnName): Promise<void> {
     await this.actions(cardText).focus();
     await this.page.keyboard.press('Enter');
     await expect(this.menu).toBeVisible();
-    await this.menu.getByRole('menuitem', { name: 'Move to…' }).click();
-    await this.page.getByRole('menu', { name: 'Move to…' }).getByRole('menuitem', { name }).click();
+    // Opening the menu focuses its first item (Edit); one ArrowDown reaches Move to….
+    await expect(this.menu.getByRole('menuitem', { name: 'Edit' })).toBeFocused();
+    await this.page.keyboard.press('ArrowDown');
+    await expect(this.menu.getByRole('menuitem', { name: 'Move to…' })).toBeFocused();
+    await this.page.keyboard.press('ArrowRight');
+
+    const submenu = this.page.getByRole('menu', { name: 'Move to…' });
+    const items = submenu.getByRole('menuitem');
+    const labels = await items.allTextContents();
+    const index = labels.map((label) => label.trim()).indexOf(name);
+    expect(index, `${name} is offered by the submenu`).toBeGreaterThanOrEqual(0);
+    // The submenu opens on its first item.
+    await expect(items.first()).toBeFocused();
+    for (let i = 0; i < index; i++) await this.page.keyboard.press('ArrowDown');
+    await expect(items.nth(index)).toBeFocused();
+    await this.page.keyboard.press('Enter');
+
+    await expect(this.menu).toBeHidden();
+    await expect(this.column(name)).toBeFocused();
   }
 
   async filterMine(): Promise<void> {

@@ -658,10 +658,8 @@ describe('Tasks board', () => {
       await item(wrapper, 'Done').trigger('click');
       await flushPromises();
 
-      expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({
-        status: 'done',
-        afterId: 'd2',
-      });
+      // No neighbours: the server appends after the whole column.
+      expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ status: 'done' });
       expect(hasMenu(wrapper)).toBe(false);
       expect(column(wrapper, 'Done').findAll('article')).toHaveLength(3);
       expect(column(wrapper, 'Active').findAll('article')).toHaveLength(0);

@@ -18,6 +18,13 @@ export interface TaskFilter {
 }
 
 const STATUSES = Object.values(TaskStatus);
+// Refusals that mean the local board is out of date: reload it.
+const MOVE_RELOAD_CODES: ReadonlySet<string> = new Set([
+  'stale_position',
+  'invalid_position',
+  'task_not_found',
+]);
+const GONE_CODES: ReadonlySet<string> = new Set(['task_not_found']);
 
 /**
  * The Tasks board's data: a team's tasks (spec §9), grouped into columns, with
@@ -81,13 +88,22 @@ export const useTasksStore = defineStore('tasks', () => {
   }
 
   /**
+   * After a refused change that means our copy of the board is out of date,
+   * reloads it with the last filter. The reload clears the error, but the user
+   * still needs to know what happened, so the code is put back.
+   */
+  async function refreshAfter(code: string, codes: ReadonlySet<string>): Promise<void> {
+    error.value = code;
+    if (!codes.has(code) || !last) return;
+    await load(last.teamId, last.filter);
+    error.value = code;
+  }
+
+  /**
    * Moves a task to `toIndex` of a column (counted without the task itself).
    * The card jumps there at once and the server's answer replaces the guess.
    */
   async function move(taskId: string, status: TaskStatus, toIndex: number): Promise<void> {
-    const original = tasks.value.find((t) => t.id === taskId);
-    if (!original) return;
-
     const others = columns.value[status].filter((t) => t.id !== taskId);
     const index = Math.max(0, Math.min(toIndex, others.length));
     const after = others[index - 1];
@@ -96,26 +112,57 @@ export const useTasksStore = defineStore('tasks', () => {
     const body: MoveTaskRequest = { status };
     if (after) body.afterId = after.id;
     if (before) body.beforeId = before.id;
+    await send(taskId, body, after?.position);
+  }
+
+  /**
+   * Moves a task to the true end of a column. Only the status is sent, so the
+   * server appends after the whole column, including cards a filter hides.
+   */
+  async function moveToEnd(taskId: string, status: TaskStatus): Promise<void> {
+    const others = columns.value[status].filter((t) => t.id !== taskId);
+    await send(taskId, { status }, others[others.length - 1]?.position);
+  }
+
+  // Which move of a task is the newest one; older answers must not undo it.
+  let moveSeq = 0;
+  const latestMove = new Map<string, number>();
+
+  async function send(
+    taskId: string,
+    body: MoveTaskRequest,
+    afterPosition: string | undefined,
+  ): Promise<void> {
+    const original = tasks.value.find((t) => t.id === taskId);
+    if (!original) return;
+    const status = body.status;
 
     // Temporary key: the immediate successor of the previous card's key (so it
     // sorts right after it), or the lowest possible key at the top.
-    replace({ ...original, status, position: after ? `${after.position}\u0000` : '' });
+    const temporary = afterPosition === undefined ? '' : `${afterPosition}\u0000`;
+    const mine = ++moveSeq;
+    latestMove.set(taskId, mine);
+    replace({ ...original, status, position: temporary });
     error.value = null;
 
+    const isLatest = () => latestMove.get(taskId) === mine;
     try {
       const res = await api.moveTask(taskId, body);
       if (res.status !== 200) throw apiError(res);
-      replace(res.data);
-    } catch (e) {
-      replace(original);
-      const code = errorCode(e);
-      error.value = code;
-      // Stale neighbours: another member rearranged the column meanwhile.
-      if (code === 'stale_position' && last) {
-        await load(last.teamId, last.filter);
-        // The reload cleared the error; the user still needs to know.
-        error.value = code;
+      if (isLatest()) {
+        latestMove.delete(taskId);
+        replace(res.data);
       }
+    } catch (e) {
+      // Restore only if the card still shows this move's guess: a newer move
+      // or a fresher load already put it somewhere more current.
+      const current = tasks.value.find((t) => t.id === taskId);
+      const stillMine = isLatest() && current?.status === status && current.position === temporary;
+      if (isLatest()) latestMove.delete(taskId);
+      if (stillMine) replace(original);
+      // Stale neighbours or a task that is gone: another member changed the
+      // board meanwhile.
+      await refreshAfter(errorCode(e), MOVE_RELOAD_CODES);
     }
   }
 
@@ -127,7 +174,7 @@ export const useTasksStore = defineStore('tasks', () => {
       error.value = null;
       replace(res.data);
     } catch (e) {
-      error.value = errorCode(e);
+      await refreshAfter(errorCode(e), GONE_CODES);
       throw e;
     }
   }
@@ -139,10 +186,10 @@ export const useTasksStore = defineStore('tasks', () => {
       error.value = null;
       tasks.value = tasks.value.filter((t) => t.id !== taskId);
     } catch (e) {
-      error.value = errorCode(e);
+      await refreshAfter(errorCode(e), GONE_CODES);
       throw e;
     }
   }
 
-  return { tasks, loading, error, columns, load, move, update, remove, reset };
+  return { tasks, loading, error, columns, load, move, moveToEnd, update, remove, reset };
 });

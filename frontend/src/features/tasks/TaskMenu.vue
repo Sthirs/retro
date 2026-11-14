@@ -173,8 +173,9 @@ function onFocusOut(event: FocusEvent): void {
 
 function moveTo(status: TaskStatus): void {
   close(true);
-  // Appended: the column's length counts the cards already there.
-  void store.move(props.task.id, status, store.columns[status].length);
+  // The true end of the column: a filter may hide cards that sit after the
+  // last visible one.
+  void store.moveToEnd(props.task.id, status);
   emit('moved', status);
 }
 

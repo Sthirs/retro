@@ -149,6 +149,116 @@ describe('tasks store', () => {
     expect(calls.filter((c) => c.method === 'GET')).toHaveLength(1);
   });
 
+  it.each(['invalid_position', 'task_not_found'])('move reloads on %s', async (code) => {
+    const { calls } = mockFetch({
+      [`GET ${TASKS_PATH}`]: { status: 200, body: board() },
+      'PUT /api/v1/tasks/d1/position': problem(code === 'task_not_found' ? 404 : 422, code),
+    });
+    const store = useTasksStore();
+    await store.load(TEAM_ID, { meeting: 'm1' });
+
+    await store.move('d1', 'active', 1);
+
+    expect(store.error).toBe(code);
+    expect(ids(store.columns.done)).toEqual(['d1']);
+    const gets = calls.filter((c) => c.method === 'GET');
+    expect(gets).toHaveLength(2);
+    expect(gets[1]?.path).toBe(`${TASKS_PATH}?meeting=m1`);
+  });
+
+  it.each([
+    [
+      'update',
+      'PATCH /api/v1/tasks/a2',
+      (s: ReturnType<typeof useTasksStore>) => s.update('a2', '<p>x</p>'),
+    ],
+    ['remove', 'DELETE /api/v1/tasks/a2', (s: ReturnType<typeof useTasksStore>) => s.remove('a2')],
+  ])('%s reloads on task_not_found and rethrows', async (_name, route, act) => {
+    const { calls } = mockFetch({
+      [`GET ${TASKS_PATH}`]: { status: 200, body: board() },
+      [route]: problem(404, 'task_not_found'),
+    });
+    const store = useTasksStore();
+    await store.load(TEAM_ID, { author: 'u1' });
+
+    await expect(act(store)).rejects.toBeDefined();
+
+    expect(store.error).toBe('task_not_found');
+    const gets = calls.filter((c) => c.method === 'GET');
+    expect(gets).toHaveLength(2);
+    expect(gets[1]?.path).toBe(`${TASKS_PATH}?author=u1`);
+  });
+
+  it('update and remove do not reload on other errors', async () => {
+    const { calls } = mockFetch({
+      [`GET ${TASKS_PATH}`]: { status: 200, body: board() },
+      'PATCH /api/v1/tasks/a2': problem(403, 'forbidden'),
+    });
+    const store = useTasksStore();
+    await store.load(TEAM_ID, {});
+
+    await expect(store.update('a2', '<p>x</p>')).rejects.toBeDefined();
+
+    expect(store.error).toBe('forbidden');
+    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(1);
+  });
+
+  it('moveToEnd sends only the status and places the card last', async () => {
+    const { calls } = mockFetch({
+      [`GET ${TASKS_PATH}`]: { status: 200, body: board() },
+      'PUT /api/v1/tasks/d1/position': { status: 200, body: task('d1', 'active', 'a9') },
+    });
+    const store = useTasksStore();
+    await store.load(TEAM_ID, {});
+
+    const pending = store.moveToEnd('d1', 'active');
+    expect(ids(store.columns.active)).toEqual(['a1', 'a2', 'a3', 'd1']);
+    await pending;
+
+    expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ status: 'active' });
+    expect(store.tasks.find((t) => t.id === 'd1')?.position).toBe('a9');
+  });
+
+  it('a failed older move does not undo a newer one', async () => {
+    mockFetch({ [`GET ${TASKS_PATH}`]: { status: 200, body: board() } });
+    const store = useTasksStore();
+    await store.load(TEAM_ID, {});
+
+    // Two PUTs the test answers by hand, in the order of its choosing.
+    const answers: ((r: Response) => void)[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            answers.push(resolve);
+          }),
+      ),
+    );
+    const json = (status: number, body: unknown) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+    const first = store.move('d1', 'active', 0);
+    const second = store.move('d1', 'stuck', 0);
+    await flushPromises();
+    expect(answers).toHaveLength(2);
+
+    // The first fails after the second started: the card must stay in Stuck.
+    answers[0]?.(
+      json(404, { type: 'about:blank', title: 'Error', status: 404, code: 'not_found' }),
+    );
+    await first;
+    expect(store.tasks.find((t) => t.id === 'd1')?.status).toBe('stuck');
+    expect(ids(store.columns.stuck)).toEqual(['d1']);
+
+    answers[1]?.(json(200, task('d1', 'stuck', 'a0')));
+    await second;
+    expect(store.tasks.find((t) => t.id === 'd1')?.position).toBe('a0');
+  });
+
   it('remove deletes and drops the task', async () => {
     const { calls } = mockFetch({
       [`GET ${TASKS_PATH}`]: { status: 200, body: board() },

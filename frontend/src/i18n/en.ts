@@ -35,6 +35,7 @@ export default {
     stale_position: 'The board changed in the meantime. We reloaded it, so try the move again.',
     invalid_task_content: 'The task text is empty or not valid. Check it and try again.',
     task_not_found: 'This task no longer exists.',
+    invalid_position: 'The board changed. It has been refreshed — try again.',
     unknown: 'Something went wrong. Try again.',
   },
   tasks: {

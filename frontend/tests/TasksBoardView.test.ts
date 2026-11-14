@@ -4,7 +4,17 @@ import { VueDraggable } from 'vue-draggable-plus';
 
 import type { TaskDto } from '@/api/client';
 
-import { ALICE, BOB, me, mockFetch, renderAt, session, team, TEAM_ID } from './helpers';
+import {
+  ALICE,
+  BOB,
+  me,
+  mockFetch,
+  OTHER_TEAM_ID,
+  renderAt,
+  session,
+  team,
+  TEAM_ID,
+} from './helpers';
 
 // Mounted views listen to window `focus`: unmount them so tests stay isolated.
 const mounted: VueWrapper[] = [];
@@ -280,6 +290,46 @@ describe('Tasks board', () => {
       const select = result.wrapper.get('select[aria-label="Author"]');
       expect((select.element as HTMLSelectElement).value).toBe('gone');
       expect(result.wrapper.text()).toContain('Clear filters');
+    });
+
+    it('does not call the unknown-member label when the member list failed', async () => {
+      mockFetch({
+        ...routes([task('a1', 'active', 'a0')]),
+        [`GET /api/v1/teams/${TEAM_ID}/members`]: { status: 500 },
+      });
+      const result = await renderAt(`/teams/${TEAM_ID}/tasks?author=gone`);
+      mounted.push(result.wrapper);
+
+      expect(result.wrapper.text()).not.toContain('Unknown member');
+    });
+
+    it('reloads once on mount, once per filter change and once per team switch', async () => {
+      const { calls } = mockFetch({
+        ...routes([task('a1', 'active', 'a0')]),
+        'GET /api/v1/me': me([team(), team({ id: OTHER_TEAM_ID, name: 'Mobile Squad' })]),
+        [`GET /api/v1/teams/${OTHER_TEAM_ID}/tasks`]: { status: 200, body: [] },
+        [`GET /api/v1/teams/${OTHER_TEAM_ID}/members`]: { status: 200, body: [] },
+      });
+      const { wrapper, router } = await open();
+      const gets = () => calls.filter((c) => /\/tasks(\?|$)/.test(c.path)).length;
+      expect(gets()).toBe(1);
+
+      await wrapper.get('select[aria-label="Author"]').setValue(BOB.id);
+      await flushPromises();
+      expect(gets()).toBe(2);
+
+      // A navigation that leaves the filter values alone (here an unrelated param) must not reload.
+      await router.replace({ query: { author: BOB.id, other: '1' } });
+      await flushPromises();
+      expect(gets()).toBe(2);
+
+      await router.push({ path: `/teams/${OTHER_TEAM_ID}/tasks` });
+      await flushPromises();
+      expect(gets()).toBe(3);
+      expect(calls.at(-1)?.path).toBe(`/api/v1/teams/${OTHER_TEAM_ID}/members`);
+      expect(
+        calls.filter((c) => c.path.startsWith(`/api/v1/teams/${OTHER_TEAM_ID}/tasks`)),
+      ).toHaveLength(1);
     });
 
     it('Clear filters resets the query', async () => {

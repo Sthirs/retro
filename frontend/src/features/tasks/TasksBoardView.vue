@@ -23,6 +23,7 @@ const store = useTasksStore();
 const teamId = computed(() => String(route.params.teamId));
 const loaded = ref(false);
 const members = ref<MemberDto[]>([]);
+const membersLoaded = ref(false);
 
 const FILTER_KEYS = ['mentioned', 'author', 'meeting'] as const;
 /** The filter lives in the URL (`?mentioned=&author=&meeting=`), so it survives reloads and links. */
@@ -59,7 +60,9 @@ async function loadMembers(): Promise<void> {
   try {
     const res = await api.listMembers(id);
     // Ignore a late answer for a team we have since left.
-    if (id === teamId.value) members.value = res.status === 200 ? res.data : [];
+    if (id !== teamId.value) return;
+    members.value = res.status === 200 ? res.data : [];
+    membersLoaded.value = res.status === 200;
   } catch {
     if (id === teamId.value) members.value = [];
   }
@@ -87,12 +90,16 @@ onBeforeUnmount(() => window.removeEventListener('focus', load));
 watch(teamId, () => {
   loaded.value = false;
   members.value = [];
+  membersLoaded.value = false;
   store.reset();
   void load();
   void loadMembers();
 });
-// A new filter reloads the board.
-watch(filter, () => void load());
+// Reload only when a filter value changes: `filter` is a new object on every query change.
+watch(
+  () => JSON.stringify(filter.value),
+  () => void load(),
+);
 </script>
 
 <template>
@@ -107,6 +114,7 @@ watch(filter, () => void load());
     <TaskFilters
       :filter="filter"
       :members="members"
+      :members-loaded="membersLoaded"
       :meeting-ids="meetingIds"
       :me-id="session.user?.id ?? null"
       @change="setFilter"

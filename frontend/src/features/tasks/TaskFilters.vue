@@ -10,6 +10,7 @@ import type { TaskFilter } from '@/stores/tasks';
 const props = defineProps<{
   filter: TaskFilter;
   members: MemberDto[];
+  membersLoaded: boolean;
   meetingIds: string[];
   meId: string | null;
 }>();
@@ -25,10 +26,10 @@ const meetings = computed(() => {
   return [...ids];
 });
 
-/** The people to pick from, plus a stale value from the URL (no longer a member). */
+/** The people to pick from, plus a stale URL value once we know the member list is complete. */
 function people(current: string | undefined): { id: string; name: string }[] {
   const list = props.members.map((m) => ({ id: m.user.id, name: m.user.displayName }));
-  if (current && !list.some((p) => p.id === current)) {
+  if (props.membersLoaded && current && !list.some((p) => p.id === current)) {
     list.push({ id: current, name: t('tasks.filters.unknown') });
   }
   return list;
@@ -55,6 +56,7 @@ function toggleMine(): void {
       class="chip chip--toggle"
       :class="{ 'chip--on': myTasks }"
       :aria-pressed="myTasks"
+      :disabled="!meId"
       @click="toggleMine"
     >
       <AppIcon name="atSign" :size="15" />
@@ -149,6 +151,10 @@ function toggleMine(): void {
 }
 .chip--toggle {
   cursor: pointer;
+}
+.chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 .chip--on {
   border-color: var(--accent);

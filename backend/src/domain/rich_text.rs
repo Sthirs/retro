@@ -10,6 +10,10 @@ use crate::error::AppError;
 /// Maximum length of the sanitized HTML, in characters.
 pub const CONTENT_MAX_CHARS: usize = 10_000;
 
+/// Maximum length of the raw input, in characters; longer bodies are rejected
+/// without being parsed.
+const RAW_MAX_CHARS: usize = 4 * CONTENT_MAX_CHARS;
+
 /// Sanitized rich text together with the users it mentions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sanitized {
@@ -21,6 +25,11 @@ pub struct Sanitized {
 /// Sanitizes `raw`, rejecting blank or overlong content with
 /// `invalid_task_content`.
 pub fn sanitize(raw: &str) -> Result<Sanitized, AppError> {
+    // Cheap guard so huge bodies are never parsed. The cap is generous: markup
+    // that sanitizes away may still push valid text past `CONTENT_MAX_CHARS`.
+    if raw.chars().count() > RAW_MAX_CHARS {
+        return Err(AppError::Invalid("invalid_task_content"));
+    }
     let cleaned = allowlist().clean(raw).to_string();
     let (html, mention_ids) = normalize_spans(&cleaned);
 
@@ -43,6 +52,9 @@ fn allowlist() -> ammonia::Builder<'static> {
             ),
         ]))
         .url_schemes(HashSet::from(["http", "https", "mailto"]))
+        // Only absolute links: `/x`, `//host/x` and `example.com` would resolve
+        // against the app's own origin or an attacker's.
+        .url_relative(ammonia::UrlRelative::Deny)
         .link_rel(Some("noopener noreferrer"));
     builder
 }
@@ -64,6 +76,9 @@ fn visible_text(html: &str) -> String {
 /// mention span keeps exactly `data-type`, a valid canonical `data-id` and
 /// `data-label`; any other span keeps no attributes. Returns the new HTML and
 /// the de-duplicated mentioned ids in order of appearance.
+///
+/// Fails closed: a `<span` start tag with no closing `>` is dropped together
+/// with everything after it.
 fn normalize_spans(html: &str) -> (String, Vec<Uuid>) {
     let mut out = String::with_capacity(html.len());
     let mut ids = Vec::new();
@@ -77,7 +92,11 @@ fn normalize_spans(html: &str) -> (String, Vec<Uuid>) {
             rest = after;
             continue;
         }
+        // Fail closed: a start tag that never closes is dropped together with
+        // everything after it, rather than copied through unchecked.
         let Some(end) = tag_end(after) else {
+            out.push_str(&rest[..start]);
+            rest = "";
             break;
         };
         out.push_str(&rest[..start]);
@@ -257,6 +276,61 @@ mod tests {
     fn length_counts_chars_not_bytes() {
         assert!(sanitize(&"é".repeat(CONTENT_MAX_CHARS)).is_ok());
         assert!(invalid(&"é".repeat(CONTENT_MAX_CHARS + 1)));
+    }
+
+    #[test]
+    fn removes_relative_and_protocol_relative_links() {
+        for href in [
+            "/x",
+            "//evil.example/x",
+            "example.com",
+            "x/y",
+            "?q=1",
+            "#frag",
+        ] {
+            let out = sanitize(&format!(r#"<p><a href="{href}">t</a></p>"#)).unwrap();
+            assert!(!out.html.contains("href"), "{href} kept: {}", out.html);
+            assert!(out.html.contains("t</a>"));
+        }
+    }
+
+    #[test]
+    fn keeps_absolute_links() {
+        let out =
+            sanitize(r#"<p><a href="https://x.dev/p?q=1">a</a><a href="mailto:a@b.dev">b</a></p>"#)
+                .unwrap();
+        assert!(out.html.contains(r#"href="https://x.dev/p?q=1""#));
+        assert!(out.html.contains(r#"href="mailto:a@b.dev""#));
+    }
+
+    #[test]
+    fn span_markup_inside_an_href_injects_nothing() {
+        let out = sanitize(
+            r#"<p><a href="https://x/<span data-type=&quot;mention&quot; data-id=&quot;6f1c1d8e-3a52-4d0e-9a53-0c7d6b1f2a10&quot;>">t</a></p>"#,
+        )
+        .unwrap();
+        // ammonia escapes the `<` inside the attribute, so the scan never sees
+        // a span start tag there: no element, no unescaped attributes.
+        assert!(out.mention_ids.is_empty());
+        assert!(!out.html.contains("<span"));
+        assert!(!out.html.contains(r#"data-type=""#));
+        assert!(!out.html.contains(r#"data-id=""#));
+        assert_eq!(out.html.matches("<a ").count(), 1);
+    }
+
+    #[test]
+    fn unterminated_span_start_tag_is_dropped() {
+        let (html, ids) = normalize_spans(r#"<p>a</p><span data-type="mention" data-id="x"#);
+        assert_eq!(html, "<p>a</p>");
+        assert!(ids.is_empty());
+    }
+
+    #[test]
+    fn rejects_raw_input_beyond_the_cheap_cap() {
+        assert!(invalid(&format!("<p>x</p>{}", " ".repeat(RAW_MAX_CHARS))));
+        assert!(invalid(&"<p></p>".repeat(RAW_MAX_CHARS / 7 + 1)));
+        // Markup that sanitizes away still counts below the cap.
+        assert!(sanitize(&format!("<p>x</p><script>{}</script>", "a".repeat(20_000))).is_ok());
     }
 
     #[test]

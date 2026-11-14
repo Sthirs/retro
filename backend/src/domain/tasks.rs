@@ -1,0 +1,195 @@
+//! The tasks board: tasks, their authors and mentions (spec §9, §13).
+
+use std::collections::HashMap;
+
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set, TransactionSession, TransactionTrait, sea_query::Query,
+};
+use time::OffsetDateTime;
+use uuid::Uuid;
+
+use crate::{
+    domain::{ordering::key_between, rich_text, teams},
+    entities::{
+        task::{self, TaskStatus},
+        task_mention,
+        team::{self},
+        team_member::{self, Role},
+        user,
+    },
+    error::AppError,
+};
+
+/// Narrows the board; every field set must match (AND).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BoardFilter {
+    /// Only tasks that mention this user.
+    pub mentioned: Option<Uuid>,
+    /// Only tasks written by this user.
+    pub author: Option<Uuid>,
+    /// Only tasks attached to this meeting.
+    pub meeting: Option<Uuid>,
+}
+
+/// A task with what the board shows next to it.
+#[derive(Debug, Clone)]
+pub struct TaskView {
+    pub task: task::Model,
+    pub author: user::Model,
+    pub mentions: Vec<user::Model>,
+    /// The caller may edit the task: they wrote it or they are a team admin.
+    pub can_edit: bool,
+}
+
+/// The team's tasks, ordered by `(status, position, id)`. Non-members get
+/// `team_not_found`. Authors and mentions are loaded in bulk.
+pub async fn list(
+    db: &impl ConnectionTrait,
+    team_id: Uuid,
+    actor: Uuid,
+    filter: BoardFilter,
+) -> Result<Vec<TaskView>, AppError> {
+    let role = teams::require_member(db, team_id, actor).await?;
+
+    let mut query = task::Entity::find().filter(task::Column::TeamId.eq(team_id));
+    if let Some(author) = filter.author {
+        query = query.filter(task::Column::AuthorId.eq(author));
+    }
+    if let Some(meeting) = filter.meeting {
+        query = query.filter(task::Column::MeetingId.eq(meeting));
+    }
+    if let Some(user_id) = filter.mentioned {
+        query = query.filter(
+            task::Column::Id.in_subquery(
+                Query::select()
+                    .column(task_mention::Column::TaskId)
+                    .from(task_mention::Entity)
+                    .and_where(task_mention::Column::UserId.eq(user_id))
+                    .to_owned(),
+            ),
+        );
+    }
+    let rows = query
+        .order_by_asc(task::Column::Status)
+        .order_by_asc(task::Column::Position)
+        .order_by_asc(task::Column::Id)
+        .all(db)
+        .await?;
+
+    let mut mention_ids: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    if !rows.is_empty() {
+        let mentions = task_mention::Entity::find()
+            .filter(task_mention::Column::TaskId.is_in(rows.iter().map(|t| t.id)))
+            .order_by_asc(task_mention::Column::TaskId)
+            .order_by_asc(task_mention::Column::UserId)
+            .all(db)
+            .await?;
+        for m in mentions {
+            mention_ids.entry(m.task_id).or_default().push(m.user_id);
+        }
+    }
+
+    let people = teams::users_by_id(
+        db,
+        rows.iter()
+            .map(|t| t.author_id)
+            .chain(mention_ids.values().flatten().copied()),
+    )
+    .await?;
+
+    rows.into_iter()
+        .map(|task| {
+            let author = people
+                .get(&task.author_id)
+                .cloned()
+                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("task author is missing")))?;
+            let mentions = mention_ids
+                .get(&task.id)
+                .into_iter()
+                .flatten()
+                .filter_map(|id| people.get(id).cloned())
+                .collect();
+            let can_edit = role == Role::Admin || task.author_id == actor;
+            Ok(TaskView {
+                task,
+                author,
+                mentions,
+                can_edit,
+            })
+        })
+        .collect()
+}
+
+/// Adds a task at the end of its column. The content is sanitized; mentions of
+/// users who are not team members are dropped.
+pub async fn insert(
+    db: &(impl TransactionTrait + ConnectionTrait),
+    team_id: Uuid,
+    author_id: Uuid,
+    status: TaskStatus,
+    raw_content: &str,
+) -> Result<task::Model, AppError> {
+    let content = rich_text::sanitize(raw_content)?;
+    let txn = db.begin().await?;
+
+    // Serialises inserts into the same team, so two tasks never pick the same
+    // end-of-column key.
+    team::Entity::find_by_id(team_id)
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .ok_or(AppError::NotFound("team_not_found"))?;
+
+    let last = task::Entity::find()
+        .filter(task::Column::TeamId.eq(team_id))
+        .filter(task::Column::Status.eq(status))
+        .order_by_desc(task::Column::Position)
+        .one(&txn)
+        .await?
+        .map(|t| t.position);
+    let position = key_between(last.as_deref(), None)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("cannot order after the last task")))?;
+
+    let now = OffsetDateTime::now_utc();
+    let task = task::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        team_id: Set(team_id),
+        meeting_id: Set(None),
+        group_id: Set(None),
+        author_id: Set(author_id),
+        content: Set(content.html),
+        status: Set(status),
+        position: Set(position),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+    .insert(&txn)
+    .await?;
+
+    if !content.mention_ids.is_empty() {
+        let members: Vec<Uuid> = team_member::Entity::find()
+            .filter(team_member::Column::TeamId.eq(team_id))
+            .filter(team_member::Column::UserId.is_in(content.mention_ids.clone()))
+            .all(&txn)
+            .await?
+            .into_iter()
+            .map(|m| m.user_id)
+            .collect();
+        let rows: Vec<task_mention::ActiveModel> = content
+            .mention_ids
+            .into_iter()
+            .filter(|id| members.contains(id))
+            .map(|user_id| task_mention::ActiveModel {
+                task_id: Set(task.id),
+                user_id: Set(user_id),
+            })
+            .collect();
+        if !rows.is_empty() {
+            task_mention::Entity::insert_many(rows).exec(&txn).await?;
+        }
+    }
+
+    txn.commit().await?;
+    Ok(task)
+}

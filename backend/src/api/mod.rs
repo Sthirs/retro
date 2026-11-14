@@ -5,6 +5,7 @@ pub mod health;
 pub mod invitations;
 pub mod join;
 pub mod me;
+pub mod tasks;
 pub mod teams;
 
 use serde::Serialize;

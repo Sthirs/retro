@@ -4,6 +4,7 @@ pub mod invitations;
 pub mod ordering;
 pub mod pictures;
 pub mod rich_text;
+pub mod tasks;
 pub mod teams;
 pub mod users;
 

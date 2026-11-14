@@ -6,7 +6,7 @@ use utoipa::{
     openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
 };
 
-use crate::{api, error::Problem};
+use crate::{api, entities::task::TaskStatus, error::Problem};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -42,8 +42,9 @@ use crate::{api, error::Problem};
         api::invitations::accept_invitation,
         api::invitations::decline_invitation,
         api::join::join_team,
+        api::tasks::list_tasks,
     ),
-    components(schemas(Problem)),
+    components(schemas(Problem, TaskStatus)),
     modifiers(&BearerAuth),
 )]
 pub struct ApiDoc;

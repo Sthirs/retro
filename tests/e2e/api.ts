@@ -30,7 +30,8 @@ async function signedIn(login: string): Promise<{ api: APIRequestContext; userId
  * Brings a dev account back to "no team, no invitation": deletes the teams it
  * administers, leaves the others, declines open invitations and restores the
  * display name and picture. The e2e suite
- * owns the alice and bob accounts of the dev cluster.
+ * owns the alice, bob and dana accounts of the dev cluster (dana is
+ * backend-seeded only and used by the account spec).
  */
 export async function resetAccount(login: string): Promise<void> {
   const { api, userId } = await signedIn(login);

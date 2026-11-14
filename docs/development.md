@@ -55,6 +55,7 @@ owns.
 | --- | --- | --- | --- | --- |
 | `alice` | `alice@retro.local` | Alice Rossi | `password` | password, SSO |
 | `bob` | `bob@retro.local` | Bob Bianchi | `password` | password, SSO |
+| `dana` | `dana@retro.local` | Dana Neri | `password` | password only (not in dex) |
 | — | `carol@retro.local` | Carol Verdi | `password` (in dex) | SSO only |
 
 On the first SSO sign-in, the backend links the dex identity to the existing account

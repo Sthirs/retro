@@ -10,6 +10,7 @@ use common::{TestApp, TestResponse};
 use retro_backend::{auth::oidc::Identity, domain::users::sign_in_with_identity};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 fn identity(subject: &str, email: &str) -> Identity {
     Identity {
@@ -29,6 +30,9 @@ const PNG: &[u8] = &[
     0x00, 0x05, 0xFE, 0x02, 0xFE, 0xA7, 0x35, 0x81, 0x84, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
     0x44, 0xAE, 0x42, 0x60, 0x82,
 ];
+
+/// A valid GIF header (enough for the magic-byte check).
+const GIF: &[u8] = b"GIF89a\x01\x00\x01\x00\x00\x00\x00;";
 
 fn sha_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
@@ -186,6 +190,59 @@ async fn uploads_and_serves_a_picture() {
     let cache = res.headers["cache-control"].to_str().unwrap();
     assert!(cache.contains("private"), "{cache}");
     assert!(cache.contains("immutable"), "{cache}");
+    assert_eq!(res.headers["x-content-type-options"], "nosniff");
+
+    // Error responses are never cached.
+    let res = app
+        .get_with_token(&format!("/api/v1/users/{}/picture", Uuid::now_v7()), &alice)
+        .await;
+    assert_eq!(res.status, 404);
+    assert_eq!(res.headers["cache-control"], "no-store");
+    let res = app
+        .get_with_token(&format!("/api/v1/users/{id}/picture"), "")
+        .await;
+    assert_eq!(res.status, 401);
+    assert_eq!(res.headers["cache-control"], "no-store");
+}
+
+#[tokio::test]
+async fn replacing_the_picture_serves_the_new_bytes() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let id = user_id(&app, &alice).await;
+
+    let first = put_bytes(
+        &app,
+        "/api/v1/me/picture",
+        &alice,
+        "image/png",
+        PNG.to_vec(),
+    )
+    .await;
+    assert_eq!(first.status, 200, "{}", first.text());
+    let second = put_bytes(
+        &app,
+        "/api/v1/me/picture",
+        &alice,
+        "image/gif",
+        GIF.to_vec(),
+    )
+    .await;
+    assert_eq!(second.status, 200, "{}", second.text());
+    let sha = sha_hex(GIF);
+    assert_ne!(
+        first.json()["pictureVersion"],
+        second.json()["pictureVersion"]
+    );
+    assert_eq!(second.json()["pictureVersion"], sha[..16]);
+
+    let res = app
+        .get_with_token(&format!("/api/v1/users/{id}/picture"), &alice)
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.headers["content-type"], "image/gif");
+    assert_eq!(res.headers["etag"], format!("\"{sha}\"").as_str());
+    assert_eq!(res.body, GIF);
 }
 
 #[tokio::test]
@@ -243,6 +300,18 @@ async fn rejects_pictures_over_5_mb() {
     assert_eq!(res.status, 413, "{}", res.text());
     assert_eq!(res.json()["code"], "picture_too_large");
     assert_eq!(res.headers["content-type"], "application/problem+json");
+}
+
+#[tokio::test]
+async fn oversized_bodies_get_problem_json_too() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let mut bytes = PNG[..8].to_vec();
+    bytes.resize(5 * 1024 * 1024 + 1024, 0);
+    let res = put_bytes(&app, "/api/v1/me/picture", &alice, "image/png", bytes).await;
+    assert_eq!(res.status, 413, "{}", res.text());
+    assert_eq!(res.headers["content-type"], "application/problem+json");
+    assert_eq!(res.json()["code"], "picture_too_large");
 }
 
 #[tokio::test]

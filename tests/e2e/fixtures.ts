@@ -1,6 +1,7 @@
 /**
  * Dev accounts. alice and bob are seeded in the backend and in dex (password or
- * single sign-on); carol exists only in dex (single sign-on only).
+ * single sign-on); dana is seeded in the backend only (password only) and is
+ * used by the account spec; carol exists only in dex (single sign-on only).
  * See backend/src/seed.rs and deploy/helm/retro/templates/dev-dex.yaml.
  */
 export const USERS = {

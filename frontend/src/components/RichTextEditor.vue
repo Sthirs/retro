@@ -18,24 +18,30 @@ const emit = defineEmits<{ 'update:modelValue': [html: string] }>();
 const { t } = useI18n();
 
 const MAX_SUGGESTIONS = 6;
-/** Tiptap's own guard: no autolink for bare IPv4 addresses or dotless hostnames. */
-function defaultShouldAutoLink(url: string): boolean {
-  if (HAS_SCHEME.test(url) && !url.includes('@')) return true;
-  const hostname = (url.includes('@') ? url.split('@').pop() : url)?.split(/[/?#:]/)[0] ?? '';
-  return !/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) && hostname.includes('.');
-}
-
 /** The only link schemes the server keeps (ADR-0010); Tiptap's own list is broader. */
 const ALLOWED_LINK = /^(?:https?|mailto):/i;
-const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
-const isAllowedScheme = (url: string): boolean => ALLOWED_LINK.test(url.trim());
+/** Whitespace and control characters that browsers (and Tiptap) drop from a URL before parsing it. */
+// eslint-disable-next-line no-control-regex -- stripping control characters is the point
+const URL_NOISE = /[\u0000-\u0020\u007f-\u00a0\u1680\u180e\u2000-\u2029\u202f\u205f\u3000\ufeff]/g;
+const cleanUrl = (url: string): string => url.replace(URL_NOISE, '');
+/** A scheme-like prefix, or any `:` before the first `/`, `?` or `#`: never treat that as scheme-less. */
+const hasScheme = (cleaned: string): boolean =>
+  /^[a-z][a-z0-9+.-]*:/i.test(cleaned) || /^[^/?#]*:/.test(cleaned);
+const isAllowedScheme = (url: string): boolean => ALLOWED_LINK.test(cleanUrl(url));
 /**
  * Tiptap hands autolink the text it matched (`example.com`, `a@b.c`), not the
  * href, and completes the scheme itself (http, or mailto for emails). So a
  * scheme-less value is fine; any explicit scheme must be an allowed one.
  */
-const isAllowedLink = (url: string): boolean =>
-  !HAS_SCHEME.test(url.trim()) || isAllowedScheme(url);
+const isAllowedLink = (url: string): boolean => !hasScheme(cleanUrl(url)) || isAllowedScheme(url);
+
+/** Tiptap's own guard: no autolink for bare IPv4 addresses or dotless hostnames. */
+function defaultShouldAutoLink(url: string): boolean {
+  if (hasScheme(url) && !url.includes('@')) return true;
+  const hostname = (url.includes('@') ? url.split('@').pop() : url)?.split(/[/?#:]/)[0] ?? '';
+  return !/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) && hostname.includes('.');
+}
+
 const uid = useId();
 const listId = `mentions-${uid}`;
 const urlId = `link-url-${uid}`;
@@ -211,8 +217,8 @@ function closeLink(refocus: boolean): void {
 
 /** Bare domains get https://; schemes are validated by `isAllowedLink` afterwards. */
 function normaliseUrl(raw: string): string {
-  const value = raw.trim();
-  if (value === '' || /^[a-z][a-z0-9+.-]*:/i.test(value)) return value;
+  const value = cleanUrl(raw);
+  if (value === '' || hasScheme(value)) return value;
   return `https://${value}`;
 }
 
@@ -291,12 +297,12 @@ onBeforeUnmount(() => {
         v-model="linkUrl"
         :aria-invalid="linkError"
         :aria-describedby="linkError ? errorId : undefined"
-        @input="linkError = false"
         class="rte-link-input"
         type="text"
         inputmode="url"
         autocomplete="off"
         placeholder="https://"
+        @input="linkError = false"
       />
       <p v-if="linkError" :id="errorId" class="rte-link-error" role="alert">
         {{ t('richText.linkInvalid') }}

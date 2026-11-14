@@ -321,4 +321,30 @@ describe('RichTextEditor', () => {
     expect(editor.getHTML()).not.toContain('<a ');
     wrapper.unmount();
   });
+  it.each([
+    ['tab', '<a href="java&#9;script:alert(1)">x</a>'],
+    ['newline', '<a href="java\nscript:alert(1)">x</a>'],
+    ['control character', '<a href="\u0001javascript:alert(1)">x</a>'],
+    ['entity colon', '<a href="javascript&colon;alert(1)">x</a>'],
+  ])('RichTextEditor drops disguised javascript links (%s)', async (_name, anchor) => {
+    const wrapper = mountEditor();
+    const editor = await editorOf(wrapper);
+    editor.commands.setContent(`<p>${anchor}</p>`);
+    expect(editor.getHTML()).not.toContain('<a ');
+    expect(editor.getHTML()).not.toContain('javascript');
+    wrapper.unmount();
+  });
+
+  it('RichTextEditor link form rejects a disguised javascript scheme', async () => {
+    const wrapper = mountEditor('<p>site</p>');
+    const editor = await editorOf(wrapper);
+    editor.commands.selectAll();
+    await wrapper.get('button[aria-label="Link"]').trigger('click');
+    await wrapper.get('form input').setValue('java\tscript:alert(1)');
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+    expect(wrapper.get('form input').attributes('aria-invalid')).toBe('true');
+    expect(editor.getHTML()).toBe('<p>site</p>');
+    wrapper.unmount();
+  });
 });

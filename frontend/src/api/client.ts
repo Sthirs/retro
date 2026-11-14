@@ -11,8 +11,9 @@ export type {
   SessionResponse,
   TeamDto,
   TeamRefDto,
+  UpdateMeRequest,
   UserDto as User,
 } from './generated';
-export { InvitationStatus, Role } from './generated';
+export { InvitationStatus, Role, SignInMethod } from './generated';
 export { ApiError, apiError, errorCode } from './errors';
 export { setTokenSource, type TokenSource } from './fetcher';

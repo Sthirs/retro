@@ -7,7 +7,9 @@ use axum::{
     http::{HeaderValue, header},
     response::Response,
 };
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -15,9 +17,20 @@ use crate::{
     api::{UserDto, invitations::PendingInvitationDto, teams::TeamDto},
     auth::CurrentUser,
     domain::{invitations, pictures, teams, users},
+    entities::user_identity,
     error::{AppResult, Problem},
     state::AppState,
 };
+
+/// How the user signs in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SignInMethod {
+    /// A username and password.
+    Password,
+    /// A single sign-on identity from the OIDC provider.
+    Sso,
+}
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +40,12 @@ pub struct MeResponse {
     pub teams: Vec<TeamDto>,
     /// Open invitations sent to the user's email, newest first.
     pub invitations: Vec<PendingInvitationDto>,
+    /// When the account was created.
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub member_since: OffsetDateTime,
+    /// `sso` when the user has a linked identity, else `password`.
+    pub sign_in_method: SignInMethod,
 }
 
 /// Returns the signed-in user with their teams and pending invitations.
@@ -46,7 +65,19 @@ pub async fn me(
 ) -> AppResult<Json<MeResponse>> {
     let teams = teams::list_for_user(&state.db, user.id).await?;
     let invitations = invitations::pending_for_user(&state.db, &user).await?;
+    let linked = user_identity::Entity::find()
+        .filter(user_identity::Column::UserId.eq(user.id))
+        .count(&state.db)
+        .await?;
+    let sign_in_method = if linked > 0 {
+        SignInMethod::Sso
+    } else {
+        SignInMethod::Password
+    };
+    let member_since = user.created_at;
     Ok(Json(MeResponse {
+        member_since,
+        sign_in_method,
         user: user.into(),
         teams: teams.into_iter().map(Into::into).collect(),
         invitations: invitations.into_iter().map(Into::into).collect(),

@@ -30,6 +30,11 @@ export interface AuthConfig {
 export interface PersonDto {
   displayName: string;
   id: string;
+  /**
+   * Content hash of the uploaded picture; `null` when there is none.
+   * @nullable
+   */
+  pictureVersion?: string | null;
 }
 
 /**
@@ -137,6 +142,16 @@ export interface PendingInvitationDto {
 }
 
 /**
+ * How the user signs in.
+ */
+export type SignInMethod = (typeof SignInMethod)[keyof typeof SignInMethod];
+
+export const SignInMethod = {
+  password: 'password',
+  sso: 'sso',
+} as const;
+
+/**
  * A member's role in a team (spec §5.1).
  */
 export type Role = (typeof Role)[keyof typeof Role];
@@ -166,6 +181,11 @@ export interface UserDto {
   displayName: string;
   email: string;
   id: string;
+  /**
+   * Content hash of the uploaded picture; `null` when there is none.
+   * @nullable
+   */
+  pictureVersion?: string | null;
   /** @nullable */
   username?: string | null;
 }
@@ -173,6 +193,10 @@ export interface UserDto {
 export interface MeResponse {
   /** Open invitations sent to the user's email, newest first. */
   invitations: PendingInvitationDto[];
+  /** When the account was created. */
+  memberSince: string;
+  /** `sso` when the user has a linked identity, else `password`. */
+  signInMethod: SignInMethod;
   /** Teams the user belongs to, by name. */
   teams: TeamDto[];
   user: UserDto;
@@ -216,6 +240,11 @@ export interface SessionResponse {
 export interface TeamNameRequest {
   /** 1–60 characters after trimming. */
   name: string;
+}
+
+export interface UpdateMeRequest {
+  /** New display name; trimmed, 1 to 80 characters. */
+  displayName: string;
 }
 
 export type OidcStartParams = {
@@ -672,6 +701,172 @@ export const me = async (options?: Parameters<typeof apiFetch>[1]): Promise<meRe
   return apiFetch<meResponse>(getMeUrl(), {
     ...options,
     method: 'GET',
+  });
+};
+
+export type updateMeResponse200 = {
+  data: UserDto;
+  status: 200;
+};
+
+export type updateMeResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type updateMeResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type updateMeResponseSuccess = updateMeResponse200 & {
+  headers: Headers;
+};
+export type updateMeResponseError = (updateMeResponse400 | updateMeResponse401) & {
+  headers: Headers;
+};
+
+export type updateMeResponse = updateMeResponseSuccess | updateMeResponseError;
+
+export const getUpdateMeUrl = () => {
+  return `/api/v1/me`;
+};
+
+/**
+ * @summary Changes the signed-in user's display name.
+ */
+export const updateMe = async (
+  updateMeRequest: UpdateMeRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<updateMeResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<updateMeResponse>(getUpdateMeUrl(), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateMeRequest),
+  });
+};
+
+export type putPictureResponse200 = {
+  data: UserDto;
+  status: 200;
+};
+
+export type putPictureResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type putPictureResponse413 = {
+  data: Problem;
+  status: 413;
+};
+
+export type putPictureResponse415 = {
+  data: Problem;
+  status: 415;
+};
+
+export type putPictureResponseSuccess = putPictureResponse200 & {
+  headers: Headers;
+};
+export type putPictureResponseError = (
+  putPictureResponse401 | putPictureResponse413 | putPictureResponse415
+) & {
+  headers: Headers;
+};
+
+export type putPictureResponse = putPictureResponseSuccess | putPictureResponseError;
+
+export const getPutPictureUrl = () => {
+  return `/api/v1/me/picture`;
+};
+
+/**
+ * @summary Replaces the signed-in user's picture with the request body.
+ */
+export const putPicture = async (
+  putPictureBody: Blob,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<putPictureResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<putPictureResponse>(getPutPictureUrl(), {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/*', ...getHeaders(options?.headers) },
+    body: putPictureBody,
+  });
+};
+
+export type deletePictureResponse200 = {
+  data: UserDto;
+  status: 200;
+};
+
+export type deletePictureResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type deletePictureResponseSuccess = deletePictureResponse200 & {
+  headers: Headers;
+};
+export type deletePictureResponseError = deletePictureResponse401 & {
+  headers: Headers;
+};
+
+export type deletePictureResponse = deletePictureResponseSuccess | deletePictureResponseError;
+
+export const getDeletePictureUrl = () => {
+  return `/api/v1/me/picture`;
+};
+
+/**
+ * @summary Removes the signed-in user's picture.
+ */
+export const deletePicture = async (
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<deletePictureResponse> => {
+  return apiFetch<deletePictureResponse>(getDeletePictureUrl(), {
+    ...options,
+    method: 'DELETE',
   });
 };
 
@@ -1336,6 +1531,48 @@ export const updateMember = async (
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(roleRequest),
+  });
+};
+
+export type getPictureResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type getPictureResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type getPictureResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type getPictureResponseSuccess = getPictureResponse200 & {
+  headers: Headers;
+};
+export type getPictureResponseError = (getPictureResponse401 | getPictureResponse404) & {
+  headers: Headers;
+};
+
+export type getPictureResponse = getPictureResponseSuccess | getPictureResponseError;
+
+export const getGetPictureUrl = (userId: string) => {
+  return `/api/v1/users/${userId}/picture`;
+};
+
+/**
+ * The URL changes with `pictureVersion`, so the bytes are cached as immutable.
+ * @summary A user's picture. Visible to the user and to people sharing a team with them.
+ */
+export const getPicture = async (
+  userId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<getPictureResponse> => {
+  return apiFetch<getPictureResponse>(getGetPictureUrl(userId), {
+    ...options,
+    method: 'GET',
   });
 };
 

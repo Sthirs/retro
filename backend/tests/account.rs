@@ -7,8 +7,19 @@ use axum::{
     http::{Request, header},
 };
 use common::{TestApp, TestResponse};
+use retro_backend::{auth::oidc::Identity, domain::users::sign_in_with_identity};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+
+fn identity(subject: &str, email: &str) -> Identity {
+    Identity {
+        issuer: "http://idp.test".into(),
+        subject: subject.into(),
+        email: email.into(),
+        name: Some("Alice From SSO".into()),
+        picture: None,
+    }
+}
 
 /// A valid 1x1 transparent PNG.
 const PNG: &[u8] = &[
@@ -275,4 +286,23 @@ async fn me_lists_picture_version() {
 
     let me = app.get_with_token("/api/v1/me", &alice).await;
     assert_eq!(me.json()["user"]["pictureVersion"], version);
+}
+
+#[tokio::test]
+async fn me_reports_sign_in_method_and_member_since() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+
+    let me = app.get_with_token("/api/v1/me", &alice).await.json();
+    assert_eq!(me["signInMethod"], "password");
+    let since = me["memberSince"].as_str().expect("memberSince is a string");
+    time::OffsetDateTime::parse(since, &time::format_description::well_known::Rfc3339)
+        .expect("memberSince is RFC 3339");
+
+    sign_in_with_identity(&app.db, &identity("sub-a", "alice@retro.local"), false)
+        .await
+        .unwrap()
+        .unwrap();
+    let me = app.get_with_token("/api/v1/me", &alice).await.json();
+    assert_eq!(me["signInMethod"], "sso");
 }

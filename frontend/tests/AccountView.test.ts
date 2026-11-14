@@ -317,3 +317,67 @@ describe('account page: invitations', () => {
     expect(wrapper.text()).not.toContain('Pending invitations');
   });
 });
+
+describe('account page: preferences and log out', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('switches theme', async () => {
+    mockFetch(base());
+    const { wrapper } = await renderAt('/account');
+    const dark = wrapper.findAll('[role="group"] button').find((b) => b.text() === 'Dark');
+    await dark?.trigger('click');
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+    expect(dark?.attributes('aria-pressed')).toBe('true');
+    document.documentElement.removeAttribute('data-theme');
+    localStorage.removeItem('retro.theme');
+  });
+
+  it('changing the default team remembers it', async () => {
+    mockFetch(
+      base({
+        'GET /api/v1/me': me([team(), team({ id: OTHER_TEAM_ID, name: 'Mobile Squad' })]),
+      }),
+    );
+    const { wrapper } = await renderAt('/account');
+    const select = wrapper.find('#default-team');
+    expect((select.element as HTMLSelectElement).value).toBe(TEAM_ID);
+    await select.setValue(OTHER_TEAM_ID);
+    expect(localStorage.getItem(`retro.lastTeam.${ALICE.id}`)).toBe(OTHER_TEAM_ID);
+  });
+
+  it('the language select offers English only', async () => {
+    mockFetch(base());
+    const { wrapper } = await renderAt('/account');
+    const options = wrapper.findAll('#language option');
+    expect(options.map((o) => o.text())).toEqual(['English']);
+  });
+
+  it('hides the default team control without teams', async () => {
+    mockFetch(base({ 'GET /api/v1/me': me([]) }));
+    const { wrapper } = await renderAt('/account');
+    expect(wrapper.find('#default-team').exists()).toBe(false);
+  });
+
+  it('logs out', async () => {
+    const { calls } = mockFetch(
+      base({
+        'POST /api/v1/auth/logout': { status: 204 },
+        'GET /api/v1/auth/config': {
+          status: 200,
+          body: {
+            localLogin: true,
+            sso: { enabled: false, buttonText: '' },
+            passwordResetUrl: null,
+          },
+        },
+      }),
+    );
+    const { wrapper, router } = await renderAt('/account');
+    expect(wrapper.find('[aria-label="Session"]').text()).toContain(
+      'Ends your session on this device.',
+    );
+    await wrapper.find('[aria-label="Session"] button').trigger('click');
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'));
+    expect(calls.some((c) => c.method === 'POST' && c.path === '/api/v1/auth/logout')).toBe(true);
+  });
+});

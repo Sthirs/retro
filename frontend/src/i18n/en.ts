@@ -132,6 +132,20 @@ export default {
       decline: 'Decline',
       declineLabel: 'Decline {team}',
     },
+    preferences: {
+      title: 'Preferences',
+      themeHint: 'System follows your device setting.',
+      language: 'Language',
+      languageHint: 'More languages are coming.',
+      english: 'English',
+      defaultTeam: 'Default team',
+      defaultTeamHint: 'Retro opens the team you used last on this browser.',
+    },
+    session: {
+      label: 'Session',
+      title: 'Log out',
+      text: 'Ends your session on this device.',
+    },
   },
   nav: {
     label: 'Team',

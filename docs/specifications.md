@@ -81,7 +81,7 @@ Authentication is performed by the **backend**, which issues Retro's own session
   1. a known identity signs in its user;
   2. otherwise, a user with the same (verified) email gets the identity linked;
   3. otherwise, a new user is created when auto-registration is on (`OIDC_AUTO_REGISTER`, default on), or the sign-in is refused.
-- `email`, display name and picture are synced from the provider's claims on each SSO sign-in.
+- `email` is synced from the provider's claims on each SSO sign-in. The display name is synced too, until the user sets their own on their account page. The `picture` claim is not displayed: provider-hosted images are blocked by the Content Security Policy.
 
 ### 3.3 Session
 
@@ -102,6 +102,8 @@ Authentication is performed by the **backend**, which issues Retro's own session
 - A user can belong to zero or more teams.
 - A user with no teams sees an empty state that invites them to create a team or accept an invitation.
 - The user's email is the key used to match pending invitations (see §6).
+- **Your account** page (`/account`, from the user menu): display name (editable, 1–80 characters), picture (upload PNG, JPEG, GIF or WebP up to 5 MB, or remove; initials otherwise), email (read-only), sign-in method, member since, the user's teams (open, leave, create), pending invitations (accept, decline), preferences (theme, language, team opened by default on this browser) and log out.
+- A user's picture is visible to themselves and to members of teams they share.
 
 ---
 
@@ -167,7 +169,7 @@ Authentication is performed by the **backend**, which issues Retro's own session
 - **Team selector** (dropdown) listing the user's teams. Its last entry is **"+ Add team"**, which opens a dialog to create a team.
 - The selected team is the **context of the whole UI**: meetings, tasks and settings all refer to it. Changing team re-routes to the same section of the new team.
 - The selected team is part of the URL (`/teams/:teamId/...`) and the last used team is remembered per user (stored in the browser).
-- User menu on the right: avatar, name, pending invitations, logout.
+- User menu on the right: avatar, name, pending invitations, theme, **Your account**, logout.
 
 ### 7.2 Left menu
 
@@ -411,9 +413,11 @@ Constraints and mitigations:
 The backend owns the schema and manages it through ORM migrations. All IDs are UUIDv7 and all timestamps are `timestamptz` (UTC).
 
 ```text
-users(id, email UNIQUE, username UNIQUE NULL, display_name, avatar_url NULL,
-      password_hash NULL, created_at, updated_at)
+users(id, email UNIQUE, username UNIQUE NULL, display_name, display_name_custom BOOL DEFAULT false,
+      avatar_url NULL, picture_version NULL, password_hash NULL, created_at, updated_at)
     -- email and username are stored lower-cased
+
+user_pictures(user_id PK → users, content_type, size_bytes, sha256, data BYTEA, created_at)
 
 user_identities(id, user_id → users, issuer, subject, created_at)
     UNIQUE(issuer, subject)
@@ -497,6 +501,10 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | GET | `/auth/oidc?redirect=&remember=` | Starts single sign-on (redirect to the provider) |
 | GET | `/auth/oidc/callback` | Provider callback; sets the refresh cookie, redirects to `/auth/callback` (or `/login?error=…`) |
 | GET | `/me` | Current user, their teams and pending invitations |
+| PATCH | `/me` | `{ displayName }` |
+| PUT | `/me/picture` | Raw image body |
+| DELETE | `/me/picture` | Remove the picture |
+| GET | `/users/{id}/picture` | Picture; owner or teammates |
 | POST | `/ws-ticket` | Short-lived ticket to open the WebSocket |
 
 ### 14.2 Teams
@@ -602,6 +610,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 /teams/:teamId/meetings/:id     → meeting room (phase-driven view), or summary if ended
 /teams/:teamId/tasks            → task board
 /teams/:teamId/settings         → team settings
+/account                        → your account
 /                               → redirect to the last used team, or onboarding
 ```
 

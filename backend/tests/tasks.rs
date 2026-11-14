@@ -463,12 +463,20 @@ async fn moves_between_non_adjacent_neighbours() {
     assert_eq!(res.status, 200, "{}", res.text());
     let position = res.json()["position"].as_str().unwrap().to_owned();
     assert!(b.a.position < position && position < b.c.position);
+    let all = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(
+        column(&all, "active"),
+        [b.a.id, b.d.id, b.b.id, b.c.id].map(|i| i.to_string())
+    );
 
     // A task can also move within its own column, relative to others.
     let res = move_to(&b.app, &b.alice, b.c.id, "active", None, Some(b.a.id)).await;
     assert_eq!(res.status, 200, "{}", res.text());
     let all = list(&b.app, &b.alice, b.team, "").await;
-    assert_eq!(column(&all, "active")[0], b.c.id.to_string());
+    assert_eq!(
+        column(&all, "active"),
+        [b.c.id, b.a.id, b.d.id, b.b.id].map(|i| i.to_string())
+    );
 }
 
 #[tokio::test]
@@ -561,7 +569,7 @@ async fn stale_neighbours_conflict() {
 }
 
 #[tokio::test]
-async fn concurrent_identical_keys_conflict() {
+async fn identical_drops_both_land_after_the_neighbour() {
     let b = board().await;
     let carol = b
         .app
@@ -578,8 +586,8 @@ async fn concurrent_identical_keys_conflict() {
     .await
     .unwrap();
 
-    // Two clients drop different tasks between the same neighbours. The
-    // server does not check adjacency, so both compute the same key.
+    // Two clients drop different tasks between the same neighbours: both
+    // succeed, the second landing directly after the neighbour, above the first.
     let first = move_to(
         &b.app,
         &b.alice,
@@ -599,15 +607,60 @@ async fn concurrent_identical_keys_conflict() {
         Some(b.b.id),
     )
     .await;
-    assert_eq!(second.status, 409, "{}", second.text());
-    assert_eq!(second.json()["code"], "stale_position");
+    assert_eq!(second.status, 200, "{}", second.text());
 
-    let stored = task::Entity::find_by_id(extra.id)
-        .one(&b.app.db)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(stored.status, TaskStatus::Future);
+    let all = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(
+        column(&all, "active"),
+        [b.a.id, extra.id, b.d.id, b.b.id, b.c.id].map(|i| i.to_string())
+    );
+}
+
+#[tokio::test]
+async fn before_only_lands_directly_before() {
+    let b = board().await;
+    let res = move_to(&b.app, &b.alice, b.c.id, "active", None, Some(b.b.id)).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let all = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(
+        column(&all, "active"),
+        [b.a.id, b.c.id, b.b.id].map(|i| i.to_string())
+    );
+}
+
+#[tokio::test]
+async fn after_only_lands_directly_after() {
+    let b = board().await;
+    let res = move_to(&b.app, &b.alice, b.d.id, "active", Some(b.a.id), None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let all = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(
+        column(&all, "active"),
+        [b.a.id, b.d.id, b.b.id, b.c.id].map(|i| i.to_string())
+    );
+}
+
+#[tokio::test]
+async fn moves_past_hidden_tasks() {
+    let b = board().await;
+    // The client sees a and c only (b is hidden by a filter) and drops d
+    // between them: it lands directly after a, never skipping or colliding
+    // with the hidden b.
+    let res = move_to(
+        &b.app,
+        &b.alice,
+        b.d.id,
+        "active",
+        Some(b.a.id),
+        Some(b.c.id),
+    )
+    .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let all = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(
+        column(&all, "active"),
+        [b.a.id, b.d.id, b.b.id, b.c.id].map(|i| i.to_string())
+    );
 }
 
 #[tokio::test]

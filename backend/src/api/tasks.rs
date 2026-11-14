@@ -98,9 +98,11 @@ pub async fn list_tasks(
 pub struct MoveTaskRequest {
     /// The column to move the task to.
     pub status: TaskStatus,
-    /// The task that should end up directly above this one, if any.
+    /// The task the moved one should land directly after, if any.
     pub after_id: Option<Uuid>,
-    /// The task that should end up directly below this one, if any.
+    /// The task the moved one should land directly before when `afterId` is
+    /// absent. With both, the task lands directly after `afterId`, and
+    /// `beforeId` must be below it.
     pub before_id: Option<Uuid>,
 }
 
@@ -118,7 +120,7 @@ pub struct MoveTaskRequest {
         (status = 400, body = Problem, content_type = "application/problem+json", description = "`invalid_position`: a neighbour is not in the team and target column, or is the task itself"),
         (status = 401, body = Problem, content_type = "application/problem+json", description = "Not signed in"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "`task_not_found`: no such task or not a member of its team"),
-        (status = 409, body = Problem, content_type = "application/problem+json", description = "`stale_position`: the neighbours are out of order or the position was taken"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`stale_position`: `afterId` is not before `beforeId`"),
     )
 )]
 pub async fn move_task(

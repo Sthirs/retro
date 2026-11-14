@@ -204,13 +204,14 @@ pub async fn insert(
     Ok(task)
 }
 
-/// Moves a task to `status`, after `after` and before `before` (both optional
-/// neighbours in the target column). With neither, it goes to the end of the
-/// column. Any team member may move any task (spec §9).
+/// Moves a task to `status`, directly after `after`, or directly before
+/// `before` when only that is given (both are optional neighbours in the
+/// target column). With neither, it goes to the end of the column. Any team
+/// member may move any task (spec §9).
 ///
 /// Neighbours that are not in the task's team and target column, or are the
-/// task itself, give `invalid_position`. Neighbours that are no longer in
-/// order, or a key another move took first, give `stale_position`. A task that
+/// task itself, give `invalid_position`. Neighbours that are out of order
+/// (`after` not before `before`) give `stale_position`. A task that
 /// does not exist or belongs to a team the caller is not in gives
 /// `task_not_found`.
 pub async fn move_task(
@@ -250,18 +251,49 @@ pub async fn move_task(
     let after_key = neighbour_position(&txn, &task, status, after).await?;
     let before_key = neighbour_position(&txn, &task, status, before).await?;
 
-    let (lower, upper) = if after.is_none() && before.is_none() {
-        let last = task::Entity::find()
+    // Place the task against the real adjacency of the target column (the task
+    // itself excluded), so tasks the client does not see, e.g. hidden by a
+    // filter, are never skipped over or collided with.
+    let column = || {
+        task::Entity::find()
             .filter(task::Column::TeamId.eq(task.team_id))
             .filter(task::Column::Status.eq(status))
             .filter(task::Column::Id.ne(task.id))
-            .order_by_desc(task::Column::Position)
-            .one(&txn)
-            .await?
-            .map(|t| t.position);
-        (last, None)
-    } else {
-        (after_key, before_key)
+    };
+    let (lower, upper) = match (after_key, before_key) {
+        (Some(after_key), before_key) => {
+            if before_key.as_ref().is_some_and(|b| *b <= after_key) {
+                return Err(AppError::Conflict("stale_position"));
+            }
+            let next = column()
+                .filter(task::Column::Position.gt(after_key.as_str()))
+                .order_by_asc(task::Column::Position)
+                .one(&txn)
+                .await?
+                .map(|t| t.position);
+            let upper = match (next, before_key) {
+                (Some(next), Some(before_key)) => Some(next.min(before_key)),
+                (next, before_key) => next.or(before_key),
+            };
+            (Some(after_key), upper)
+        }
+        (None, Some(before_key)) => {
+            let previous = column()
+                .filter(task::Column::Position.lt(before_key.as_str()))
+                .order_by_desc(task::Column::Position)
+                .one(&txn)
+                .await?
+                .map(|t| t.position);
+            (previous, Some(before_key))
+        }
+        (None, None) => {
+            let last = column()
+                .order_by_desc(task::Column::Position)
+                .one(&txn)
+                .await?
+                .map(|t| t.position);
+            (last, None)
+        }
     };
     let position = key_between(lower.as_deref(), upper.as_deref())
         .ok_or(AppError::Conflict("stale_position"))?;

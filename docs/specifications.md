@@ -305,7 +305,7 @@ The individual meeting phases cannot be replayed.
 
 ### 10.2 Ordering
 
-- Each task has `status` and a `position`. Positions are fractional-index string keys (base 62, compared byte-wise), so that a move updates a single row; concurrent moves to the same slot conflict and the client reloads.
+- Each task has `status` and a `position`. Positions are fractional-index string keys (base 62, compared byte-wise), so that a move updates a single row. A move whose neighbours are out of date (`afterId` not before `beforeId`) conflicts and the client reloads; otherwise the card lands directly after `afterId`, or directly before `beforeId`, whatever other tasks (for example ones hidden by a filter) sit in between.
 
 ---
 
@@ -575,7 +575,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | GET | `/teams/{teamId}/tasks` | Board, with filters |
 | POST | `/meetings/{id}/tasks` | Create a task (Discuss phase) |
 | PATCH | `/tasks/{tid}` | Edit content (author/admin) |
-| PUT | `/tasks/{tid}/position` | `{ status, beforeId?, afterId? }`: the moved task ends up directly after `afterId` and before `beforeId`; with neither, at the end of the column |
+| PUT | `/tasks/{tid}/position` | `{ status, beforeId?, afterId? }`: the moved task ends up directly after `afterId`, or directly before `beforeId` when only that is given; with neither, at the end of the column. A stale pair (`afterId` not before `beforeId`) answers 409 `stale_position` |
 | DELETE | `/tasks/{tid}` | Delete (author/admin) |
 
 ### 14.6 Operational

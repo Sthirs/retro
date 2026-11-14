@@ -32,11 +32,21 @@ const task = (id: string, status: TaskDto['status'], position: string, extra = {
   ...extra,
 });
 
+const member = (user: typeof ALICE, role = 'member') => ({
+  user,
+  role,
+  joinedAt: '2026-09-01T10:00:00Z',
+});
+
 function routes(tasks: TaskDto[]) {
   return {
     'POST /api/v1/auth/refresh': session(),
     'GET /api/v1/me': me([team()]),
     [`GET ${TASKS_PATH}`]: { status: 200, body: tasks },
+    [`GET /api/v1/teams/${TEAM_ID}/members`]: {
+      status: 200,
+      body: [member(ALICE, 'admin'), member(BOB)],
+    },
   };
 }
 
@@ -189,5 +199,138 @@ describe('Tasks board', () => {
     await flushPromises();
 
     expect(wrapper.get('[role="alert"]').text()).toContain('board changed');
+  });
+
+  describe('filters', () => {
+    const myTasks = (wrapper: VueWrapper) =>
+      wrapper.get('[role="group"][aria-label="Filters"] button[aria-pressed]');
+    const taskCalls = (calls: { path: string }[]) =>
+      calls.filter((c) => c.path.startsWith(TASKS_PATH)).map((c) => c.path);
+
+    it('My tasks filters by mentioned=me and reflects in the URL', async () => {
+      const { calls } = mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper, router } = await open();
+
+      const toggle = myTasks(wrapper);
+      expect(toggle.text()).toBe('My tasks');
+      expect(toggle.attributes('aria-pressed')).toBe('false');
+
+      await toggle.trigger('click');
+      await flushPromises();
+
+      expect(router.currentRoute.value.query).toEqual({ mentioned: ALICE.id });
+      expect(taskCalls(calls).at(-1)).toBe(`${TASKS_PATH}?mentioned=${ALICE.id}`);
+      expect(myTasks(wrapper).attributes('aria-pressed')).toBe('true');
+      expect(
+        (wrapper.get('select[aria-label="Mentioned"]').element as HTMLSelectElement).value,
+      ).toBe(ALICE.id);
+
+      await myTasks(wrapper).trigger('click');
+      await flushPromises();
+      expect(router.currentRoute.value.query).toEqual({});
+      expect(taskCalls(calls).at(-1)).toBe(TASKS_PATH);
+    });
+
+    it('choosing another person in Mentioned turns My tasks off', async () => {
+      const { calls } = mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper, router } = await open();
+
+      await myTasks(wrapper).trigger('click');
+      await flushPromises();
+      await wrapper.get('select[aria-label="Mentioned"]').setValue(BOB.id);
+      await flushPromises();
+
+      expect(router.currentRoute.value.query).toEqual({ mentioned: BOB.id });
+      expect(taskCalls(calls).at(-1)).toBe(`${TASKS_PATH}?mentioned=${BOB.id}`);
+      expect(myTasks(wrapper).attributes('aria-pressed')).toBe('false');
+    });
+
+    it('author select sends author=', async () => {
+      const { calls } = mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper, router } = await open();
+
+      const select = wrapper.get('select[aria-label="Author"]');
+      expect(select.findAll('option').map((o) => o.text())).toEqual([
+        'anyone',
+        'Alice Rossi',
+        'Bob Bianchi',
+      ]);
+      await select.setValue(BOB.id);
+      await flushPromises();
+
+      expect(router.currentRoute.value.query).toEqual({ author: BOB.id });
+      expect(taskCalls(calls).at(-1)).toBe(`${TASKS_PATH}?author=${BOB.id}`);
+    });
+
+    it('reads the filter from the URL on load', async () => {
+      const { calls } = mockFetch(routes([task('a1', 'active', 'a0')]));
+      const result = await renderAt(`/teams/${TEAM_ID}/tasks?author=${BOB.id}`);
+      mounted.push(result.wrapper);
+
+      expect(taskCalls(calls)[0]).toBe(`${TASKS_PATH}?author=${BOB.id}`);
+      const select = result.wrapper.get('select[aria-label="Author"]');
+      expect((select.element as HTMLSelectElement).value).toBe(BOB.id);
+    });
+
+    it('survives a filter value that is no longer a member', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const result = await renderAt(`/teams/${TEAM_ID}/tasks?author=gone`);
+      mounted.push(result.wrapper);
+
+      const select = result.wrapper.get('select[aria-label="Author"]');
+      expect((select.element as HTMLSelectElement).value).toBe('gone');
+      expect(result.wrapper.text()).toContain('Clear filters');
+    });
+
+    it('Clear filters resets the query', async () => {
+      const { calls } = mockFetch(routes([]));
+      const { wrapper, router } = await open();
+      expect(wrapper.text()).not.toContain('Clear filters');
+
+      await wrapper.get('select[aria-label="Author"]').setValue(BOB.id);
+      await flushPromises();
+      // A filter that matches nothing is not the "no tasks yet" state.
+      expect(wrapper.text()).not.toContain('No tasks yet');
+      const clear = wrapper.findAll('button').find((b) => b.text() === 'Clear filters');
+      expect(clear).toBeDefined();
+
+      await clear!.trigger('click');
+      await flushPromises();
+
+      expect(router.currentRoute.value.query).toEqual({});
+      expect(taskCalls(calls).at(-1)).toBe(TASKS_PATH);
+      expect(wrapper.text()).not.toContain('Clear filters');
+      expect(wrapper.text()).toContain('No tasks yet');
+    });
+
+    it('meeting filter hidden without meetings', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper } = await open();
+
+      expect(wrapper.find('select[aria-label="Meeting"]').exists()).toBe(false);
+    });
+
+    it('meeting filter lists the loaded tasks meetings and sends meeting=', async () => {
+      const { calls } = mockFetch(
+        routes([
+          task('a1', 'active', 'a0', { meetingId: 'm1' }),
+          task('a2', 'active', 'a1', { meetingId: 'm1' }),
+          task('a3', 'active', 'a2', { meetingId: 'm2' }),
+        ]),
+      );
+      const { wrapper, router } = await open();
+
+      const select = wrapper.get('select[aria-label="Meeting"]');
+      expect(select.findAll('option').map((o) => o.text())).toEqual([
+        'all',
+        'Meeting 1',
+        'Meeting 2',
+      ]);
+      await select.setValue('m2');
+      await flushPromises();
+
+      expect(router.currentRoute.value.query).toEqual({ meeting: 'm2' });
+      expect(taskCalls(calls).at(-1)).toBe(`${TASKS_PATH}?meeting=m2`);
+    });
   });
 });

@@ -2,23 +2,42 @@
 /** The team's task board (spec §10): four columns of cards, drag and drop. */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
-import { TaskStatus } from '@/api/client';
+import { api, TaskStatus, type MemberDto } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
 import AppAlert from '@/components/ui/AppAlert.vue';
 import TaskColumn from '@/features/tasks/TaskColumn.vue';
+import TaskFilters from '@/features/tasks/TaskFilters.vue';
+import { useSessionStore } from '@/stores/session';
 import { useTasksStore, type TaskFilter } from '@/stores/tasks';
 
 const COLUMNS = [TaskStatus.future, TaskStatus.stuck, TaskStatus.active, TaskStatus.done] as const;
 
 const { t, te } = useI18n();
 const route = useRoute();
+const router = useRouter();
+const session = useSessionStore();
 const store = useTasksStore();
 
 const teamId = computed(() => String(route.params.teamId));
-const filter = ref<TaskFilter>({});
 const loaded = ref(false);
+const members = ref<MemberDto[]>([]);
+
+const FILTER_KEYS = ['mentioned', 'author', 'meeting'] as const;
+/** The filter lives in the URL (`?mentioned=&author=&meeting=`), so it survives reloads and links. */
+const filter = computed<TaskFilter>(() => {
+  const result: TaskFilter = {};
+  for (const key of FILTER_KEYS) {
+    const raw = route.query[key];
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    if (value) result[key] = value;
+  }
+  return result;
+});
+const meetingIds = computed(() => [
+  ...new Set(store.tasks.map((task) => task.meetingId).filter((id): id is string => !!id)),
+]);
 
 const filterActive = computed(() => Object.values(filter.value).some(Boolean));
 const isEmpty = computed(
@@ -35,9 +54,31 @@ async function load(): Promise<void> {
   loaded.value = true;
 }
 
+async function loadMembers(): Promise<void> {
+  const id = teamId.value;
+  try {
+    const res = await api.listMembers(id);
+    // Ignore a late answer for a team we have since left.
+    if (id === teamId.value) members.value = res.status === 200 ? res.data : [];
+  } catch {
+    if (id === teamId.value) members.value = [];
+  }
+}
+
+function setFilter(next: TaskFilter): void {
+  const query = { ...route.query };
+  for (const key of FILTER_KEYS) {
+    const value = next[key];
+    if (value) query[key] = value;
+    else delete query[key];
+  }
+  void router.replace({ query });
+}
+
 // Until the real-time hub exists, the board refreshes when the window regains focus.
 onMounted(() => {
   void load();
+  void loadMembers();
   window.addEventListener('focus', load);
 });
 onBeforeUnmount(() => window.removeEventListener('focus', load));
@@ -45,9 +86,13 @@ onBeforeUnmount(() => window.removeEventListener('focus', load));
 // Switching team keeps this view alive: show the new team's board.
 watch(teamId, () => {
   loaded.value = false;
+  members.value = [];
   store.reset();
   void load();
+  void loadMembers();
 });
+// A new filter reloads the board.
+watch(filter, () => void load());
 </script>
 
 <template>
@@ -58,6 +103,14 @@ watch(teamId, () => {
     </div>
 
     <AppAlert v-if="errorText">{{ errorText }}</AppAlert>
+
+    <TaskFilters
+      :filter="filter"
+      :members="members"
+      :meeting-ids="meetingIds"
+      :me-id="session.user?.id ?? null"
+      @change="setFilter"
+    />
 
     <section v-if="isEmpty" class="empty">
       <span class="empty__icon" aria-hidden="true">

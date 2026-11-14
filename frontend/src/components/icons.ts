@@ -32,6 +32,12 @@ export const ICONS = {
   image: ['rect:3,3,18,18,2', 'circle:9,9,2', 'm21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21'],
   lock: ['rect:4,11,16,10,2', 'M8 11V7a4 4 0 0 1 8 0v4'],
   monitor: ['rect:2,3,20,14,2', 'M8 21h8M12 17v4'],
+  bold: ['M6 4h8a4 4 0 0 1 0 8H6zM6 12h9a4 4 0 0 1 0 8H6z'],
+  italic: ['M19 4h-9M14 20H5M15 4 9 20'],
+  link: [
+    'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71',
+    'M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
+  ],
 } as const;
 
 export type IconName = keyof typeof ICONS;

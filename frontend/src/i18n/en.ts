@@ -298,4 +298,14 @@ export default {
       create: 'Create invitation',
     },
   },
+  richText: {
+    toolbar: 'Text formatting',
+    bold: 'Bold',
+    italic: 'Italic',
+    link: 'Link',
+    linkUrl: 'Link address',
+    linkApply: 'Apply',
+    linkCancel: 'Cancel',
+    mentions: 'Mention a team member',
+  },
 };

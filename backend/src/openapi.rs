@@ -43,6 +43,7 @@ use crate::{api, entities::task::TaskStatus, error::Problem};
         api::invitations::decline_invitation,
         api::join::join_team,
         api::tasks::list_tasks,
+        api::tasks::move_task,
     ),
     components(schemas(Problem, TaskStatus)),
     modifiers(&BearerAuth),

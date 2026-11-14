@@ -306,3 +306,348 @@ async fn deleting_the_team_deletes_its_tasks() {
         0
     );
 }
+
+/// Alice (admin) and Bob (member) share a team with tasks `a`, `b`, `c` in
+/// the active column and `d` in the done column, all written by Bob.
+struct Board {
+    app: TestApp,
+    alice: String,
+    bob: String,
+    team: Uuid,
+    a: task::Model,
+    b: task::Model,
+    c: task::Model,
+    d: task::Model,
+}
+
+async fn board() -> Board {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let bob_id = user_id(&app, &bob).await;
+    let team = create_team(&app, &alice, "Platform").await;
+    join(&app, &alice, team, &bob).await;
+    let mut tasks_in = Vec::new();
+    for (status, text) in [
+        (TaskStatus::Active, "a"),
+        (TaskStatus::Active, "b"),
+        (TaskStatus::Active, "c"),
+        (TaskStatus::Done, "d"),
+    ] {
+        tasks_in.push(
+            tasks::insert(&app.db, team, bob_id, status, &format!("<p>{text}</p>"))
+                .await
+                .unwrap(),
+        );
+    }
+    let mut it = tasks_in.into_iter();
+    let (a, b, c, d) = (
+        it.next().unwrap(),
+        it.next().unwrap(),
+        it.next().unwrap(),
+        it.next().unwrap(),
+    );
+    Board {
+        app,
+        alice,
+        bob,
+        team,
+        a,
+        b,
+        c,
+        d,
+    }
+}
+
+async fn move_to(
+    app: &TestApp,
+    token: &str,
+    task: Uuid,
+    status: &str,
+    after: Option<Uuid>,
+    before: Option<Uuid>,
+) -> common::TestResponse {
+    app.call(
+        "PUT",
+        &format!("/api/v1/tasks/{task}/position"),
+        token,
+        Some(json!({ "status": status, "afterId": after, "beforeId": before })),
+    )
+    .await
+}
+
+fn column(list: &Value, status: &str) -> Vec<String> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["status"] == status)
+        .map(|t| t["id"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn moves_to_the_end_of_another_column() {
+    let b = board().await;
+    let res = move_to(&b.app, &b.alice, b.a.id, "done", None, None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let body = res.json();
+    assert_eq!(body["id"], b.a.id.to_string());
+    assert_eq!(body["status"], "done");
+    assert!(body["position"].as_str().unwrap() > b.d.position.as_str());
+    assert_eq!(body["author"]["displayName"], "Bob Bianchi");
+    assert_eq!(body["canEdit"], true);
+
+    let all = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(
+        column(&all, "done"),
+        [b.d.id, b.a.id].map(|i| i.to_string())
+    );
+    assert_eq!(
+        column(&all, "active"),
+        [b.b.id, b.c.id].map(|i| i.to_string())
+    );
+
+    // Within a column, "no neighbours" sends the task to the end too.
+    let res = move_to(&b.app, &b.alice, b.b.id, "active", None, None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let all = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(
+        column(&all, "active"),
+        [b.c.id, b.b.id].map(|i| i.to_string())
+    );
+
+    // An empty column takes the task as its only one.
+    let res = move_to(&b.app, &b.alice, b.c.id, "stuck", None, None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["status"], "stuck");
+}
+
+#[tokio::test]
+async fn moves_between_neighbours() {
+    let b = board().await;
+    // d (done) goes between a and b of the active column.
+    let res = move_to(
+        &b.app,
+        &b.alice,
+        b.d.id,
+        "active",
+        Some(b.a.id),
+        Some(b.b.id),
+    )
+    .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let position = res.json()["position"].as_str().unwrap().to_owned();
+    assert!(b.a.position < position && position < b.b.position);
+
+    let all = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(
+        column(&all, "active"),
+        [b.a.id, b.d.id, b.b.id, b.c.id].map(|i| i.to_string())
+    );
+    assert!(column(&all, "done").is_empty());
+}
+
+#[tokio::test]
+async fn moves_between_non_adjacent_neighbours() {
+    let b = board().await;
+    // The neighbours are not adjacent: the task lands between them anyway.
+    let res = move_to(
+        &b.app,
+        &b.alice,
+        b.d.id,
+        "active",
+        Some(b.a.id),
+        Some(b.c.id),
+    )
+    .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let position = res.json()["position"].as_str().unwrap().to_owned();
+    assert!(b.a.position < position && position < b.c.position);
+
+    // A task can also move within its own column, relative to others.
+    let res = move_to(&b.app, &b.alice, b.c.id, "active", None, Some(b.a.id)).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let all = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(column(&all, "active")[0], b.c.id.to_string());
+}
+
+#[tokio::test]
+async fn rejects_foreign_neighbours() {
+    let b = board().await;
+    let carol = b
+        .app
+        .create_user("carol", "carol@example.com", "Carol")
+        .await;
+    let carol_id = user_id(&b.app, &carol).await;
+    let other_team = create_team(&b.app, &carol, "Other").await;
+    let foreign = tasks::insert(
+        &b.app.db,
+        other_team,
+        carol_id,
+        TaskStatus::Active,
+        "<p>x</p>",
+    )
+    .await
+    .unwrap();
+
+    // A task from another team.
+    for (after, before) in [(Some(foreign.id), None), (None, Some(foreign.id))] {
+        let res = move_to(&b.app, &b.alice, b.d.id, "active", after, before).await;
+        assert_eq!(res.status, 400, "{}", res.text());
+        assert_eq!(res.json()["code"], "invalid_position");
+    }
+    // A task from another column than the target one.
+    let res = move_to(&b.app, &b.alice, b.a.id, "active", Some(b.d.id), None).await;
+    assert_eq!(res.status, 400, "{}", res.text());
+    assert_eq!(res.json()["code"], "invalid_position");
+    // The task itself, or a task that does not exist.
+    let res = move_to(&b.app, &b.alice, b.a.id, "active", Some(b.a.id), None).await;
+    assert_eq!(res.status, 400, "{}", res.text());
+    assert_eq!(res.json()["code"], "invalid_position");
+    let res = move_to(
+        &b.app,
+        &b.alice,
+        b.a.id,
+        "active",
+        None,
+        Some(Uuid::now_v7()),
+    )
+    .await;
+    assert_eq!(res.status, 400, "{}", res.text());
+    assert_eq!(res.json()["code"], "invalid_position");
+
+    // Nothing moved.
+    let all = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(
+        column(&all, "active"),
+        [b.a.id, b.b.id, b.c.id].map(|i| i.to_string())
+    );
+}
+
+#[tokio::test]
+async fn stale_neighbours_conflict() {
+    let b = board().await;
+    // The neighbours changed order under the client: after is past before.
+    let res = move_to(
+        &b.app,
+        &b.alice,
+        b.d.id,
+        "active",
+        Some(b.c.id),
+        Some(b.a.id),
+    )
+    .await;
+    assert_eq!(res.status, 409, "{}", res.text());
+    assert_eq!(res.json()["code"], "stale_position");
+    let res = move_to(
+        &b.app,
+        &b.alice,
+        b.d.id,
+        "active",
+        Some(b.a.id),
+        Some(b.a.id),
+    )
+    .await;
+    assert_eq!(res.status, 409, "{}", res.text());
+    assert_eq!(res.json()["code"], "stale_position");
+
+    let stored = task::Entity::find_by_id(b.d.id)
+        .one(&b.app.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.status, TaskStatus::Done);
+    assert_eq!(stored.position, b.d.position);
+}
+
+#[tokio::test]
+async fn concurrent_identical_keys_conflict() {
+    let b = board().await;
+    let carol = b
+        .app
+        .create_user("carol", "carol@example.com", "Carol")
+        .await;
+    join(&b.app, &b.alice, b.team, &carol).await;
+    let extra = tasks::insert(
+        &b.app.db,
+        b.team,
+        user_id(&b.app, &b.bob).await,
+        TaskStatus::Future,
+        "<p>e</p>",
+    )
+    .await
+    .unwrap();
+
+    // Two clients drop different tasks between the same neighbours. The
+    // server does not check adjacency, so both compute the same key.
+    let first = move_to(
+        &b.app,
+        &b.alice,
+        b.d.id,
+        "active",
+        Some(b.a.id),
+        Some(b.b.id),
+    )
+    .await;
+    assert_eq!(first.status, 200, "{}", first.text());
+    let second = move_to(
+        &b.app,
+        &carol,
+        extra.id,
+        "active",
+        Some(b.a.id),
+        Some(b.b.id),
+    )
+    .await;
+    assert_eq!(second.status, 409, "{}", second.text());
+    assert_eq!(second.json()["code"], "stale_position");
+
+    let stored = task::Entity::find_by_id(extra.id)
+        .one(&b.app.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.status, TaskStatus::Future);
+}
+
+#[tokio::test]
+async fn any_member_can_move() {
+    let b = board().await;
+    // Alice wrote nothing, Bob wrote everything; the admin moves Bob's task
+    // and a plain member moves a task of someone else just as well.
+    let carol = b
+        .app
+        .create_user("carol", "carol@example.com", "Carol")
+        .await;
+    join(&b.app, &b.alice, b.team, &carol).await;
+    let res = move_to(&b.app, &carol, b.a.id, "stuck", None, None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["canEdit"], false);
+    let res = move_to(&b.app, &b.alice, b.b.id, "stuck", Some(b.a.id), None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["canEdit"], true);
+    let res = move_to(&b.app, &b.bob, b.c.id, "future", None, None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+}
+
+#[tokio::test]
+async fn strangers_get_404() {
+    let b = board().await;
+    let carol = b
+        .app
+        .create_user("carol", "carol@example.com", "Carol")
+        .await;
+    let res = move_to(&b.app, &carol, b.a.id, "done", None, None).await;
+    assert_eq!(res.status, 404, "{}", res.text());
+    assert_eq!(res.json()["code"], "task_not_found");
+    let res = move_to(&b.app, &b.alice, Uuid::now_v7(), "done", None, None).await;
+    assert_eq!(res.status, 404, "{}", res.text());
+    assert_eq!(res.json()["code"], "task_not_found");
+
+    let stored = task::Entity::find_by_id(b.a.id)
+        .one(&b.app.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.status, TaskStatus::Active);
+}

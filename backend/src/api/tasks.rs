@@ -91,3 +91,50 @@ pub async fn list_tasks(
     let tasks = tasks::list(&state.db, team_id, user.id, filter).await?;
     Ok(Json(tasks.into_iter().map(Into::into).collect()))
 }
+
+/// Where to put a task.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveTaskRequest {
+    /// The column to move the task to.
+    pub status: TaskStatus,
+    /// The task that should end up directly above this one, if any.
+    pub after_id: Option<Uuid>,
+    /// The task that should end up directly below this one, if any.
+    pub before_id: Option<Uuid>,
+}
+
+/// Moves a task between or within columns. With neither neighbour, the task
+/// goes to the end of the column. Any team member may move any task.
+#[utoipa::path(
+    put,
+    path = "/api/v1/tasks/{task_id}/position",
+    tag = "tasks",
+    security(("bearer" = [])),
+    params(("task_id" = Uuid, Path, description = "Task id")),
+    request_body = MoveTaskRequest,
+    responses(
+        (status = 200, body = TaskDto, description = "The moved task"),
+        (status = 400, body = Problem, content_type = "application/problem+json", description = "`invalid_position`: a neighbour is not in the team and target column, or is the task itself"),
+        (status = 401, body = Problem, content_type = "application/problem+json", description = "Not signed in"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`task_not_found`: no such task or not a member of its team"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`stale_position`: the neighbours are out of order or the position was taken"),
+    )
+)]
+pub async fn move_task(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(task_id): Path<Uuid>,
+    Json(body): Json<MoveTaskRequest>,
+) -> AppResult<Json<TaskDto>> {
+    let task = tasks::move_task(
+        &state.db,
+        task_id,
+        user.id,
+        body.status,
+        body.after_id,
+        body.before_id,
+    )
+    .await?;
+    Ok(Json(task.into()))
+}

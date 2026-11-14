@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, TransactionSession, TransactionTrait, sea_query::Query,
+    QuerySelect, Set, SqlErr, TransactionSession, TransactionTrait, sea_query::Query,
 };
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -77,6 +77,16 @@ pub async fn list(
         .all(db)
         .await?;
 
+    views(db, rows, role, actor).await
+}
+
+/// Attaches author, mentions and `can_edit` to `rows`, loading both in bulk.
+async fn views(
+    db: &impl ConnectionTrait,
+    rows: Vec<task::Model>,
+    role: Role,
+    actor: Uuid,
+) -> Result<Vec<TaskView>, AppError> {
     let mut mention_ids: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
     if !rows.is_empty() {
         let mentions = task_mention::Entity::find()
@@ -192,4 +202,108 @@ pub async fn insert(
 
     txn.commit().await?;
     Ok(task)
+}
+
+/// Moves a task to `status`, after `after` and before `before` (both optional
+/// neighbours in the target column). With neither, it goes to the end of the
+/// column. Any team member may move any task (spec §9).
+///
+/// Neighbours that are not in the task's team and target column, or are the
+/// task itself, give `invalid_position`. Neighbours that are no longer in
+/// order, or a key another move took first, give `stale_position`. A task that
+/// does not exist or belongs to a team the caller is not in gives
+/// `task_not_found`.
+pub async fn move_task(
+    db: &(impl TransactionTrait + ConnectionTrait),
+    task_id: Uuid,
+    actor: Uuid,
+    status: TaskStatus,
+    after: Option<Uuid>,
+    before: Option<Uuid>,
+) -> Result<TaskView, AppError> {
+    let txn = db.begin().await?;
+
+    let task = task::Entity::find_by_id(task_id)
+        .one(&txn)
+        .await?
+        .ok_or(AppError::NotFound("task_not_found"))?;
+    let role = teams::require_member(&txn, task.team_id, actor)
+        .await
+        .map_err(|e| match e {
+            AppError::NotFound(_) => AppError::NotFound("task_not_found"),
+            other => other,
+        })?;
+
+    // Same lock as `insert`, so an insert never races a move for the same
+    // end-of-column key; then the task itself, re-read under its lock.
+    team::Entity::find_by_id(task.team_id)
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .ok_or(AppError::NotFound("task_not_found"))?;
+    let task = task::Entity::find_by_id(task_id)
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .ok_or(AppError::NotFound("task_not_found"))?;
+
+    let after_key = neighbour_position(&txn, &task, status, after).await?;
+    let before_key = neighbour_position(&txn, &task, status, before).await?;
+
+    let (lower, upper) = if after.is_none() && before.is_none() {
+        let last = task::Entity::find()
+            .filter(task::Column::TeamId.eq(task.team_id))
+            .filter(task::Column::Status.eq(status))
+            .filter(task::Column::Id.ne(task.id))
+            .order_by_desc(task::Column::Position)
+            .one(&txn)
+            .await?
+            .map(|t| t.position);
+        (last, None)
+    } else {
+        (after_key, before_key)
+    };
+    let position = key_between(lower.as_deref(), upper.as_deref())
+        .ok_or(AppError::Conflict("stale_position"))?;
+
+    let moved = task::ActiveModel {
+        id: Set(task.id),
+        status: Set(status),
+        position: Set(position),
+        updated_at: Set(OffsetDateTime::now_utc()),
+        ..Default::default()
+    }
+    .update(&txn)
+    .await
+    .map_err(|e| match e.sql_err() {
+        Some(SqlErr::UniqueConstraintViolation(_)) => AppError::Conflict("stale_position"),
+        _ => AppError::Database(e),
+    })?;
+    txn.commit().await?;
+
+    views(db, vec![moved], role, actor)
+        .await?
+        .pop()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("moved task is missing")))
+}
+
+/// The position of a neighbour task, which must sit in the moved task's team
+/// and in the target column, and must not be the moved task itself.
+async fn neighbour_position(
+    db: &impl ConnectionTrait,
+    task: &task::Model,
+    status: TaskStatus,
+    neighbour: Option<Uuid>,
+) -> Result<Option<String>, AppError> {
+    let Some(id) = neighbour else {
+        return Ok(None);
+    };
+    task::Entity::find_by_id(id)
+        .filter(task::Column::TeamId.eq(task.team_id))
+        .filter(task::Column::Status.eq(status))
+        .filter(task::Column::Id.ne(task.id))
+        .one(db)
+        .await?
+        .map(|t| Some(t.position))
+        .ok_or(AppError::Invalid("invalid_position"))
 }

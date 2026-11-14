@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderName, HeaderValue, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -36,7 +36,7 @@ pub fn router(state: AppState) -> Router {
         // oversize body with problem JSON.
         .route(
             "/me/picture",
-            axum::routing::put(api::me::put_picture)
+            put(api::me::put_picture)
                 .delete(api::me::delete_picture)
                 .layer(DefaultBodyLimit::max(PICTURE_MAX_BYTES + 1)),
         )
@@ -60,6 +60,7 @@ pub fn router(state: AppState) -> Router {
             get(api::teams::get_join_link).post(api::teams::update_join_link),
         )
         .route("/teams/{team_id}/tasks", get(api::tasks::list_tasks))
+        .route("/tasks/{task_id}/position", put(api::tasks::move_task))
         .route(
             "/teams/{team_id}/invitations",
             get(api::invitations::list_invitations).post(api::invitations::create_invitation),

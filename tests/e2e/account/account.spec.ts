@@ -8,18 +8,15 @@ import { AppShell } from '../pages/AppShell';
 import { OnboardingPage } from '../pages/OnboardingPage';
 import { SignInPage } from '../pages/SignInPage';
 
-// These tests change alice's account, so they run one at a time.
-test.describe.configure({ mode: 'serial' });
-
 const TEAM = 'Account E2E';
 const AVATAR = path.join(__dirname, '..', 'assets', 'avatar.png');
 
-async function signInAsAlice(page: Page): Promise<AppShell> {
+async function signInAsDana(page: Page): Promise<AppShell> {
   const signInPage = new SignInPage(page);
   await signInPage.goto();
-  await signInPage.signIn(USERS.alice.username, PASSWORD);
+  await signInPage.signIn(USERS.dana.username, PASSWORD);
   const shell = new AppShell(page);
-  await expect(shell.currentUser).toHaveText(USERS.alice.name);
+  await expect(shell.currentUser).toHaveText(USERS.dana.name);
   return shell;
 }
 
@@ -28,28 +25,28 @@ test.describe('your account', () => {
   let account: AccountPage;
 
   test.beforeEach(async ({ page }) => {
-    await resetAccount(USERS.alice.username);
-    shell = await signInAsAlice(page);
-    // Alice has no team after the reset: create the first one from onboarding.
+    await resetAccount(USERS.dana.username);
+    shell = await signInAsDana(page);
+    // Dana has no team after the reset: create the first one from onboarding.
     await new OnboardingPage(page).createTeamNamed(TEAM);
     await expect(shell.teamSelector).toContainText(TEAM);
     account = new AccountPage(page);
     await account.goto();
   });
 
-  // Other specs expect alice under her seeded name.
+  // Other specs expect dana under her seeded name.
   test.afterEach(async () => {
-    await resetAccount(USERS.alice.username);
+    await resetAccount(USERS.dana.username);
   });
 
   test('rename: the new display name survives a reload', async ({ page }) => {
-    await account.rename('Alice E2E');
+    await account.rename('Dana E2E');
     await expect(page.getByText('Saved', { exact: true })).toBeVisible();
-    await expect(shell.currentUser).toHaveText('Alice E2E');
+    await expect(shell.currentUser).toHaveText('Dana E2E');
 
     await page.reload();
-    await expect(account.displayName).toHaveValue('Alice E2E');
-    await expect(shell.currentUser).toHaveText('Alice E2E');
+    await expect(account.displayName).toHaveValue('Dana E2E');
+    await expect(shell.currentUser).toHaveText('Dana E2E');
   });
 
   test('picture: an uploaded image shows in the top bar', async () => {
@@ -89,11 +86,13 @@ test.describe('your account', () => {
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme.toLowerCase());
       await expect(page.getByTestId('team-row').filter({ hasText: TEAM })).toBeVisible();
 
-      const overflow = await page.evaluate(() => ({
-        scroll: document.documentElement.scrollWidth,
-        client: document.documentElement.clientWidth,
-      }));
-      expect(overflow.scroll).toBeLessThanOrEqual(overflow.client);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.clientWidth - document.documentElement.scrollWidth,
+          ),
+        )
+        .toBeGreaterThanOrEqual(0);
     });
   }
 });

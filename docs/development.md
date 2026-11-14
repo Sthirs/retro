@@ -47,7 +47,9 @@ prints the host at any time.
 In dev mode the backend seeds `alice` and `bob` at startup, and dex has the same
 people, so each can sign in **with a password or through single sign-on**. `carol`
 exists only in dex: she can sign in **only through single sign-on**, and her Retro
-account is created on her first sign-in (`OIDC_AUTO_REGISTER`).
+account is created on her first sign-in (`OIDC_AUTO_REGISTER`). The backend also
+seeds `dana` (password only, not in dex), the account the end-to-end account spec
+owns.
 
 | Username | Email | Name | Password | Sign-in methods |
 | --- | --- | --- | --- | --- |
@@ -165,7 +167,7 @@ The chart sets them from `values.yaml` (ConfigMap and Secrets).
 | `OIDC_BUTTON_TEXT` | `Continue with single sign-on` | |
 | `OIDC_AUTO_REGISTER` | `true` | Create accounts for unknown SSO users |
 | `OIDC_CA_CERT_FILE` | — | PEM file of extra root CAs trusted for calls to the provider (chart: `oidc.caSecret`) |
-| `SEED_DEV_USERS` | `false` | Seed `alice` and `bob`; refused in production |
+| `SEED_DEV_USERS` | `false` | Seed `alice`, `bob` and `dana`; refused in production |
 
 The OIDC redirect URI to register with the provider is
 `<PUBLIC_URL>/api/v1/auth/oidc/callback`.

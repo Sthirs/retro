@@ -28,6 +28,14 @@ pub const DEV_USERS: &[DevUser] = &[
         email: "bob@retro.local",
         display_name: "Bob Bianchi",
     },
+    // Not in the dev identity provider: password sign-in only. The end-to-end
+    // account spec owns this user, so it can rename it and change its picture
+    // without disturbing alice and bob.
+    DevUser {
+        username: "dana",
+        email: "dana@retro.local",
+        display_name: "Dana Neri",
+    },
 ];
 
 /// Creates the dev users, or resets their name and password. Idempotent.

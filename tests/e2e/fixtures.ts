@@ -6,6 +6,7 @@
 export const USERS = {
   alice: { username: 'alice', email: 'alice@retro.local', name: 'Alice Rossi' },
   bob: { username: 'bob', email: 'bob@retro.local', name: 'Bob Bianchi' },
+  dana: { username: 'dana', email: 'dana@retro.local', name: 'Dana Neri' },
   carol: { username: 'carol', email: 'carol@retro.local', name: 'Carol Verdi' },
 } as const;
 

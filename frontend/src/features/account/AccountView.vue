@@ -6,7 +6,9 @@ import { useI18n } from 'vue-i18n';
 import { api, apiError, type SignInMethod } from '@/api/client';
 import AppAlert from '@/components/ui/AppAlert.vue';
 import AccountPanel from '@/features/account/AccountPanel.vue';
+import InvitationsSection from '@/features/account/InvitationsSection.vue';
 import ProfileSection from '@/features/account/ProfileSection.vue';
+import TeamsSection from '@/features/account/TeamsSection.vue';
 
 const { t } = useI18n();
 
@@ -42,6 +44,8 @@ onMounted(async () => {
         <p v-else class="page__loading">{{ t('common.loading') }}</p>
       </div>
     </AccountPanel>
+    <TeamsSection />
+    <InvitationsSection />
   </div>
 </template>
 

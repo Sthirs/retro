@@ -1,7 +1,19 @@
 import { flushPromises } from '@vue/test-utils';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ALICE, me, mockFetch, problem, renderAt, session, team, type FakeRoute } from './helpers';
+import {
+  ALICE,
+  me,
+  mockFetch,
+  OTHER_TEAM_ID,
+  pendingInvitation,
+  problem,
+  renderAt,
+  session,
+  team,
+  TEAM_ID,
+  type FakeRoute,
+} from './helpers';
 
 function base(extra: Record<string, FakeRoute | (() => FakeRoute)> = {}) {
   return {
@@ -146,5 +158,162 @@ describe('account page: profile', () => {
     expect(local.wrapper.text()).toContain('Invitations are matched to this address.');
     expect(local.wrapper.text()).not.toContain("Comes from your organization's");
     expect(local.wrapper.text()).toContain('Signed in with username and password');
+  });
+});
+
+const mobile = () =>
+  team({ id: OTHER_TEAM_ID, name: 'Mobile Squad', role: 'member', memberCount: 4 });
+
+function rows(wrapper: Awaited<ReturnType<typeof renderAt>>['wrapper']) {
+  return wrapper.findAll('[data-testid="team-row"]');
+}
+
+describe('account page: teams', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('lists teams with role and member count', async () => {
+    mockFetch(base({ 'GET /api/v1/me': me([team({ memberCount: 6 }), mobile()]) }));
+    const { wrapper } = await renderAt('/account');
+    expect(wrapper.text()).toContain('Your teams · 2');
+    expect(wrapper.text()).toContain('Last admins need to promote someone else before leaving.');
+    const [first, second] = rows(wrapper);
+    expect(first?.text()).toContain('Platform Team');
+    expect(first?.text()).toContain('Current');
+    expect(first?.text()).toContain('6 members');
+    expect(first?.text()).toContain('Admin');
+    expect(second?.text()).toContain('Mobile Squad');
+    expect(second?.text()).not.toContain('Current');
+    expect(second?.text()).toContain('4 members');
+    expect(second?.text()).toContain('Member');
+  });
+
+  it("Open goes to the team's meetings", async () => {
+    mockFetch(base({ 'GET /api/v1/me': me([team(), mobile()]) }));
+    const { wrapper, router } = await renderAt('/account');
+    await rows(wrapper)[1]?.find('a').trigger('click');
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.fullPath).toBe(`/teams/${OTHER_TEAM_ID}/meetings`),
+    );
+  });
+
+  it('Leave removes you and stays on the account page', async () => {
+    let left = false;
+    const { calls } = mockFetch(
+      base({
+        'GET /api/v1/me': () => me(left ? [team()] : [team(), mobile()]),
+        [`DELETE /api/v1/teams/${OTHER_TEAM_ID}/members/${ALICE.id}`]: () => {
+          left = true;
+          return { status: 204 };
+        },
+      }),
+    );
+    const { wrapper, router } = await renderAt('/account');
+    await button(rows(wrapper)[1] as never, 'Leave')?.trigger('click');
+    expect(wrapper.text()).toContain('Leave Mobile Squad?');
+    await button(wrapper, 'Leave team')?.trigger('click');
+    await flushPromises();
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(true);
+    expect(router.currentRoute.value.fullPath).toBe('/account');
+    expect(rows(wrapper)).toHaveLength(1);
+    expect(wrapper.text()).toContain('Your teams · 1');
+  });
+
+  it('TeamsSection shows last_admin', async () => {
+    mockFetch(
+      base({
+        [`DELETE /api/v1/teams/${TEAM_ID}/members/${ALICE.id}`]: problem(409, 'last_admin'),
+      }),
+    );
+    const { wrapper } = await renderAt('/account');
+    await button(rows(wrapper)[0] as never, 'Leave')?.trigger('click');
+    await button(wrapper, 'Leave team')?.trigger('click');
+    await vi.waitFor(() => expect(wrapper.text()).toContain('Every team needs at least one admin'));
+  });
+
+  it('TeamsSection warns a sole member', async () => {
+    mockFetch(base({ 'GET /api/v1/me': me([team({ memberCount: 1 })]) }));
+    const { wrapper } = await renderAt('/account');
+    await button(rows(wrapper)[0] as never, 'Leave')?.trigger('click');
+    expect(wrapper.text()).toContain('Leave and delete Platform Team?');
+  });
+
+  it('Create team opens the create dialog', async () => {
+    mockFetch(base());
+    const { wrapper } = await renderAt('/account');
+    await button(wrapper, 'Create team')?.trigger('click');
+    await vi.waitFor(() => expect(wrapper.find('#new-team').exists()).toBe(true));
+  });
+});
+
+describe('account page: invitations', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('lists invitations with who invited you and when it expires', async () => {
+    mockFetch(base({ 'GET /api/v1/me': me([team()], [pendingInvitation()]) }));
+    const { wrapper } = await renderAt('/account');
+    const panel = wrapper.find('[aria-labelledby="invitations-title"]');
+    expect(panel.text()).toContain('Pending invitations · 1');
+    expect(panel.text()).toContain(`Sent to ${ALICE.email}`);
+    expect(panel.text()).toContain('Mobile Squad');
+    expect(panel.text()).toContain('Invited by Bob Bianchi · expires in 6 days');
+  });
+
+  it('accepting an invitation opens the team', async () => {
+    let accepted = false;
+    mockFetch(
+      base({
+        'GET /api/v1/me': () =>
+          accepted ? me([team(), mobile()]) : me([team()], [pendingInvitation()]),
+        'POST /api/v1/invitations/tok-mobile/accept': () => {
+          accepted = true;
+          return { status: 200, body: { id: OTHER_TEAM_ID, name: 'Mobile Squad' } };
+        },
+      }),
+    );
+    const { wrapper, router } = await renderAt('/account');
+    await button(wrapper, 'Accept')?.trigger('click');
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.fullPath).toBe(`/teams/${OTHER_TEAM_ID}/meetings`),
+    );
+  });
+
+  it('declining removes the row', async () => {
+    let declined = false;
+    const { calls } = mockFetch(
+      base({
+        'GET /api/v1/me': () => me([team()], declined ? [] : [pendingInvitation()]),
+        'POST /api/v1/invitations/tok-mobile/decline': () => {
+          declined = true;
+          return { status: 204 };
+        },
+      }),
+    );
+    const { wrapper } = await renderAt('/account');
+    await button(wrapper, 'Decline')?.trigger('click');
+    await flushPromises();
+    expect(calls.some((c) => c.path === '/api/v1/invitations/tok-mobile/decline')).toBe(true);
+    expect(wrapper.text()).not.toContain('Pending invitations');
+  });
+
+  it('shows why an invitation could not be accepted', async () => {
+    mockFetch(
+      base({
+        'GET /api/v1/me': me([team()], [pendingInvitation()]),
+        'POST /api/v1/invitations/tok-mobile/accept': problem(410, 'invitation_revoked'),
+      }),
+    );
+    const { wrapper } = await renderAt('/account');
+    await button(wrapper, 'Accept')?.trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[aria-labelledby="invitations-title"]').text()).toContain(
+      'This invitation was revoked.',
+    );
+  });
+
+  it('the invitations panel is hidden when there are none', async () => {
+    mockFetch(base());
+    const { wrapper } = await renderAt('/account');
+    expect(wrapper.find('[aria-labelledby="invitations-title"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('Pending invitations');
   });
 });

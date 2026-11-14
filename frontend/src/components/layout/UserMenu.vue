@@ -7,12 +7,12 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink, useRouter } from 'vue-router';
 
-import { errorCode } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
 import type { IconName } from '@/components/icons';
 import AppAlert from '@/components/ui/AppAlert.vue';
 import TeamTile from '@/components/TeamTile.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
+import { usePendingInvitations } from '@/composables/usePendingInvitations';
 import { usePopover } from '@/composables/usePopover';
 import { applyThemePreference, readThemePreference, type ThemePreference } from '@/lib/theme';
 import { useSessionStore } from '@/stores/session';
@@ -27,8 +27,7 @@ const root = ref<HTMLElement | null>(null);
 const trigger = ref<HTMLButtonElement | null>(null);
 const { open, close } = usePopover(root, trigger);
 const theme = ref<ThemePreference>(readThemePreference());
-const busy = ref<string | null>(null);
-const error = ref<string | null>(null);
+const { busy, error, accept, decline } = usePendingInvitations({ onAccepted: () => close() });
 
 const count = computed(() => teams.invitations.length);
 
@@ -46,34 +45,6 @@ function setTheme(value: ThemePreference): void {
 function toggle(): void {
   open.value = !open.value;
   error.value = null;
-}
-
-async function accept(token: string): Promise<void> {
-  busy.value = token;
-  error.value = null;
-  try {
-    const team = await teams.acceptInvitation(token);
-    close();
-    await router.push({ name: 'team-meetings', params: { teamId: team.id } });
-  } catch (e) {
-    error.value = errorCode(e);
-    await teams.load().catch(() => undefined);
-  } finally {
-    busy.value = null;
-  }
-}
-
-async function decline(token: string): Promise<void> {
-  busy.value = token;
-  error.value = null;
-  try {
-    await teams.declineInvitation(token);
-  } catch (e) {
-    error.value = errorCode(e);
-    await teams.load().catch(() => undefined);
-  } finally {
-    busy.value = null;
-  }
 }
 
 async function logout(): Promise<void> {

@@ -72,6 +72,8 @@ function onDrop(event: DropEvent): void {
   min-width: 0;
   padding: 14px 12px;
   background: var(--well);
+  /* Dark columns carry a hairline; light ones none (transparent). */
+  border: 1px solid var(--well-edge);
   border-radius: var(--radius-panel);
 }
 .column:focus-visible {
@@ -95,7 +97,7 @@ function onDrop(event: DropEvent): void {
   white-space: nowrap;
 }
 .pill--future {
-  background: var(--well);
+  background: var(--tag-neutral);
   color: var(--muted);
 }
 .pill--stuck {

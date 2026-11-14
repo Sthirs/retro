@@ -23,6 +23,8 @@
   --notice-bg: #fff4e5;
   --notice-text: #7a3e00;
   --well-line: #dcd7e7;
+  --tag-neutral: #e4e0ee;
+  --well-edge: transparent;
 
   --col-plus-fg: #1f7650;
   --col-plus-bg: #ddf1e6;
@@ -78,6 +80,8 @@
   --notice-bg: #3a2618;
   --notice-text: #f6c08a;
   --well-line: #2e2648;
+  --tag-neutral: #2a2340;
+  --well-edge: #2e2648;
   --on-danger: #1e1930;
   --overlay: rgba(6, 4, 14, 0.65);
 
@@ -121,6 +125,8 @@
     --notice-bg: #3a2618;
     --notice-text: #f6c08a;
     --well-line: #2e2648;
+    --tag-neutral: #2a2340;
+    --well-edge: #2e2648;
     --on-danger: #1e1930;
     --overlay: rgba(6, 4, 14, 0.65);
 

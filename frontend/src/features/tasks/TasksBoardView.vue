@@ -225,7 +225,7 @@ watch(
 .board {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
   width: 100%;
   min-width: 0;
 }

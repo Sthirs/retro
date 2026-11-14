@@ -177,31 +177,76 @@ pub async fn insert(
     .insert(&txn)
     .await?;
 
-    if !content.mention_ids.is_empty() {
-        let members: Vec<Uuid> = team_member::Entity::find()
-            .filter(team_member::Column::TeamId.eq(team_id))
-            .filter(team_member::Column::UserId.is_in(content.mention_ids.clone()))
-            .all(&txn)
-            .await?
-            .into_iter()
-            .map(|m| m.user_id)
-            .collect();
-        let rows: Vec<task_mention::ActiveModel> = content
-            .mention_ids
-            .into_iter()
-            .filter(|id| members.contains(id))
-            .map(|user_id| task_mention::ActiveModel {
-                task_id: Set(task.id),
-                user_id: Set(user_id),
-            })
-            .collect();
-        if !rows.is_empty() {
-            task_mention::Entity::insert_many(rows).exec(&txn).await?;
-        }
-    }
+    insert_mentions(&txn, team_id, task.id, content.mention_ids).await?;
 
     txn.commit().await?;
     Ok(task)
+}
+
+/// Records the mentions of `task_id`, keeping only team members.
+async fn insert_mentions(
+    db: &impl ConnectionTrait,
+    team_id: Uuid,
+    task_id: Uuid,
+    mention_ids: Vec<Uuid>,
+) -> Result<(), AppError> {
+    if mention_ids.is_empty() {
+        return Ok(());
+    }
+    let members: Vec<Uuid> = team_member::Entity::find()
+        .filter(team_member::Column::TeamId.eq(team_id))
+        .filter(team_member::Column::UserId.is_in(mention_ids.clone()))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|m| m.user_id)
+        .collect();
+    let rows: Vec<task_mention::ActiveModel> = mention_ids
+        .into_iter()
+        .filter(|id| members.contains(id))
+        .map(|user_id| task_mention::ActiveModel {
+            task_id: Set(task_id),
+            user_id: Set(user_id),
+        })
+        .collect();
+    if !rows.is_empty() {
+        task_mention::Entity::insert_many(rows).exec(db).await?;
+    }
+    Ok(())
+}
+
+/// Loads a task for a write by `actor` and locks it: team row first, then the
+/// task row (the same order as `insert`). A task that does not exist or whose
+/// team the actor is not in gives `task_not_found`.
+async fn lock_task(
+    txn: &impl ConnectionTrait,
+    task_id: Uuid,
+    actor: Uuid,
+) -> Result<(task::Model, Role), AppError> {
+    let task = task::Entity::find_by_id(task_id)
+        .one(txn)
+        .await?
+        .ok_or(AppError::NotFound("task_not_found"))?;
+    let role = teams::require_member(txn, task.team_id, actor)
+        .await
+        .map_err(|e| match e {
+            AppError::NotFound(_) => AppError::NotFound("task_not_found"),
+            other => other,
+        })?;
+
+    // Same lock as `insert`, so an insert never races a write for the same
+    // end-of-column key; then the task itself, re-read under its lock.
+    team::Entity::find_by_id(task.team_id)
+        .lock_exclusive()
+        .one(txn)
+        .await?
+        .ok_or(AppError::NotFound("task_not_found"))?;
+    let task = task::Entity::find_by_id(task_id)
+        .lock_exclusive()
+        .one(txn)
+        .await?
+        .ok_or(AppError::NotFound("task_not_found"))?;
+    Ok((task, role))
 }
 
 /// Moves a task to `status`, directly after `after`, or directly before
@@ -224,29 +269,7 @@ pub async fn move_task(
 ) -> Result<TaskView, AppError> {
     let txn = db.begin().await?;
 
-    let task = task::Entity::find_by_id(task_id)
-        .one(&txn)
-        .await?
-        .ok_or(AppError::NotFound("task_not_found"))?;
-    let role = teams::require_member(&txn, task.team_id, actor)
-        .await
-        .map_err(|e| match e {
-            AppError::NotFound(_) => AppError::NotFound("task_not_found"),
-            other => other,
-        })?;
-
-    // Same lock as `insert`, so an insert never races a move for the same
-    // end-of-column key; then the task itself, re-read under its lock.
-    team::Entity::find_by_id(task.team_id)
-        .lock_exclusive()
-        .one(&txn)
-        .await?
-        .ok_or(AppError::NotFound("task_not_found"))?;
-    let task = task::Entity::find_by_id(task_id)
-        .lock_exclusive()
-        .one(&txn)
-        .await?
-        .ok_or(AppError::NotFound("task_not_found"))?;
+    let (task, role) = lock_task(&txn, task_id, actor).await?;
 
     let after_key = neighbour_position(&txn, &task, status, after).await?;
     let before_key = neighbour_position(&txn, &task, status, before).await?;
@@ -338,4 +361,64 @@ async fn neighbour_position(
         .await?
         .map(|t| Some(t.position))
         .ok_or(AppError::Invalid("invalid_position"))
+}
+
+/// Replaces a task's content. Only its author or a team admin may edit; any
+/// other member gets `forbidden`. The content is sanitized (`invalid_task_content`
+/// when blank or invalid) and the mentions are replaced by those of the new
+/// content, keeping only team members.
+pub async fn edit(
+    db: &(impl TransactionTrait + ConnectionTrait),
+    task_id: Uuid,
+    actor: Uuid,
+    raw_content: &str,
+) -> Result<TaskView, AppError> {
+    let txn = db.begin().await?;
+    let (task, role) = lock_task(&txn, task_id, actor).await?;
+    require_can_edit(&task, role, actor)?;
+    let content = rich_text::sanitize(raw_content)?;
+
+    let edited = task::ActiveModel {
+        id: Set(task.id),
+        content: Set(content.html),
+        updated_at: Set(OffsetDateTime::now_utc()),
+        ..Default::default()
+    }
+    .update(&txn)
+    .await?;
+    task_mention::Entity::delete_many()
+        .filter(task_mention::Column::TaskId.eq(task.id))
+        .exec(&txn)
+        .await?;
+    insert_mentions(&txn, task.team_id, task.id, content.mention_ids).await?;
+    txn.commit().await?;
+
+    views(db, vec![edited], role, actor)
+        .await?
+        .pop()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("edited task is missing")))
+}
+
+/// Deletes a task and its mentions. Only its author or a team admin may; any
+/// other member gets `forbidden`.
+pub async fn delete(
+    db: &(impl TransactionTrait + ConnectionTrait),
+    task_id: Uuid,
+    actor: Uuid,
+) -> Result<(), AppError> {
+    let txn = db.begin().await?;
+    let (task, role) = lock_task(&txn, task_id, actor).await?;
+    require_can_edit(&task, role, actor)?;
+    // The mentions go with the task (ON DELETE CASCADE).
+    task::Entity::delete_by_id(task.id).exec(&txn).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+fn require_can_edit(task: &task::Model, role: Role, actor: Uuid) -> Result<(), AppError> {
+    if role == Role::Admin || task.author_id == actor {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden)
+    }
 }

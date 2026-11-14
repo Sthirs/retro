@@ -3,6 +3,7 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -55,6 +56,7 @@ impl From<TaskView> for TaskDto {
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct BoardQuery {
     /// Only tasks mentioning this user.
     pub mentioned: Option<Uuid>,
@@ -139,4 +141,61 @@ pub async fn move_task(
     )
     .await?;
     Ok(Json(task.into()))
+}
+
+/// New content for a task.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTaskRequest {
+    /// Rich text; sanitized by the server.
+    pub content: String,
+}
+
+/// Edits a task's content. Only its author or a team admin may.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/tasks/{task_id}",
+    tag = "tasks",
+    security(("bearer" = [])),
+    params(("task_id" = Uuid, Path, description = "Task id")),
+    request_body = UpdateTaskRequest,
+    responses(
+        (status = 200, body = TaskDto, description = "The edited task"),
+        (status = 400, body = Problem, content_type = "application/problem+json", description = "`invalid_task_content`: blank or invalid content"),
+        (status = 401, body = Problem, content_type = "application/problem+json", description = "Not signed in"),
+        (status = 403, body = Problem, content_type = "application/problem+json", description = "`forbidden`: neither the author nor an admin"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`task_not_found`: no such task or not a member of its team"),
+    )
+)]
+pub async fn update_task(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(task_id): Path<Uuid>,
+    Json(body): Json<UpdateTaskRequest>,
+) -> AppResult<Json<TaskDto>> {
+    let task = tasks::edit(&state.db, task_id, user.id, &body.content).await?;
+    Ok(Json(task.into()))
+}
+
+/// Deletes a task. Only its author or a team admin may.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/tasks/{task_id}",
+    tag = "tasks",
+    security(("bearer" = [])),
+    params(("task_id" = Uuid, Path, description = "Task id")),
+    responses(
+        (status = 204, description = "Deleted"),
+        (status = 401, body = Problem, content_type = "application/problem+json", description = "Not signed in"),
+        (status = 403, body = Problem, content_type = "application/problem+json", description = "`forbidden`: neither the author nor an admin"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`task_not_found`: no such task or not a member of its team"),
+    )
+)]
+pub async fn delete_task(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(task_id): Path<Uuid>,
+) -> AppResult<StatusCode> {
+    tasks::delete(&state.db, task_id, user.id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

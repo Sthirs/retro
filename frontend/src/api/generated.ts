@@ -209,6 +209,38 @@ export interface MemberDto {
 }
 
 /**
+ * Where a task sits on the board (spec §9).
+ */
+export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
+
+export const TaskStatus = {
+  future: 'future',
+  stuck: 'stuck',
+  active: 'active',
+  done: 'done',
+} as const;
+
+/**
+ * Where to put a task.
+ */
+export interface MoveTaskRequest {
+  /**
+   * The task the moved one should land directly after, if any.
+   * @nullable
+   */
+  afterId?: string | null;
+  /**
+   * The task the moved one should land directly before when `afterId` is
+   * absent. With both, the task lands directly after `afterId`, and
+   * `beforeId` must be below it.
+   * @nullable
+   */
+  beforeId?: string | null;
+  /** The column to move the task to. */
+  status: TaskStatus;
+}
+
+/**
  * RFC 9457 problem details body.
  */
 export interface Problem {
@@ -237,6 +269,25 @@ export interface SessionResponse {
   user: UserDto;
 }
 
+/**
+ * A task on the board.
+ */
+export interface TaskDto {
+  author: PersonDto;
+  /** Whether the caller may edit, move or delete the task. */
+  canEdit: boolean;
+  /** Sanitized rich text. */
+  contentHtml: string;
+  createdAt: string;
+  id: string;
+  /** @nullable */
+  meetingId?: string | null;
+  mentions: PersonDto[];
+  /** Ordering key within the column; compare as plain strings. */
+  position: string;
+  status: TaskStatus;
+}
+
 export interface TeamNameRequest {
   /** 1–60 characters after trimming. */
   name: string;
@@ -245,6 +296,14 @@ export interface TeamNameRequest {
 export interface UpdateMeRequest {
   /** New display name; trimmed, 1 to 80 characters. */
   displayName: string;
+}
+
+/**
+ * New content for a task.
+ */
+export interface UpdateTaskRequest {
+  /** Rich text; sanitized by the server. */
+  content: string;
 }
 
 export type OidcStartParams = {
@@ -258,6 +317,15 @@ export type OidcCallbackParams = {
   code?: string;
   state?: string;
   error?: string;
+};
+
+export type ListTasksParams = {
+  /** Only tasks mentioning this user. */
+  mentioned?: string;
+  /** Only tasks written by this user. */
+  author?: string;
+  /** Only tasks attached to this meeting. */
+  meeting?: string;
 };
 
 export type configResponse200 = {
@@ -867,6 +935,205 @@ export const deletePicture = async (
   return apiFetch<deletePictureResponse>(getDeletePictureUrl(), {
     ...options,
     method: 'DELETE',
+  });
+};
+
+export type deleteTaskResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type deleteTaskResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type deleteTaskResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type deleteTaskResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type deleteTaskResponseSuccess = deleteTaskResponse204 & {
+  headers: Headers;
+};
+export type deleteTaskResponseError = (
+  deleteTaskResponse401 | deleteTaskResponse403 | deleteTaskResponse404
+) & {
+  headers: Headers;
+};
+
+export type deleteTaskResponse = deleteTaskResponseSuccess | deleteTaskResponseError;
+
+export const getDeleteTaskUrl = (taskId: string) => {
+  return `/api/v1/tasks/${taskId}`;
+};
+
+/**
+ * @summary Deletes a task. Only its author or a team admin may.
+ */
+export const deleteTask = async (
+  taskId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<deleteTaskResponse> => {
+  return apiFetch<deleteTaskResponse>(getDeleteTaskUrl(taskId), {
+    ...options,
+    method: 'DELETE',
+  });
+};
+
+export type updateTaskResponse200 = {
+  data: TaskDto;
+  status: 200;
+};
+
+export type updateTaskResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type updateTaskResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type updateTaskResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type updateTaskResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type updateTaskResponseSuccess = updateTaskResponse200 & {
+  headers: Headers;
+};
+export type updateTaskResponseError = (
+  updateTaskResponse400 | updateTaskResponse401 | updateTaskResponse403 | updateTaskResponse404
+) & {
+  headers: Headers;
+};
+
+export type updateTaskResponse = updateTaskResponseSuccess | updateTaskResponseError;
+
+export const getUpdateTaskUrl = (taskId: string) => {
+  return `/api/v1/tasks/${taskId}`;
+};
+
+/**
+ * @summary Edits a task's content. Only its author or a team admin may.
+ */
+export const updateTask = async (
+  taskId: string,
+  updateTaskRequest: UpdateTaskRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<updateTaskResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<updateTaskResponse>(getUpdateTaskUrl(taskId), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateTaskRequest),
+  });
+};
+
+export type moveTaskResponse200 = {
+  data: TaskDto;
+  status: 200;
+};
+
+export type moveTaskResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type moveTaskResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type moveTaskResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type moveTaskResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type moveTaskResponseSuccess = moveTaskResponse200 & {
+  headers: Headers;
+};
+export type moveTaskResponseError = (
+  moveTaskResponse400 | moveTaskResponse401 | moveTaskResponse404 | moveTaskResponse409
+) & {
+  headers: Headers;
+};
+
+export type moveTaskResponse = moveTaskResponseSuccess | moveTaskResponseError;
+
+export const getMoveTaskUrl = (taskId: string) => {
+  return `/api/v1/tasks/${taskId}/position`;
+};
+
+/**
+ * @summary Moves a task between or within columns. With neither neighbour, the task
+goes to the end of the column. Any team member may move any task.
+ */
+export const moveTask = async (
+  taskId: string,
+  moveTaskRequest: MoveTaskRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<moveTaskResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<moveTaskResponse>(getMoveTaskUrl(taskId), {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(moveTaskRequest),
   });
 };
 
@@ -1531,6 +1798,60 @@ export const updateMember = async (
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(roleRequest),
+  });
+};
+
+export type listTasksResponse200 = {
+  data: TaskDto[];
+  status: 200;
+};
+
+export type listTasksResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type listTasksResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type listTasksResponseSuccess = listTasksResponse200 & {
+  headers: Headers;
+};
+export type listTasksResponseError = (listTasksResponse401 | listTasksResponse404) & {
+  headers: Headers;
+};
+
+export type listTasksResponse = listTasksResponseSuccess | listTasksResponseError;
+
+export const getListTasksUrl = (teamId: string, params?: ListTasksParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/teams/${teamId}/tasks?${stringifiedParams}`
+    : `/api/v1/teams/${teamId}/tasks`;
+};
+
+/**
+ * @summary Lists the team's tasks, ordered by status column and position.
+ */
+export const listTasks = async (
+  teamId: string,
+  params?: ListTasksParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<listTasksResponse> => {
+  return apiFetch<listTasksResponse>(getListTasksUrl(teamId, params), {
+    ...options,
+    method: 'GET',
   });
 };
 

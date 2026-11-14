@@ -60,6 +60,10 @@ pub fn router(state: AppState) -> Router {
             get(api::teams::get_join_link).post(api::teams::update_join_link),
         )
         .route("/teams/{team_id}/tasks", get(api::tasks::list_tasks))
+        .route(
+            "/tasks/{task_id}",
+            patch(api::tasks::update_task).delete(api::tasks::delete_task),
+        )
         .route("/tasks/{task_id}/position", put(api::tasks::move_task))
         .route(
             "/teams/{team_id}/invitations",

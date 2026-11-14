@@ -5,9 +5,9 @@ mod common;
 use common::TestApp;
 use retro_backend::{
     domain::tasks,
-    entities::{task, task::TaskStatus},
+    entities::{task, task::TaskStatus, task_mention},
 };
-use sea_orm::{ActiveModelTrait, EntityTrait, PaginatorTrait, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, Set};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -703,4 +703,179 @@ async fn strangers_get_404() {
         .unwrap()
         .unwrap();
     assert_eq!(stored.status, TaskStatus::Active);
+}
+
+async fn edit(app: &TestApp, token: &str, task: Uuid, content: &str) -> common::TestResponse {
+    app.call(
+        "PATCH",
+        &format!("/api/v1/tasks/{task}"),
+        token,
+        Some(json!({ "content": content })),
+    )
+    .await
+}
+
+async fn delete(app: &TestApp, token: &str, task: Uuid) -> common::TestResponse {
+    app.call("DELETE", &format!("/api/v1/tasks/{task}"), token, None)
+        .await
+}
+
+#[tokio::test]
+async fn author_and_admin_can_edit_others_cannot() {
+    let b = board().await;
+    let carol = b
+        .app
+        .create_user("carol", "carol@example.com", "Carol")
+        .await;
+    join(&b.app, &b.alice, b.team, &carol).await;
+
+    // Bob wrote the task.
+    let res = edit(&b.app, &b.bob, b.a.id, "<p>by author</p>").await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["contentHtml"], "<p>by author</p>");
+    assert_eq!(res.json()["canEdit"], true);
+    // Alice is the admin.
+    let res = edit(&b.app, &b.alice, b.a.id, "<p>by admin</p>").await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["contentHtml"], "<p>by admin</p>");
+    // Carol is a plain member who did not write it.
+    let res = edit(&b.app, &carol, b.a.id, "<p>by carol</p>").await;
+    assert_eq!(res.status, 403, "{}", res.text());
+    assert_eq!(res.json()["code"], "forbidden");
+
+    let stored = task::Entity::find_by_id(b.a.id)
+        .one(&b.app.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.content, "<p>by admin</p>");
+}
+
+#[tokio::test]
+async fn edit_of_unknown_or_foreign_task_is_404() {
+    let b = board().await;
+    let carol = b
+        .app
+        .create_user("carol", "carol@example.com", "Carol")
+        .await;
+    let res = edit(&b.app, &carol, b.a.id, "<p>x</p>").await;
+    assert_eq!(res.status, 404, "{}", res.text());
+    assert_eq!(res.json()["code"], "task_not_found");
+    let res = edit(&b.app, &b.alice, Uuid::now_v7(), "<p>x</p>").await;
+    assert_eq!(res.status, 404, "{}", res.text());
+    assert_eq!(res.json()["code"], "task_not_found");
+}
+
+#[tokio::test]
+async fn edit_sanitizes_content() {
+    let b = board().await;
+    let res = edit(
+        &b.app,
+        &b.bob,
+        b.a.id,
+        r#"<p onclick="x()">hi<script>alert(1)</script> <strong>there</strong></p>"#,
+    )
+    .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let html = res.json()["contentHtml"].as_str().unwrap().to_owned();
+    assert!(!html.contains("script"), "{html}");
+    assert!(!html.contains("onclick"), "{html}");
+    assert!(html.contains("<strong>there</strong>"), "{html}");
+}
+
+#[tokio::test]
+async fn edit_keeps_only_member_mentions() {
+    let b = board().await;
+    let alice_id = user_id(&b.app, &b.alice).await;
+    let dave = b.app.create_user("dave", "dave@example.com", "Dave").await;
+    let dave_id = user_id(&b.app, &dave).await;
+
+    let res = edit(&b.app, &b.bob, b.a.id, &mention(alice_id, "Alice")).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let mentions = res.json()["mentions"].clone();
+    assert_eq!(mentions.as_array().unwrap().len(), 1);
+    assert_eq!(mentions[0]["id"], alice_id.to_string());
+
+    // Dave is a stranger to the team; the previous mention is replaced.
+    let res = edit(&b.app, &b.bob, b.a.id, &mention(dave_id, "Dave")).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["mentions"], json!([]));
+    let by_dave = list(&b.app, &b.bob, b.team, &format!("?mentioned={dave_id}")).await;
+    assert_eq!(by_dave, json!([]));
+    let by_alice = list(&b.app, &b.bob, b.team, &format!("?mentioned={alice_id}")).await;
+    assert_eq!(by_alice, json!([]));
+}
+
+#[tokio::test]
+async fn blank_content_is_rejected() {
+    let b = board().await;
+    for content in ["", "<p></p>", "   "] {
+        let res = edit(&b.app, &b.bob, b.a.id, content).await;
+        assert_eq!(res.status, 400, "{content:?}: {}", res.text());
+        assert_eq!(res.json()["code"], "invalid_task_content");
+    }
+    let stored = task::Entity::find_by_id(b.a.id)
+        .one(&b.app.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.content, "<p>a</p>");
+}
+
+#[tokio::test]
+async fn author_and_admin_can_delete_others_cannot() {
+    let b = board().await;
+    let carol = b
+        .app
+        .create_user("carol", "carol@example.com", "Carol")
+        .await;
+    join(&b.app, &b.alice, b.team, &carol).await;
+
+    let res = delete(&b.app, &carol, b.a.id).await;
+    assert_eq!(res.status, 403, "{}", res.text());
+    assert_eq!(res.json()["code"], "forbidden");
+
+    let res = delete(&b.app, &b.bob, b.a.id).await;
+    assert_eq!(res.status, 204, "{}", res.text());
+    let res = delete(&b.app, &b.alice, b.b.id).await;
+    assert_eq!(res.status, 204, "{}", res.text());
+
+    let remaining = list(&b.app, &b.alice, b.team, "").await;
+    assert_eq!(ids(&remaining), [b.c.id, b.d.id].map(|i| i.to_string()));
+
+    let res = delete(&b.app, &b.alice, b.a.id).await;
+    assert_eq!(res.status, 404, "{}", res.text());
+    assert_eq!(res.json()["code"], "task_not_found");
+}
+
+#[tokio::test]
+async fn delete_by_non_member_is_404() {
+    let b = board().await;
+    let carol = b
+        .app
+        .create_user("carol", "carol@example.com", "Carol")
+        .await;
+    let res = delete(&b.app, &carol, b.a.id).await;
+    assert_eq!(res.status, 404, "{}", res.text());
+    assert_eq!(res.json()["code"], "task_not_found");
+}
+
+#[tokio::test]
+async fn delete_removes_mentions() {
+    let b = board().await;
+    let alice_id = user_id(&b.app, &b.alice).await;
+    let res = edit(&b.app, &b.bob, b.a.id, &mention(alice_id, "Alice")).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+
+    let res = delete(&b.app, &b.bob, b.a.id).await;
+    assert_eq!(res.status, 204, "{}", res.text());
+
+    let left = task_mention::Entity::find()
+        .filter(task_mention::Column::TaskId.eq(b.a.id))
+        .count(&b.app.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+    let by_alice = list(&b.app, &b.alice, b.team, &format!("?mentioned={alice_id}")).await;
+    assert_eq!(by_alice, json!([]));
 }

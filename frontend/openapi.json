@@ -648,6 +648,241 @@
         ]
       }
     },
+    "/api/v1/tasks/{task_id}": {
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Deletes a task. Only its author or a team admin may.",
+        "operationId": "delete_task",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Task id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: neither the author nor an admin",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`task_not_found`: no such task or not a member of its team",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Edits a task's content. Only its author or a team admin may.",
+        "operationId": "update_task",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Task id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The edited task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_task_content`: blank or invalid content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`forbidden`: neither the author nor an admin",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`task_not_found`: no such task or not a member of its team",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/position": {
+      "put": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Moves a task between or within columns. With neither neighbour, the task\ngoes to the end of the column. Any team member may move any task.",
+        "operationId": "move_task",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Task id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The moved task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_position`: a neighbour is not in the team and target column, or is the task itself",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`task_not_found`: no such task or not a member of its team",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`stale_position`: `afterId` is not before `beforeId`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/teams": {
       "get": {
         "tags": [
@@ -1427,6 +1662,97 @@
         ]
       }
     },
+    "/api/v1/teams/{team_id}/tasks": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Lists the team's tasks, ordered by status column and position.",
+        "operationId": "list_tasks",
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "description": "Team id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "mentioned",
+            "in": "query",
+            "description": "Only tasks mentioning this user.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "author",
+            "in": "query",
+            "description": "Only tasks written by this user.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "meeting",
+            "in": "query",
+            "description": "Only tasks attached to this meeting.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tasks, by status then position",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TaskDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`team_not_found`: no such team or not a member",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/users/{user_id}/picture": {
       "get": {
         "tags": [
@@ -1795,6 +2121,35 @@
           }
         }
       },
+      "MoveTaskRequest": {
+        "type": "object",
+        "description": "Where to put a task.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "afterId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The task the moved one should land directly after, if any."
+          },
+          "beforeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The task the moved one should land directly before when `afterId` is\nabsent. With both, the task lands directly after `afterId`, and\n`beforeId` must be below it."
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "description": "The column to move the task to."
+          }
+        }
+      },
       "PendingInvitationDto": {
         "type": "object",
         "description": "An open invitation addressed to the signed-in user (user menu, onboarding).",
@@ -1948,6 +2303,71 @@
           }
         }
       },
+      "TaskDto": {
+        "type": "object",
+        "description": "A task on the board.",
+        "required": [
+          "id",
+          "status",
+          "position",
+          "contentHtml",
+          "author",
+          "mentions",
+          "createdAt",
+          "canEdit"
+        ],
+        "properties": {
+          "author": {
+            "$ref": "#/components/schemas/PersonDto"
+          },
+          "canEdit": {
+            "type": "boolean",
+            "description": "Whether the caller may edit, move or delete the task."
+          },
+          "contentHtml": {
+            "type": "string",
+            "description": "Sanitized rich text."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "meetingId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonDto"
+            }
+          },
+          "position": {
+            "type": "string",
+            "description": "Ordering key within the column; compare as plain strings."
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          }
+        }
+      },
+      "TaskStatus": {
+        "type": "string",
+        "description": "Where a task sits on the board (spec §9).",
+        "enum": [
+          "future",
+          "stuck",
+          "active",
+          "done"
+        ]
+      },
       "TeamDto": {
         "type": "object",
         "description": "A team as seen by the caller.",
@@ -2013,6 +2433,19 @@
           "displayName": {
             "type": "string",
             "description": "New display name; trimmed, 1 to 80 characters."
+          }
+        }
+      },
+      "UpdateTaskRequest": {
+        "type": "object",
+        "description": "New content for a task.",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Rich text; sanitized by the server."
           }
         }
       },

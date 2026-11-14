@@ -160,3 +160,35 @@ pub async fn sign_in_with_identity(
     txn.commit().await?;
     Ok(Some((user, outcome)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trims_the_name() {
+        assert_eq!(validate_display_name("  Alice R. ").unwrap(), "Alice R.");
+    }
+
+    #[test]
+    fn rejects_empty_and_whitespace_only() {
+        for raw in ["", " ", " \t\n "] {
+            assert!(validate_display_name(raw).is_err(), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn counts_characters_not_bytes() {
+        let ok = "é".repeat(80);
+        assert_eq!(ok.len(), 160);
+        assert_eq!(validate_display_name(&ok).unwrap(), ok);
+        assert!(validate_display_name(&"é".repeat(81)).is_err());
+    }
+
+    #[test]
+    fn limit_applies_after_trimming() {
+        let padded = format!("  {}  ", "a".repeat(80));
+        assert_eq!(validate_display_name(&padded).unwrap(), "a".repeat(80));
+        assert!(validate_display_name(&"a".repeat(81)).is_err());
+    }
+}

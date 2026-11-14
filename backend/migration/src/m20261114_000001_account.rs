@@ -1,5 +1,5 @@
 //! Account page: custom display name flag and uploaded profile pictures
-//! (spec §6.2, §13).
+//! (spec §4, §13).
 
 use sea_orm_migration::prelude::*;
 

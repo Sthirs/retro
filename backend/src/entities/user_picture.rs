@@ -1,6 +1,6 @@
 use sea_orm::entity::prelude::*;
 
-/// An uploaded profile picture, stored re-encoded as bytes (one per user).
+/// An uploaded profile picture, stored exactly as uploaded (one per user).
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "user_pictures")]
 pub struct Model {

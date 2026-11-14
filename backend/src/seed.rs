@@ -52,6 +52,7 @@ pub async fn seed_dev_users(db: &impl ConnectionTrait) -> Result<(), AppError> {
                 let mut active: user::ActiveModel = u.into();
                 active.username = Set(Some(dev.username.into()));
                 active.display_name = Set(dev.display_name.into());
+                active.display_name_custom = Set(false);
                 active.password_hash = Set(Some(hash.clone()));
                 active.updated_at = Set(now);
                 active.update(db).await?;

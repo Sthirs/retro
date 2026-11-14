@@ -88,9 +88,15 @@ pub fn router(state: AppState) -> Router {
             HeaderValue::from_static("no-store"),
         ));
 
-    // Picture bytes are immutable per `pictureVersion`, so this route sets its
-    // own `Cache-Control` and is merged in after the `no-store` layer.
-    let pictures = Router::new().route("/users/{user_id}/picture", get(api::me::get_picture));
+    // Picture bytes are immutable per `pictureVersion`, so the handler sets its
+    // own `Cache-Control` on success. Error responses (401, 404) get `no-store`
+    // like every other `/api/v1` response.
+    let pictures = Router::new()
+        .route("/users/{user_id}/picture", get(api::me::get_picture))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ));
     let v1 = v1.merge(pictures);
 
     Router::new()

@@ -793,7 +793,7 @@ Images and the Helm chart are pushed to the registry when a release is published
 
 - **Real-time latency**: events delivered to participants within 300 ms (p95) under normal load.
 - **Scale target**: meetings of up to 50 participants, 500 concurrent meetings per deployment.
-- **Security**: OWASP ASVS L1 baseline; server-side sanitization of rich text; CSP headers on the frontend; rate limiting on sign-in, invitation and join endpoints; every `/api/v1` response carries `Cache-Control: no-store`, since responses hold tokens (access, refresh, invitation and join links); size/type limits on uploads (default 5 MB, images only).
+- **Security**: OWASP ASVS L1 baseline; server-side sanitization of rich text; CSP headers on the frontend; rate limiting on sign-in, invitation and join endpoints; every `/api/v1` response carries `Cache-Control: no-store`, since responses hold tokens (access, refresh, invitation and join links), except successful image responses (`GET /users/{id}/picture` and, later, `GET /attachments/{id}`), which are served `private, immutable` and keyed by version, and carry `X-Content-Type-Options: nosniff` (their error responses stay `no-store`); size/type limits on uploads (default 5 MB, images only).
 - **Privacy**: reflection authorship is never exposed through the API or WS. Logs never contain reflection content or tokens.
 - **Accessibility**: WCAG 2.1 AA. Every drag-and-drop interaction has a keyboard alternative (e.g. a "Move to…" menu).
 - **Browser support**: latest two versions of Chrome, Firefox, Safari and Edge.

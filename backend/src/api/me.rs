@@ -3,8 +3,8 @@
 use axum::{
     Json,
     body::{Body, Bytes},
-    extract::{Path, State},
-    http::{HeaderValue, header},
+    extract::{Path, State, rejection::BytesRejection},
+    http::{HeaderValue, StatusCode, header},
     response::Response,
 };
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
@@ -18,7 +18,7 @@ use crate::{
     auth::CurrentUser,
     domain::{invitations, pictures, teams, users},
     entities::user_identity,
-    error::{AppResult, Problem},
+    error::{AppError, AppResult, Problem},
     state::AppState,
 };
 
@@ -130,8 +130,17 @@ pub async fn update_me(
 pub async fn put_picture(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
-    body: Bytes,
+    body: Result<Bytes, BytesRejection>,
 ) -> AppResult<Json<UserDto>> {
+    // axum's body limit answers oversize uploads with a plain-text 413 unless
+    // the rejection is mapped to the same problem JSON as the handler's check.
+    let body = body.map_err(|rejection| {
+        if rejection.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            AppError::PayloadTooLarge
+        } else {
+            AppError::BadRequest(rejection.body_text())
+        }
+    })?;
     let user = pictures::set_picture(&state.db, user, body.to_vec()).await?;
     Ok(Json(user.into()))
 }
@@ -187,6 +196,10 @@ pub async fn get_picture(
     headers.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, max-age=31536000, immutable"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
     );
     Ok(response)
 }

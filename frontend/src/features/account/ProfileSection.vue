@@ -200,10 +200,10 @@ async function removePicture(): Promise<void> {
           </div>
 
           <div class="actions">
-            <AppButton variant="ghost" :disabled="busy || !dirty" @click="reset">
+            <AppButton variant="ghost" size="touch" :disabled="busy || !dirty" @click="reset">
               {{ t('account.profile.cancel') }}
             </AppButton>
-            <AppButton type="submit" variant="primary" :disabled="!canSave">
+            <AppButton type="submit" variant="primary" size="touch" :disabled="!canSave">
               {{ t('account.profile.save') }}
             </AppButton>
             <span v-if="saved" class="actions__saved" role="status">
@@ -346,6 +346,7 @@ async function removePicture(): Promise<void> {
 }
 .actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
@@ -353,5 +354,14 @@ async function removePicture(): Promise<void> {
   font-size: 13px;
   font-weight: 600;
   color: var(--muted);
+}
+/* Phones: the picture column spans the panel so the fields stack beneath it. */
+@media (max-width: 520px) {
+  .profile__body {
+    gap: 20px;
+  }
+  .picture {
+    width: 100%;
+  }
 }
 </style>

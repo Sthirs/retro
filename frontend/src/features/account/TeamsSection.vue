@@ -37,7 +37,7 @@ async function confirmLeave(): Promise<void> {
     :description="t('account.teams.hint')"
   >
     <template #actions>
-      <AppButton @click="creating = true">
+      <AppButton size="touch" @click="creating = true">
         <AppIcon name="plus" :size="16" />
         {{ t('account.teams.create') }}
       </AppButton>
@@ -131,7 +131,14 @@ async function confirmLeave(): Promise<void> {
   display: flex;
   gap: 4px;
 }
+/* Artboard: 13 px row actions; the height stays at the 44 px touch target. */
+.row__actions :deep(.btn) {
+  font-size: 13px;
+}
 .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 3px 10px;
   border-radius: var(--radius-pill);
   font-size: 12px;

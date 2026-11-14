@@ -101,6 +101,7 @@ function setDefaultTeam(event: Event): void {
   gap: 12px;
 }
 .pref__text {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;

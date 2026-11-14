@@ -82,6 +82,7 @@ async function logout(): Promise<void> {
   flex-direction: column;
   gap: 20px;
   width: 100%;
+  min-width: 0;
   max-width: 920px;
 }
 .page__header {

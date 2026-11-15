@@ -346,9 +346,9 @@ pub async fn change_role(
 
 /// Removes `target` from the team: an admin removing someone, or anyone
 /// leaving. When the last member leaves, the team is deleted. Otherwise the
-/// join link and the open invitation links the member could see get new
-/// tokens, so a former member cannot come back with a link they knew
-/// (spec §6.1, §6.2).
+/// join link, the open invitation links the member could see and the invite
+/// links of the active meetings get new tokens, so a former member cannot
+/// come back with a link they knew (spec §6.1, §6.2, §6.3).
 pub async fn remove_member(
     db: &(impl TransactionTrait + ConnectionTrait),
     team_id: Uuid,
@@ -395,6 +395,7 @@ pub async fn remove_member(
                 member.role == Role::Admin,
             )
             .await?;
+            crate::domain::meetings::rotate_invite_tokens(&txn, team_id).await?;
         }
     }
     txn.commit().await?;

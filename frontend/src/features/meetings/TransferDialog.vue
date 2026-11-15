@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** Transfer facilitator role (Transfer artboard): pick an online participant. */
+/** Transfer facilitator role (Transfer artboard): pick an online participant who is still a team member. */
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
@@ -20,7 +20,8 @@ const store = useMeetingStore();
 
 const candidates = computed(() =>
   (store.meeting?.participants ?? []).filter(
-    (p) => p.online && p.id !== store.meeting?.facilitatorId,
+    // Someone who left the team cannot run the meeting (the server refuses it).
+    (p) => p.online && p.role !== null && p.id !== store.meeting?.facilitatorId,
   ),
 );
 const selected = ref<string | null>(null);

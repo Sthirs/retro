@@ -614,7 +614,7 @@ pub async fn next_phase(
 }
 
 /// Hands the facilitator role to `target` (by the facilitator, to another
-/// participant) or takes it over (a team admin naming themselves, who joins
+/// participant who is still a team member) or takes it over (a team admin naming themselves, who joins
 /// the meeting if needed). Anything else is `not_facilitator`.
 pub async fn set_facilitator(
     db: &(impl TransactionTrait + ConnectionTrait),
@@ -637,12 +637,22 @@ pub async fn set_facilitator(
     }
     if take_over {
         join_locked(&txn, meeting.clone(), actor, Some(role)).await?;
-    } else if meeting_participant::Entity::find_by_id((meeting.id, target))
-        .one(&txn)
-        .await?
-        .is_none()
-    {
-        return Err(AppError::Invalid("target_not_participant"));
+    } else {
+        // A participant who has since left the team cannot act on the meeting:
+        // making them facilitator would leave it without one. The team row
+        // lock taken above keeps their membership from changing meanwhile.
+        let participant = meeting_participant::Entity::find_by_id((meeting.id, target))
+            .one(&txn)
+            .await?
+            .is_some();
+        let member = match teams::require_member(&txn, meeting.team_id, target).await {
+            Ok(_) => true,
+            Err(AppError::NotFound(_)) => false,
+            Err(other) => return Err(other),
+        };
+        if !participant || !member {
+            return Err(AppError::Invalid("target_not_participant"));
+        }
     }
     meeting::ActiveModel {
         id: Set(meeting.id),
@@ -769,6 +779,33 @@ pub async fn regenerate_invite_token(
     .await?;
     txn.commit().await?;
     Ok(token)
+}
+
+/// Gives every active meeting of the team a new invite token, so a member
+/// who leaves or is removed cannot rejoin the team with a meeting link they
+/// knew (spec §6.3). Called by [`teams::remove_member`] with the team row
+/// already locked; meetings are locked after it, the usual order.
+pub async fn rotate_invite_tokens(
+    txn: &impl ConnectionTrait,
+    team_id: Uuid,
+) -> Result<(), AppError> {
+    let active = meeting::Entity::find()
+        .filter(meeting::Column::TeamId.eq(team_id))
+        .filter(meeting::Column::Status.eq(MeetingStatus::Active))
+        .order_by_asc(meeting::Column::Id)
+        .lock_exclusive()
+        .all(txn)
+        .await?;
+    for meeting in active {
+        meeting::ActiveModel {
+            id: Set(meeting.id),
+            invite_token: Set(Some(random_token())),
+            ..Default::default()
+        }
+        .update(txn)
+        .await?;
+    }
+    Ok(())
 }
 
 /// Follows a meeting invite link: joins the team as a member if needed, then

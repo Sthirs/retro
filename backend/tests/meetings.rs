@@ -890,3 +890,222 @@ async fn deleting_a_team_while_its_meeting_changes_never_fails() {
         }
     }
 }
+
+// --- Leaving the team ------------------------------------------------------
+
+/// `DELETE /teams/{team}/members/{user}` by `token` (removal, or leaving).
+async fn remove(app: &TestApp, token: &str, team: Uuid, user: Uuid) -> common::TestResponse {
+    app.call(
+        "DELETE",
+        &format!("/api/v1/teams/{team}/members/{user}"),
+        token,
+        None,
+    )
+    .await
+}
+
+async fn accept(app: &TestApp, token: &str, invite: &str) -> common::TestResponse {
+    app.call(
+        "POST",
+        &format!("/api/v1/meeting-invites/{invite}/accept"),
+        token,
+        None,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_removed_member_cannot_rejoin_with_a_meeting_link_they_knew() {
+    let app = TestApp::new().await;
+    let (alice, _, _, team) = team_of_three(&app).await;
+    let dave = app
+        .create_user("dave", "dave@example.com", "Dave Costa")
+        .await;
+    let dave_id = user_id(&app, &dave).await;
+    let meeting = start(&app, &alice, team).await;
+    let m = id(&meeting);
+    let token = invite_token(&app, &alice, m).await;
+    let res = accept(&app, &dave, &token).await;
+    assert_eq!(res.json()["joinedTeam"], true);
+
+    let res = remove(&app, &alice, team, dave_id).await;
+    assert_eq!(res.status, 204, "{}", res.text());
+
+    let res = accept(&app, &dave, &token).await;
+    assert_eq!(res.status, 404, "{}", res.text());
+    assert_eq!(res.json()["code"], "meeting_invite_invalid");
+    // Still out of the team and the meeting.
+    let res = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &dave, None)
+        .await;
+    assert_eq!(res.status, 404);
+    let res = app
+        .call(
+            "GET",
+            &format!("/api/v1/teams/{team}/meetings"),
+            &dave,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 404);
+}
+
+#[tokio::test]
+async fn removing_a_member_regenerates_only_the_active_meetings_links() {
+    let app = TestApp::new().await;
+    let (alice, _, carol, team) = team_of_three(&app).await;
+    let carol_id = user_id(&app, &carol).await;
+    let dave = app
+        .create_user("dave", "dave@example.com", "Dave Costa")
+        .await;
+    let first = start(&app, &alice, team).await;
+    let ended = start(&app, &alice, team).await;
+    act(&app, &alice, id(&ended), "end", None).await;
+    let second = start(&app, &alice, team).await;
+    let other_team = create_team(&app, &alice, "Elsewhere").await;
+    let other = start(&app, &alice, other_team).await;
+
+    let first_before = invite_token(&app, &alice, id(&first)).await;
+    let second_before = invite_token(&app, &alice, id(&second)).await;
+    let other_before = invite_token(&app, &alice, id(&other)).await;
+
+    let res = remove(&app, &alice, team, carol_id).await;
+    assert_eq!(res.status, 204, "{}", res.text());
+
+    let first_after = invite_token(&app, &alice, id(&first)).await;
+    let second_after = invite_token(&app, &alice, id(&second)).await;
+    assert_ne!(first_after, first_before);
+    assert_ne!(second_after, second_before);
+    assert_ne!(first_after, second_after);
+    // The ended meeting has no link; the other team's link is untouched.
+    let res = app
+        .call(
+            "GET",
+            &format!("/api/v1/meetings/{}/invite-link", id(&ended)),
+            &alice,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 409);
+    assert_eq!(invite_token(&app, &alice, id(&other)).await, other_before);
+    assert_eq!(accept(&app, &carol, &other_before).await.status, 200);
+
+    // Old links are dead for everyone; the new one works for newcomers.
+    assert_eq!(accept(&app, &dave, &first_before).await.status, 404);
+    let res = accept(&app, &dave, &first_after).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["joinedTeam"], true);
+}
+
+#[tokio::test]
+async fn leaving_the_team_also_regenerates_the_meeting_links() {
+    let app = TestApp::new().await;
+    let (alice, bob, _, team) = team_of_three(&app).await;
+    let bob_id = user_id(&app, &bob).await;
+    let meeting = start(&app, &alice, team).await;
+    let m = id(&meeting);
+    let token = invite_token(&app, &bob, m).await;
+
+    let res = remove(&app, &bob, team, bob_id).await;
+    assert_eq!(res.status, 204, "{}", res.text());
+
+    assert_ne!(invite_token(&app, &alice, m).await, token);
+    let res = accept(&app, &bob, &token).await;
+    assert_eq!(res.status, 404);
+    assert_eq!(res.json()["code"], "meeting_invite_invalid");
+}
+
+#[tokio::test]
+async fn a_refused_removal_keeps_the_meeting_link() {
+    let app = TestApp::new().await;
+    let (alice, bob, carol, team) = team_of_three(&app).await;
+    let carol_id = user_id(&app, &carol).await;
+    let meeting = start(&app, &alice, team).await;
+    let m = id(&meeting);
+    let token = invite_token(&app, &alice, m).await;
+
+    // bob is a member, not an admin.
+    assert_eq!(remove(&app, &bob, team, carol_id).await.status, 403);
+    assert_eq!(invite_token(&app, &alice, m).await, token);
+}
+
+#[tokio::test]
+async fn the_role_cannot_go_to_someone_who_left_the_team() {
+    let app = TestApp::new().await;
+    let (alice, bob, carol, team) = team_of_three(&app).await;
+    let alice_id = user_id(&app, &alice).await;
+    let carol_id = user_id(&app, &carol).await;
+    let meeting = start(&app, &alice, team).await;
+    let m = id(&meeting);
+    act(&app, &bob, m, "join", None).await;
+    act(&app, &carol, m, "join", None).await;
+
+    assert_eq!(remove(&app, &alice, team, carol_id).await.status, 204);
+    let res = act(
+        &app,
+        &alice,
+        m,
+        "facilitator",
+        Some(json!({ "userId": carol_id })),
+    )
+    .await;
+    assert_eq!(res.status, 400, "{}", res.text());
+    assert_eq!(res.json()["code"], "target_not_participant");
+
+    // Nothing changed: alice still runs the meeting.
+    let s = state(&app, &alice, m).await;
+    assert_eq!(s["facilitatorId"], alice_id.to_string());
+    let res = act(&app, &alice, m, "icebreaker/next", None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+}
+
+#[tokio::test]
+async fn the_role_still_goes_to_a_current_member() {
+    let app = TestApp::new().await;
+    let (alice, bob, carol, team) = team_of_three(&app).await;
+    let bob_id = user_id(&app, &bob).await;
+    let carol_id = user_id(&app, &carol).await;
+    let meeting = start(&app, &alice, team).await;
+    let m = id(&meeting);
+    act(&app, &bob, m, "join", None).await;
+    act(&app, &carol, m, "join", None).await;
+    assert_eq!(remove(&app, &alice, team, carol_id).await.status, 204);
+
+    let res = act(
+        &app,
+        &alice,
+        m,
+        "facilitator",
+        Some(json!({ "userId": bob_id })),
+    )
+    .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(
+        state(&app, &bob, m).await["facilitatorId"],
+        bob_id.to_string()
+    );
+}
+
+#[tokio::test]
+async fn an_admin_takes_over_from_a_facilitator_who_left() {
+    let app = TestApp::new().await;
+    let (alice, bob, _, team) = team_of_three(&app).await;
+    let alice_id = user_id(&app, &alice).await;
+    let bob_id = user_id(&app, &bob).await;
+    let meeting = start(&app, &bob, team).await;
+    let m = id(&meeting);
+    act(&app, &alice, m, "join", None).await;
+
+    assert_eq!(remove(&app, &alice, team, bob_id).await.status, 204);
+    let res = act(
+        &app,
+        &alice,
+        m,
+        "facilitator",
+        Some(json!({ "userId": alice_id })),
+    )
+    .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let res = act(&app, &alice, m, "icebreaker/next", None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+}

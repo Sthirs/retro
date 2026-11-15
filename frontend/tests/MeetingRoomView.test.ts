@@ -200,11 +200,14 @@ describe('Meeting room', () => {
       id: '0190a4e0-0000-7000-8000-000000000003',
       displayName: 'Carol Verdi',
     };
+    const dave = { ...BOB, id: '0190a4e0-0000-7000-8000-000000000004', displayName: 'Dave Costa' };
     const state = meetingState({
       participants: [
         participant(ALICE, { role: 'admin' }),
         participant(BOB, { role: 'admin' }),
         participant(carol, { online: false }),
+        // Removed from the team, though still in the room.
+        participant(dave, { role: null }),
       ],
     });
     const { calls } = mockFetch(
@@ -223,7 +226,7 @@ describe('Meeting room', () => {
     expect(dialog.text()).toContain('Transfer facilitator role');
     expect(dialog.text()).toContain('You stay in the meeting as a participant.');
     const options = dialog.findAll('label');
-    // Not the facilitator, not offline people.
+    // Not the facilitator, not offline people, not former team members.
     expect(options).toHaveLength(1);
     expect(options[0]!.text()).toContain('Bob Bianchi');
     expect(options[0]!.text()).toContain('Admin');

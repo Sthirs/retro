@@ -42,6 +42,7 @@ export default {
     not_facilitator: 'Only the facilitator can do that.',
     wrong_phase: 'The meeting has moved on to another phase.',
     icebreaker_done: 'Everyone has had their turn. Move on to the next phase.',
+    icebreaker_not_reached: 'This person has not had their turn yet.',
     last_phase: 'This is the last phase.',
     target_not_participant: 'This person is no longer in the meeting.',
     invalid_title: 'Enter a title of 1 to 80 characters.',
@@ -348,7 +349,7 @@ export default {
   icebreaker: {
     progress: 'Icebreaker progress',
     done: 'done',
-    skipped: 'skipped',
+    goTo: 'Go back to {name}',
     now: 'Now',
     next: 'Next',
     question: "Today's question",
@@ -358,7 +359,7 @@ export default {
     footnote:
       'The speaking order was shuffled when the phase started and is shown in the menu. People who join late are added to the end.',
     status: '{name} is answering · {n} of {total}',
-    skip: 'Skip {name}',
+    previousPerson: 'Previous person',
     nextPerson: 'Next person',
   },
   transfer: {

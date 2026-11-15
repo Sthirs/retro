@@ -2,8 +2,8 @@
 /**
  * The meeting room's bottom bar (Icebreaker and EndMeeting artboards): where
  * the meeting stands, and the facilitator's Next. In the icebreaker that is
- * Skip / Next person, then "Next: Reflect" on the last person; after the last
- * phase it is End meeting.
+ * Previous / Next person, then Previous / "Next: Reflect" on the last person;
+ * after the last phase it is End meeting.
  */
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -51,17 +51,22 @@ async function run(action: () => Promise<boolean>): Promise<void> {
     </span>
     <span class="bar__spacer"></span>
     <div v-if="controls" class="bar__actions">
+      <AppButton
+        v-if="inIcebreaker && speaker"
+        size="page"
+        :disabled="busy || !store.previousSpeaker"
+        @click="run(() => store.goToPerson(store.previousSpeaker!.id))"
+      >
+        <AppIcon name="chevronLeft" :size="16" />
+        {{ t('icebreaker.previousPerson') }}
+      </AppButton>
       <template v-if="inIcebreaker && speaker && !store.isLastSpeaker">
-        <AppButton size="page" :disabled="busy" @click="run(() => store.nextPerson(true))">
-          <AppIcon name="skip" :size="16" />
-          {{ t('icebreaker.skip', { name: firstName(speaker.displayName) }) }}
-        </AppButton>
         <AppButton
           class="bar__next"
           variant="primary"
           size="page"
           :disabled="busy"
-          @click="run(() => store.nextPerson(false))"
+          @click="run(store.nextPerson)"
         >
           {{ t('icebreaker.nextPerson') }}
           <AppIcon name="arrowRight" :size="16" />

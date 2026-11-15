@@ -103,6 +103,8 @@ pub struct GreetingDto {
     pub language: String,
     /// BCP 47 tag for the `lang` attribute, e.g. "it".
     pub lang_code: String,
+    /// IPA, e.g. "/ˈtʃa.o/".
+    pub pronunciation: String,
 }
 
 /// Where the icebreaker stands.
@@ -113,8 +115,6 @@ pub struct IcebreakerDto {
     pub order: Vec<Uuid>,
     /// Index into `order` of the person speaking now.
     pub index: i32,
-    /// People the facilitator skipped.
-    pub skipped: Vec<Uuid>,
 }
 
 /// Everything the meeting room shows (spec §14.3 `GET /meetings/{id}/state`).
@@ -172,12 +172,12 @@ impl MeetingStateDto {
                 text: m.greeting_text,
                 language: m.greeting_language,
                 lang_code: m.greeting_lang_code,
+                pronunciation: m.greeting_pronunciation,
             },
             question: m.icebreaker_question,
             icebreaker: IcebreakerDto {
                 order: m.icebreaker_order,
                 index: m.icebreaker_index,
-                skipped: m.icebreaker_skipped,
             },
             task_count: view.task_count,
             seq: m.event_seq,
@@ -335,15 +335,6 @@ pub async fn join_meeting(
     Ok(Json(state_of(&state, meeting_id, user.id).await?))
 }
 
-/// How to leave the current icebreaker speaker.
-#[derive(Debug, Default, Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct IcebreakerNextRequest {
-    /// Mark the current person as skipped instead of done.
-    #[serde(default)]
-    pub skip: bool,
-}
-
 /// Moves the icebreaker to the next person (facilitator).
 #[utoipa::path(
     post,
@@ -351,7 +342,6 @@ pub struct IcebreakerNextRequest {
     tag = "meetings",
     security(("bearer" = [])),
     params(("meeting_id" = Uuid, Path, description = "Meeting id")),
-    request_body = IcebreakerNextRequest,
     responses(
         (status = 200, body = MeetingStateDto, description = "The meeting"),
         (status = 403, body = Problem, content_type = "application/problem+json", description = "`not_facilitator`"),
@@ -363,9 +353,42 @@ pub async fn icebreaker_next(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
     Path(meeting_id): Path<Uuid>,
-    Json(body): Json<IcebreakerNextRequest>,
 ) -> AppResult<Json<MeetingStateDto>> {
-    meetings::icebreaker_next(&state.db, meeting_id, user.id, body.skip).await?;
+    meetings::icebreaker_next(&state.db, meeting_id, user.id).await?;
+    Ok(Json(state_of(&state, meeting_id, user.id).await?))
+}
+
+/// Who the icebreaker goes back to.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IcebreakerGotoRequest {
+    /// Someone who already had their turn.
+    pub user_id: Uuid,
+}
+
+/// Goes back to someone who already had their turn (facilitator); the turn
+/// continues from them.
+#[utoipa::path(
+    post,
+    path = "/api/v1/meetings/{meeting_id}/icebreaker/goto",
+    tag = "meetings",
+    security(("bearer" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Meeting id")),
+    request_body = IcebreakerGotoRequest,
+    responses(
+        (status = 200, body = MeetingStateDto, description = "The meeting"),
+        (status = 403, body = Problem, content_type = "application/problem+json", description = "`not_facilitator`"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`meeting_not_found`"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`meeting_ended`, `wrong_phase`, or `icebreaker_not_reached` (they have not had their turn yet)"),
+    )
+)]
+pub async fn icebreaker_goto(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(meeting_id): Path<Uuid>,
+    Json(body): Json<IcebreakerGotoRequest>,
+) -> AppResult<Json<MeetingStateDto>> {
+    meetings::icebreaker_goto(&state.db, meeting_id, user.id, body.user_id).await?;
     Ok(Json(state_of(&state, meeting_id, user.id).await?))
 }
 

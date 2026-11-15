@@ -363,10 +363,10 @@ pub async fn create(
         greeting_text: Set(greeting.text),
         greeting_language: Set(greeting.language),
         greeting_lang_code: Set(greeting.lang_code),
+        greeting_pronunciation: Set(greeting.pronunciation),
         icebreaker_question: Set(question.text),
         icebreaker_order: Set(vec![actor]),
         icebreaker_index: Set(0),
-        icebreaker_skipped: Set(Vec::new()),
         vote_budget: Set(5),
         vote_max_per_group: Set(3),
         discuss_group_id: Set(None),
@@ -490,48 +490,79 @@ fn participant_json(user: &user::Model, role: Option<Role>) -> Value {
     })
 }
 
-/// Moves the icebreaker to the next person (facilitator), optionally marking
-/// the current one as skipped. After the last person, the facilitator moves to
-/// the next phase instead (`icebreaker_done`).
+/// Moves the icebreaker to the next person (facilitator). After the last
+/// person, the facilitator moves to the next phase instead (`icebreaker_done`).
 pub async fn icebreaker_next(
     db: &(impl TransactionTrait + ConnectionTrait),
     meeting_id: Uuid,
     actor: Uuid,
-    skip: bool,
 ) -> Result<(), AppError> {
     let txn = db.begin().await?;
-    let meeting = lock_as_facilitator(&txn, meeting_id, actor).await?;
-    if meeting.phase != MeetingPhase::Icebreaker {
-        return Err(AppError::Conflict("wrong_phase"));
-    }
+    let meeting = lock_icebreaker(&txn, meeting_id, actor).await?;
     let index = usize::try_from(meeting.icebreaker_index).unwrap_or(0);
     if index + 1 >= meeting.icebreaker_order.len() {
         return Err(AppError::Conflict("icebreaker_done"));
     }
-    let mut skipped = meeting.icebreaker_skipped.clone();
-    if skip {
-        let current = meeting.icebreaker_order[index];
-        if !skipped.contains(&current) {
-            skipped.push(current);
-        }
+    set_speaker(&txn, &meeting, meeting.icebreaker_index + 1).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// Goes back to `user_id`, who already had their turn (facilitator). The turn
+/// continues from them: everyone after them is up again (spec §9.1).
+pub async fn icebreaker_goto(
+    db: &(impl TransactionTrait + ConnectionTrait),
+    meeting_id: Uuid,
+    actor: Uuid,
+    user_id: Uuid,
+) -> Result<(), AppError> {
+    let txn = db.begin().await?;
+    let meeting = lock_icebreaker(&txn, meeting_id, actor).await?;
+    let position = meeting
+        .icebreaker_order
+        .iter()
+        .position(|&id| id == user_id)
+        .and_then(|p| i32::try_from(p).ok())
+        .filter(|&p| p < meeting.icebreaker_index)
+        .ok_or(AppError::Conflict("icebreaker_not_reached"))?;
+    set_speaker(&txn, &meeting, position).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// The meeting, locked, for a facilitator action in the icebreaker.
+async fn lock_icebreaker(
+    txn: &impl ConnectionTrait,
+    meeting_id: Uuid,
+    actor: Uuid,
+) -> Result<meeting::Model, AppError> {
+    let meeting = lock_as_facilitator(txn, meeting_id, actor).await?;
+    if meeting.phase != MeetingPhase::Icebreaker {
+        return Err(AppError::Conflict("wrong_phase"));
     }
-    let next = meeting.icebreaker_index + 1;
+    Ok(meeting)
+}
+
+/// Makes the person at `index` in the speaking order the one speaking now.
+async fn set_speaker(
+    txn: &impl ConnectionTrait,
+    meeting: &meeting::Model,
+    index: i32,
+) -> Result<(), AppError> {
     meeting::ActiveModel {
         id: Set(meeting.id),
-        icebreaker_index: Set(next),
-        icebreaker_skipped: Set(skipped.clone()),
+        icebreaker_index: Set(index),
         ..Default::default()
     }
-    .update(&txn)
+    .update(txn)
     .await?;
     ws::publish_meeting(
-        &txn,
+        txn,
         meeting.id,
         "icebreaker.person_changed",
-        json!({ "index": next, "skipped": skipped }),
+        json!({ "index": index }),
     )
     .await?;
-    txn.commit().await?;
     Ok(())
 }
 

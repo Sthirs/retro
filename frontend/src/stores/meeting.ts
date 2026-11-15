@@ -80,6 +80,7 @@ export const useMeetingStore = defineStore('meeting', () => {
   const speakerIndex = computed(() => meeting.value?.icebreaker.index ?? 0);
   const currentSpeaker = computed(() => speakers.value[speakerIndex.value] ?? null);
   const nextSpeaker = computed(() => speakers.value[speakerIndex.value + 1] ?? null);
+  const previousSpeaker = computed(() => speakers.value[speakerIndex.value - 1] ?? null);
   const isLastSpeaker = computed(() => speakerIndex.value >= speakers.value.length - 1);
 
   function reset(): void {
@@ -198,7 +199,6 @@ export const useMeetingStore = defineStore('meeting', () => {
         break;
       case 'icebreaker.person_changed':
         m.icebreaker.index = p.index as number;
-        m.icebreaker.skipped = p.skipped as string[];
         break;
       case 'meeting.renamed':
         m.title = p.title as string;
@@ -233,17 +233,25 @@ export const useMeetingStore = defineStore('meeting', () => {
     }
   }
 
-  function nextPerson(skip = false): Promise<boolean> {
+  function nextPerson(): Promise<boolean> {
     const id = meetingId.value!;
     return act(
-      () => api.icebreakerNext(id, { skip }),
+      () => api.icebreakerNext(id),
+      () => {
+        meeting.value!.icebreaker.index += 1;
+      },
+    );
+  }
+
+  /** Back to someone who already had their turn; the turn continues from them. */
+  function goToPerson(userId: string): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(
+      () => api.icebreakerGoto(id, { userId }),
       () => {
         const m = meeting.value!;
-        const current = m.icebreaker.order[m.icebreaker.index];
-        if (skip && current && !m.icebreaker.skipped.includes(current)) {
-          m.icebreaker.skipped = [...m.icebreaker.skipped, current];
-        }
-        m.icebreaker.index += 1;
+        const position = m.icebreaker.order.indexOf(userId);
+        if (position >= 0 && position < m.icebreaker.index) m.icebreaker.index = position;
       },
     );
   }
@@ -292,12 +300,14 @@ export const useMeetingStore = defineStore('meeting', () => {
     speakerIndex,
     currentSpeaker,
     nextSpeaker,
+    previousSpeaker,
     isLastSpeaker,
     open,
     resync,
     apply,
     reset,
     nextPerson,
+    goToPerson,
     advancePhase,
     rename,
     setFacilitator,

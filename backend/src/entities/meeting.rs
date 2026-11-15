@@ -77,13 +77,13 @@ pub struct Model {
     pub greeting_text: String,
     pub greeting_language: String,
     pub greeting_lang_code: String,
+    /// IPA, e.g. "/ˈtʃa.o/".
+    pub greeting_pronunciation: String,
     pub icebreaker_question: String,
     /// Speaking order of the icebreaker (user ids).
     pub icebreaker_order: Vec<Uuid>,
     /// Index into `icebreaker_order` of the person speaking now.
     pub icebreaker_index: i32,
-    /// People the facilitator skipped.
-    pub icebreaker_skipped: Vec<Uuid>,
     pub vote_budget: i32,
     pub vote_max_per_group: i32,
     pub discuss_group_id: Option<Uuid>,

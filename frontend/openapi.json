@@ -949,6 +949,84 @@
         ]
       }
     },
+    "/api/v1/meetings/{meeting_id}/icebreaker/goto": {
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Goes back to someone who already had their turn (facilitator); the turn\ncontinues from them.",
+        "operationId": "icebreaker_goto",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IcebreakerGotoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, `wrong_phase`, or `icebreaker_not_reached` (they have not had their turn yet)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/meetings/{meeting_id}/icebreaker/next": {
       "post": {
         "tags": [
@@ -968,16 +1046,6 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/IcebreakerNextRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "description": "The meeting",
@@ -2720,7 +2788,8 @@
         "required": [
           "text",
           "language",
-          "langCode"
+          "langCode",
+          "pronunciation"
         ],
         "properties": {
           "langCode": {
@@ -2730,6 +2799,10 @@
           "language": {
             "type": "string",
             "description": "English name of the language, e.g. \"Italian\"."
+          },
+          "pronunciation": {
+            "type": "string",
+            "description": "IPA, e.g. \"/ˈtʃa.o/\"."
           },
           "text": {
             "type": "string"
@@ -2741,8 +2814,7 @@
         "description": "Where the icebreaker stands.",
         "required": [
           "order",
-          "index",
-          "skipped"
+          "index"
         ],
         "properties": {
           "index": {
@@ -2757,24 +2829,20 @@
               "format": "uuid"
             },
             "description": "Speaking order (user ids)."
-          },
-          "skipped": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "uuid"
-            },
-            "description": "People the facilitator skipped."
           }
         }
       },
-      "IcebreakerNextRequest": {
+      "IcebreakerGotoRequest": {
         "type": "object",
-        "description": "How to leave the current icebreaker speaker.",
+        "description": "Who the icebreaker goes back to.",
+        "required": [
+          "userId"
+        ],
         "properties": {
-          "skip": {
-            "type": "boolean",
-            "description": "Mark the current person as skipped instead of done."
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Someone who already had their turn."
           }
         }
       },

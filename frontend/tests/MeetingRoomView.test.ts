@@ -60,7 +60,8 @@ describe('Meeting room', () => {
     expect(wrapper.get('h1').text()).toBe('Icebreaker');
     expect(wrapper.text()).toContain('Phase 1 of 5');
     expect(wrapper.get('[lang="it"]').text()).toBe('Ciao!');
-    expect(wrapper.text()).toContain('— Italian');
+    expect(wrapper.text()).toContain('/ˈtʃa.o/');
+    expect(wrapper.text()).toContain('Italian');
     expect(wrapper.text()).toContain("What's a small thing that made your week better?");
     expect(wrapper.text()).toContain('Now answering · 1 of 2');
     expect(wrapper.text()).toContain('Up next: Bob Bianchi');
@@ -73,7 +74,7 @@ describe('Meeting room', () => {
     expect(toolbar.attributes('aria-label')).toBe('Facilitator actions');
     expect(toolbar.text()).toContain('Transfer facilitator');
     expect(toolbar.text()).toContain('End meeting');
-    expect(button(wrapper, 'Skip Alice')).toBeTruthy();
+    expect(button(wrapper, 'Previous person')!.attributes('disabled')).toBeDefined();
     expect(button(wrapper, 'Next person')).toBeTruthy();
     expect(wrapper.find('button[aria-label="Rename meeting"]').exists()).toBe(true);
     const socket = await openSocket();
@@ -82,7 +83,7 @@ describe('Meeting room', () => {
 
   it('moves to the next person, then offers the next phase', async () => {
     const after = meetingState({
-      icebreaker: { order: [ALICE.id, BOB.id], index: 1, skipped: [] },
+      icebreaker: { order: [ALICE.id, BOB.id], index: 1 },
       seq: 3,
     });
     const { calls } = mockFetch(
@@ -94,7 +95,7 @@ describe('Meeting room', () => {
     const { wrapper } = await open();
     await button(wrapper, 'Next person')!.trigger('click');
     await flushPromises();
-    expect(calls.find((c) => c.path === `${BASE}/icebreaker/next`)?.body).toEqual({ skip: false });
+    expect(calls.some((c) => c.path === `${BASE}/icebreaker/next`)).toBe(true);
     expect(wrapper.text()).toContain('Now answering · 2 of 2');
     expect(wrapper.text()).toContain('Last one to answer');
 
@@ -102,6 +103,32 @@ describe('Meeting room', () => {
     await flushPromises();
     expect(wrapper.get('h1').text()).toBe('Reflect');
     expect(wrapper.text()).toContain('The Reflect phase is on its way');
+  });
+
+  it.each([
+    ['the previous person', (w: VueWrapper) => button(w, 'Previous person')!],
+    [
+      'anyone in the speaking order who had their turn',
+      (w: VueWrapper) => w.get('button[aria-label="Go back to Alice Rossi"]'),
+    ],
+  ])('goes back to %s', async (_, control) => {
+    const second = meetingState({ icebreaker: { order: [ALICE.id, BOB.id], index: 1 } });
+    const first = meetingState({ icebreaker: { order: [ALICE.id, BOB.id], index: 0 }, seq: 3 });
+    const { calls } = mockFetch(
+      routes(second, { [`POST ${BASE}/icebreaker/goto`]: { status: 200, body: first } }),
+    );
+    const { wrapper } = await open();
+    expect(wrapper.text()).toContain('Now answering · 2 of 2');
+    // On the last person: Previous and the next phase.
+    expect(button(wrapper, 'Next: Reflect')).toBeTruthy();
+
+    await control(wrapper).trigger('click');
+    await flushPromises();
+    expect(calls.find((c) => c.path === `${BASE}/icebreaker/goto`)?.body).toEqual({
+      userId: ALICE.id,
+    });
+    expect(wrapper.text()).toContain('Now answering · 1 of 2');
+    expect(button(wrapper, 'Next person')).toBeTruthy();
   });
 
   it("follows the facilitator's changes live as a participant", async () => {
@@ -117,13 +144,15 @@ describe('Meeting room', () => {
       type: 'icebreaker.person_changed',
       channel,
       seq: 3,
-      payload: { index: 1, skipped: [ALICE.id] },
+      payload: { index: 1 },
     });
     await flushPromises();
     expect(wrapper.text()).toContain('Now answering · 2 of 2');
-    expect(
-      wrapper.find('ol[aria-label="Icebreaker progress"] [aria-label="skipped"]').exists(),
-    ).toBe(true);
+    expect(wrapper.find('ol[aria-label="Icebreaker progress"] [aria-label="done"]').exists()).toBe(
+      true,
+    );
+    // Only the facilitator goes back.
+    expect(wrapper.find('ol[aria-label="Icebreaker progress"] button').exists()).toBe(false);
 
     socket.emit({
       type: 'meeting.renamed',

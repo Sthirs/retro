@@ -42,6 +42,7 @@ export const ICONS = {
   atSign: ['circle:12,12,4', 'M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8'],
   pencil: ['M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z'],
   move: ['M5 9 2 12l3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20'],
+  chevronLeft: ['m15 6-6 6 6 6'],
   chevronRight: ['m9 6 6 6-6 6'],
   moreVertical: ['circle:12,5,1.4', 'circle:12,12,1.4', 'circle:12,19,1.4'],
   search: ['circle:11,11,7', 'm20 20-3.5-3.5'],
@@ -53,7 +54,6 @@ export const ICONS = {
   message: ['M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'],
   transfer: ['m16 3 4 4-4 4', 'M20 7H4', 'm8 21-4-4 4-4', 'M4 17h16'],
   flag: ['M5 22V4h12l-2 4 2 4H5'],
-  skip: ['m5 4 10 8-10 8V4zM19 5v14'],
   wifiOff: [
     'M2 2l20 20M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 5.2-2.8M19 13a10 10 0 0 0-2.3-1.6M12 20h.01',
   ],

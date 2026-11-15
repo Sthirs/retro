@@ -61,13 +61,13 @@ describe('meeting store', () => {
       type: 'icebreaker.person_changed',
       channel,
       seq: 4,
-      payload: { index: 1, skipped: [ALICE.id] },
+      payload: { index: 1 },
     });
     store.apply({
       type: 'icebreaker.person_changed',
       channel,
       seq: 4,
-      payload: { index: 9, skipped: [] },
+      payload: { index: 9 },
     });
     store.apply({
       type: 'presence.changed',
@@ -78,7 +78,6 @@ describe('meeting store', () => {
     expect(store.meeting!.seq).toBe(4);
     expect(store.currentSpeaker?.displayName).toBe('Carol Verdi');
     expect(store.currentSpeaker?.online).toBe(true);
-    expect(store.meeting!.icebreaker.skipped).toEqual([ALICE.id]);
 
     store.apply({
       type: 'facilitator.changed',
@@ -145,11 +144,31 @@ describe('meeting store', () => {
     const { store, calls } = await opened({
       [`POST /api/v1/meetings/${MEETING_ID}/icebreaker/next`]: problem(403, 'not_facilitator'),
     });
-    const pending = store.nextPerson(true);
+    const pending = store.nextPerson();
     expect(store.speakerIndex).toBe(1);
     expect(await pending).toBe(false);
     expect(store.speakerIndex).toBe(0);
     expect(store.actionError).toBe('not_facilitator');
-    expect(calls.at(-1)?.body).toEqual({ skip: true });
+    expect(calls.at(-1)?.path).toBe(`/api/v1/meetings/${MEETING_ID}/icebreaker/next`);
+  });
+
+  it('goes back to someone who already had their turn, at once', async () => {
+    const { store, calls } = await opened({
+      [JOIN]: {
+        status: 200,
+        body: meetingState({ icebreaker: { order: [ALICE.id, BOB.id], index: 1 } }),
+      },
+      [`POST /api/v1/meetings/${MEETING_ID}/icebreaker/goto`]: {
+        status: 200,
+        body: meetingState({ icebreaker: { order: [ALICE.id, BOB.id], index: 0 }, seq: 3 }),
+      },
+    });
+    expect(store.previousSpeaker?.id).toBe(ALICE.id);
+    const pending = store.goToPerson(ALICE.id);
+    expect(store.speakerIndex).toBe(0);
+    expect(await pending).toBe(true);
+    expect(store.currentSpeaker?.id).toBe(ALICE.id);
+    expect(store.previousSpeaker).toBeNull();
+    expect(calls.at(-1)?.body).toEqual({ userId: ALICE.id });
   });
 });

@@ -26,6 +26,19 @@ const me = computed(() => session.user?.id ?? null);
 const nameOf = (id: string, name: string) =>
   id === me.value ? t('meetingRoom.you', { name }) : name;
 
+// The facilitator goes back to anyone who already had their turn.
+const canGoBack = computed(() => store.isFacilitator && store.isActive);
+const going = ref(false);
+async function goTo(userId: string): Promise<void> {
+  if (going.value) return;
+  going.value = true;
+  try {
+    await store.goToPerson(userId);
+  } finally {
+    going.value = false;
+  }
+}
+
 type StepState = 'done' | 'current' | 'upcoming';
 const steps = computed(() =>
   PHASES.map((phase, i) => ({
@@ -38,15 +51,14 @@ const steps = computed(() =>
   })),
 );
 
-type SpeakerState = 'done' | 'skipped' | 'current' | 'next' | 'upcoming';
+type SpeakerState = 'done' | 'current' | 'next' | 'upcoming';
 const speakers = computed(() =>
   store.speakers.map((p, i) => {
     let state: SpeakerState = 'upcoming';
-    if (i < store.speakerIndex) {
-      state = meeting.value.icebreaker.skipped.includes(p.id) ? 'skipped' : 'done';
-    } else if (i === store.speakerIndex) state = 'current';
+    if (i < store.speakerIndex) state = 'done';
+    else if (i === store.speakerIndex) state = 'current';
     else if (i === store.speakerIndex + 1) state = 'next';
-    return { participant: p, state };
+    return { participant: p, state, back: canGoBack.value && state === 'done' };
   }),
 );
 
@@ -160,35 +172,41 @@ async function finishRename(save: boolean): Promise<void> {
           :aria-label="t('icebreaker.progress')"
         >
           <li
-            v-for="{ participant, state } in speakers"
+            v-for="{ participant, state, back } in speakers"
             :key="participant.id"
-            class="queue__item"
-            :class="`queue__item--${state}`"
+            class="queue__entry"
             :aria-current="state === 'current' ? 'true' : undefined"
           >
-            <PresenceAvatar
-              :user-id="participant.id"
-              :name="participant.displayName"
-              :picture-version="participant.pictureVersion"
-              :online="participant.online"
-              :size="26"
-              ring="var(--accent-soft)"
-            />
-            <span class="queue__name">{{ nameOf(participant.id, participant.displayName) }}</span>
-            <span v-if="state === 'done'" class="queue__done" :aria-label="t('icebreaker.done')">
-              <AppIcon name="check" :size="16" />
-            </span>
-            <span
-              v-else-if="state === 'skipped'"
-              class="queue__skipped"
-              :aria-label="t('icebreaker.skipped')"
+            <component
+              :is="back ? 'button' : 'div'"
+              class="queue__item"
+              :class="`queue__item--${state}`"
+              :type="back ? 'button' : undefined"
+              :disabled="back ? going : undefined"
+              :aria-label="
+                back ? t('icebreaker.goTo', { name: participant.displayName }) : undefined
+              "
+              @click="back && goTo(participant.id)"
             >
-              <AppIcon name="skip" :size="14" />
-            </span>
-            <span v-else-if="state === 'current'" class="queue__now">{{
-              t('icebreaker.now')
-            }}</span>
-            <span v-else-if="state === 'next'" class="queue__next">{{ t('icebreaker.next') }}</span>
+              <PresenceAvatar
+                :user-id="participant.id"
+                :name="participant.displayName"
+                :picture-version="participant.pictureVersion"
+                :online="participant.online"
+                :size="26"
+                ring="var(--accent-soft)"
+              />
+              <span class="queue__name">{{ nameOf(participant.id, participant.displayName) }}</span>
+              <span v-if="state === 'done'" class="queue__done" :aria-label="t('icebreaker.done')">
+                <AppIcon name="check" :size="16" />
+              </span>
+              <span v-else-if="state === 'current'" class="queue__now">{{
+                t('icebreaker.now')
+              }}</span>
+              <span v-else-if="state === 'next'" class="queue__next">{{
+                t('icebreaker.next')
+              }}</span>
+            </component>
           </li>
         </ol>
       </li>
@@ -368,6 +386,22 @@ async function finishRename(save: boolean): Promise<void> {
   padding: 4px 8px;
   border-radius: var(--radius-sm);
 }
+button.queue__item {
+  width: 100%;
+  min-height: 44px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+button.queue__item:hover:not(:disabled) {
+  background: var(--surface);
+}
+button.queue__item:hover:not(:disabled) .queue__name {
+  color: var(--text);
+}
 .queue__name {
   flex: 1 1 auto;
   min-width: 0;
@@ -390,10 +424,6 @@ async function finishRename(save: boolean): Promise<void> {
 .queue__done {
   display: flex;
   color: var(--success);
-}
-.queue__skipped {
-  display: flex;
-  color: var(--muted);
 }
 .queue__now {
   padding: 2px 8px;

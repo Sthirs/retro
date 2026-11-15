@@ -32,6 +32,8 @@ export interface GreetingDto {
   langCode: string;
   /** English name of the language, e.g. "Italian". */
   language: string;
+  /** IPA, e.g. "/ˈtʃa.o/". */
+  pronunciation: string;
   text: string;
 }
 
@@ -43,16 +45,14 @@ export interface IcebreakerDto {
   index: number;
   /** Speaking order (user ids). */
   order: string[];
-  /** People the facilitator skipped. */
-  skipped: string[];
 }
 
 /**
- * How to leave the current icebreaker speaker.
+ * Who the icebreaker goes back to.
  */
-export interface IcebreakerNextRequest {
-  /** Mark the current person as skipped instead of done. */
-  skip?: boolean;
+export interface IcebreakerGotoRequest {
+  /** Someone who already had their turn. */
+  userId: string;
 }
 
 /**
@@ -1358,6 +1358,77 @@ export const setFacilitator = async (
   });
 };
 
+export type icebreakerGotoResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type icebreakerGotoResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type icebreakerGotoResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type icebreakerGotoResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type icebreakerGotoResponseSuccess = icebreakerGotoResponse200 & {
+  headers: Headers;
+};
+export type icebreakerGotoResponseError = (
+  icebreakerGotoResponse403 | icebreakerGotoResponse404 | icebreakerGotoResponse409
+) & {
+  headers: Headers;
+};
+
+export type icebreakerGotoResponse = icebreakerGotoResponseSuccess | icebreakerGotoResponseError;
+
+export const getIcebreakerGotoUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/icebreaker/goto`;
+};
+
+/**
+ * @summary Goes back to someone who already had their turn (facilitator); the turn
+continues from them.
+ */
+export const icebreakerGoto = async (
+  meetingId: string,
+  icebreakerGotoRequest: IcebreakerGotoRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<icebreakerGotoResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<icebreakerGotoResponse>(getIcebreakerGotoUrl(meetingId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(icebreakerGotoRequest),
+  });
+};
+
 export type icebreakerNextResponse200 = {
   data: MeetingStateDto;
   status: 200;
@@ -1398,33 +1469,11 @@ export const getIcebreakerNextUrl = (meetingId: string) => {
  */
 export const icebreakerNext = async (
   meetingId: string,
-  icebreakerNextRequest: IcebreakerNextRequest,
   options?: Parameters<typeof apiFetch>[1],
 ): Promise<icebreakerNextResponse> => {
-  const getHeaders = (
-    h?: NonNullable<RequestInit['headers']>,
-  ): Record<string, string | readonly string[]> => {
-    if (!h) return {};
-    if (h instanceof Headers) return Object.fromEntries(h.entries());
-    if (Symbol.iterator in h) {
-      return Object.fromEntries(
-        Array.from(
-          h as Iterable<Iterable<string>>,
-          (entry) => Array.from(entry) as [string, string],
-        ),
-      );
-    }
-    const headers: Record<string, string | readonly string[]> = {};
-    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
-      if (value !== undefined) headers[name] = value;
-    }
-    return headers;
-  };
   return apiFetch<icebreakerNextResponse>(getIcebreakerNextUrl(meetingId), {
     ...options,
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(icebreakerNextRequest),
   });
 };
 

@@ -15,7 +15,12 @@ const meeting = computed(() => store.meeting!);
   <section class="ice" :aria-label="t('phases.icebreaker')">
     <div class="ice__greeting">
       <span class="ice__hello" :lang="meeting.greeting.langCode">{{ meeting.greeting.text }}</span>
-      <span class="ice__language">— {{ meeting.greeting.language }}</span>
+      <span class="ice__say">
+        <span v-if="meeting.greeting.pronunciation" class="ice__pronunciation">
+          {{ meeting.greeting.pronunciation }}
+        </span>
+        <span class="ice__language">{{ meeting.greeting.language }}</span>
+      </span>
     </div>
     <div class="ice__question">
       <span class="label">{{ t('icebreaker.question') }}</span>
@@ -65,8 +70,8 @@ const meeting = computed(() => store.meeting!);
 .ice__greeting {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 14px;
+  align-items: center;
+  gap: 8px 20px;
 }
 .ice__hello {
   color: var(--accent-text);
@@ -75,9 +80,17 @@ const meeting = computed(() => store.meeting!);
   letter-spacing: -0.03em;
   line-height: 1.1;
 }
+.ice__say {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ice__pronunciation {
+  font-size: 18px;
+}
 .ice__language {
   color: var(--muted);
-  font-size: 16px;
+  font-size: 14px;
 }
 .ice__question {
   display: flex;

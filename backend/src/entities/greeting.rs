@@ -11,6 +11,8 @@ pub struct Model {
     /// BCP 47 tag, e.g. "it".
     pub lang_code: String,
     pub text: String,
+    /// IPA, e.g. "/ˈtʃa.o/".
+    pub pronunciation: String,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

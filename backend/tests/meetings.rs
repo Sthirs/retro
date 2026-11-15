@@ -123,6 +123,12 @@ async fn starting_a_meeting_makes_the_creator_facilitator() {
     assert!(!meeting["greeting"]["text"].as_str().unwrap().is_empty());
     assert!(!meeting["greeting"]["language"].as_str().unwrap().is_empty());
     assert!(!meeting["greeting"]["langCode"].as_str().unwrap().is_empty());
+    assert!(
+        meeting["greeting"]["pronunciation"]
+            .as_str()
+            .unwrap()
+            .starts_with('/')
+    );
     assert!(!meeting["question"].as_str().unwrap().is_empty());
 
     let second = start(&app, &alice, team).await;
@@ -137,7 +143,7 @@ async fn starting_a_meeting_makes_the_creator_facilitator() {
 
 #[tokio::test]
 async fn seed_holds_fifty_greetings_and_questions() {
-    use sea_orm::{EntityTrait, PaginatorTrait};
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
     let app = TestApp::new().await;
     let greetings = retro_backend::entities::greeting::Entity::find()
         .count(&app.db)
@@ -148,6 +154,14 @@ async fn seed_holds_fifty_greetings_and_questions() {
         .await
         .unwrap();
     assert_eq!((greetings, questions), (50, 50));
+
+    // Every greeting has its pronunciation.
+    let missing = retro_backend::entities::greeting::Entity::find()
+        .filter(retro_backend::entities::greeting::Column::Pronunciation.eq(""))
+        .count(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(missing, 0);
 }
 
 #[tokio::test]
@@ -253,9 +267,7 @@ async fn joining_is_idempotent_and_adds_people_to_the_icebreaker() {
 
     // After the first person, newcomers go to the end.
     assert_eq!(
-        act(&app, &alice, m, "icebreaker/next", Some(json!({})))
-            .await
-            .status,
+        act(&app, &alice, m, "icebreaker/next", None).await.status,
         200
     );
     assert_eq!(act(&app, &carol, m, "join", None).await.status, 200);
@@ -275,36 +287,68 @@ async fn the_facilitator_moves_through_the_icebreaker() {
     let m = id(&meeting);
     act(&app, &bob, m, "join", None).await;
     act(&app, &carol, m, "join", None).await;
-    let order = state(&app, &alice, m).await["icebreaker"]["order"].clone();
 
     // Only the facilitator.
-    let res = act(&app, &bob, m, "icebreaker/next", Some(json!({}))).await;
+    let res = act(&app, &bob, m, "icebreaker/next", None).await;
     assert_eq!(res.status, 403);
     assert_eq!(res.json()["code"], "not_facilitator");
 
-    let res = act(
-        &app,
-        &alice,
-        m,
-        "icebreaker/next",
-        Some(json!({ "skip": true })),
-    )
-    .await;
+    let res = act(&app, &alice, m, "icebreaker/next", None).await;
     assert_eq!(res.status, 200, "{}", res.text());
-    let s = res.json();
-    assert_eq!(s["icebreaker"]["index"], 1);
-    assert_eq!(s["icebreaker"]["skipped"], json!([order[0]]));
-
-    let s = act(&app, &alice, m, "icebreaker/next", Some(json!({})))
-        .await
-        .json();
+    assert_eq!(res.json()["icebreaker"]["index"], 1);
+    let s = act(&app, &alice, m, "icebreaker/next", None).await.json();
     assert_eq!(s["icebreaker"]["index"], 2);
-    assert_eq!(s["icebreaker"]["skipped"], json!([order[0]]));
 
     // The last person is speaking: next is the Reflect phase.
-    let res = act(&app, &alice, m, "icebreaker/next", Some(json!({}))).await;
+    let res = act(&app, &alice, m, "icebreaker/next", None).await;
     assert_eq!(res.status, 409);
     assert_eq!(res.json()["code"], "icebreaker_done");
+}
+
+#[tokio::test]
+async fn the_facilitator_goes_back_in_the_icebreaker() {
+    let app = TestApp::new().await;
+    let (alice, bob, carol, team) = team_of_three(&app).await;
+    let meeting = start(&app, &alice, team).await;
+    let m = id(&meeting);
+    act(&app, &bob, m, "join", None).await;
+    act(&app, &carol, m, "join", None).await;
+    let order = state(&app, &alice, m).await["icebreaker"]["order"].clone();
+    let goto = |who: &Value| Some(json!({ "userId": who }));
+
+    // Nobody has had their turn yet.
+    let res = act(&app, &alice, m, "icebreaker/goto", goto(&order[0])).await;
+    assert_eq!(res.status, 409);
+    assert_eq!(res.json()["code"], "icebreaker_not_reached");
+
+    act(&app, &alice, m, "icebreaker/next", None).await;
+    act(&app, &alice, m, "icebreaker/next", None).await;
+
+    // Only the facilitator; only people who already had their turn.
+    let res = act(&app, &bob, m, "icebreaker/goto", goto(&order[0])).await;
+    assert_eq!(res.status, 403);
+    assert_eq!(res.json()["code"], "not_facilitator");
+    let res = act(&app, &alice, m, "icebreaker/goto", goto(&order[2])).await;
+    assert_eq!(res.status, 409);
+    assert_eq!(res.json()["code"], "icebreaker_not_reached");
+
+    // Previous person.
+    let res = act(&app, &alice, m, "icebreaker/goto", goto(&order[1])).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["icebreaker"]["index"], 1);
+
+    // Back to the first, then the turn continues from there.
+    let res = act(&app, &alice, m, "icebreaker/goto", goto(&order[0])).await;
+    assert_eq!(res.json()["icebreaker"]["index"], 0);
+    let s = act(&app, &alice, m, "icebreaker/next", None).await.json();
+    assert_eq!(s["icebreaker"]["index"], 1);
+    assert_eq!(s["icebreaker"]["order"], order);
+
+    // Not once the icebreaker is over.
+    act(&app, &alice, m, "phase/next", None).await;
+    let res = act(&app, &alice, m, "icebreaker/goto", goto(&order[0])).await;
+    assert_eq!(res.status, 409);
+    assert_eq!(res.json()["code"], "wrong_phase");
 }
 
 #[tokio::test]
@@ -327,7 +371,7 @@ async fn phases_advance_forward_only_by_the_facilitator() {
     assert_eq!(res.status, 409);
     assert_eq!(res.json()["code"], "last_phase");
 
-    let res = act(&app, &alice, m, "icebreaker/next", Some(json!({}))).await;
+    let res = act(&app, &alice, m, "icebreaker/next", None).await;
     assert_eq!(res.status, 409);
     assert_eq!(res.json()["code"], "wrong_phase");
 }
@@ -365,7 +409,7 @@ async fn the_facilitator_hands_the_role_to_a_participant() {
     assert_eq!(res.json()["facilitatorId"], bob_id.to_string());
 
     // alice stays a participant without controls.
-    let res = act(&app, &alice, m, "icebreaker/next", Some(json!({}))).await;
+    let res = act(&app, &alice, m, "icebreaker/next", None).await;
     assert_eq!(res.status, 403);
     let s = state(&app, &alice, m).await;
     assert_eq!(s["participants"].as_array().unwrap().len(), 2);
@@ -468,7 +512,8 @@ async fn ending_makes_the_meeting_read_only() {
     for (action, body) in [
         ("end", None),
         ("phase/next", None),
-        ("icebreaker/next", Some(json!({}))),
+        ("icebreaker/next", None),
+        ("icebreaker/goto", Some(json!({ "userId": Uuid::nil() }))),
         ("join", None),
     ] {
         let res = act(&app, &alice, m, action, body).await;

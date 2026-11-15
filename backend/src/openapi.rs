@@ -59,6 +59,7 @@ use crate::{
         api::meetings::rename_meeting,
         api::meetings::join_meeting,
         api::meetings::icebreaker_next,
+        api::meetings::icebreaker_goto,
         api::meetings::next_phase,
         api::meetings::set_facilitator,
         api::meetings::end_meeting,

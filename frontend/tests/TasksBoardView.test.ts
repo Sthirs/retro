@@ -41,7 +41,6 @@ const task = (id: string, status: TaskDto['status'], position: string, extra = {
   mentions: [],
   meetingId: null,
   createdAt: '2026-11-10T10:00:00Z',
-  canEdit: true,
   ...extra,
 });
 
@@ -450,13 +449,8 @@ describe('Tasks board', () => {
         .find((d) => d.find('h2').exists())!;
     const hasMenu = (wrapper: VueWrapper) => board(wrapper).find('[role="menu"]').exists();
 
-    it('menu shows Edit and Delete only when canEdit', async () => {
-      mockFetch(
-        routes([
-          task('a1', 'active', 'a0', { canEdit: true }),
-          task('a2', 'active', 'a1', { canEdit: false }),
-        ]),
-      );
+    it('menu shows Edit, Move to and Delete on every card', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0'), task('a2', 'active', 'a1')]));
       const { wrapper } = await open();
       expect(hasMenu(wrapper)).toBe(false);
 
@@ -469,7 +463,7 @@ describe('Tasks board', () => {
       expect(hasMenu(wrapper)).toBe(false);
 
       await actions(wrapper, 'Active', 1).trigger('click');
-      expect(items(wrapper)).toEqual(['Move to…']);
+      expect(items(wrapper)).toEqual(['Edit', 'Move to…', 'Delete']);
     });
 
     it('Move to lists the other columns, and Escape returns focus to the button', async () => {

@@ -35,8 +35,6 @@ pub struct TaskDto {
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub created_at: OffsetDateTime,
-    /// Whether the caller may edit or delete the task (any member may move it).
-    pub can_edit: bool,
 }
 
 impl From<TaskView> for TaskDto {
@@ -50,7 +48,6 @@ impl From<TaskView> for TaskDto {
             mentions: v.mentions.into_iter().map(Into::into).collect(),
             meeting_id: v.task.meeting_id,
             created_at: v.task.created_at,
-            can_edit: v.can_edit,
         }
     }
 }
@@ -151,7 +148,7 @@ pub struct UpdateTaskRequest {
     pub content: String,
 }
 
-/// Edits a task's content. Only its author or a team admin may.
+/// Edits a task's content. Any team member may.
 #[utoipa::path(
     patch,
     path = "/api/v1/tasks/{task_id}",
@@ -163,7 +160,6 @@ pub struct UpdateTaskRequest {
         (status = 200, body = TaskDto, description = "The edited task"),
         (status = 400, body = Problem, content_type = "application/problem+json", description = "`invalid_task_content`: blank or invalid content"),
         (status = 401, body = Problem, content_type = "application/problem+json", description = "Not signed in"),
-        (status = 403, body = Problem, content_type = "application/problem+json", description = "`forbidden`: neither the author nor an admin"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "`task_not_found`: no such task or not a member of its team"),
     )
 )]
@@ -177,7 +173,7 @@ pub async fn update_task(
     Ok(Json(task.into()))
 }
 
-/// Deletes a task. Only its author or a team admin may.
+/// Deletes a task. Any team member may.
 #[utoipa::path(
     delete,
     path = "/api/v1/tasks/{task_id}",
@@ -187,7 +183,6 @@ pub async fn update_task(
     responses(
         (status = 204, description = "Deleted"),
         (status = 401, body = Problem, content_type = "application/problem+json", description = "Not signed in"),
-        (status = 403, body = Problem, content_type = "application/problem+json", description = "`forbidden`: neither the author nor an admin"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "`task_not_found`: no such task or not a member of its team"),
     )
 )]

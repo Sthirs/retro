@@ -653,7 +653,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Deletes a task. Only its author or a team admin may.",
+        "summary": "Deletes a task. Any team member may.",
         "operationId": "delete_task",
         "parameters": [
           {
@@ -673,16 +673,6 @@
           },
           "401": {
             "description": "Not signed in",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "`forbidden`: neither the author nor an admin",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -712,7 +702,7 @@
         "tags": [
           "tasks"
         ],
-        "summary": "Edits a task's content. Only its author or a team admin may.",
+        "summary": "Edits a task's content. Any team member may.",
         "operationId": "update_task",
         "parameters": [
           {
@@ -759,16 +749,6 @@
           },
           "401": {
             "description": "Not signed in",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "`forbidden`: neither the author nor an admin",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2313,16 +2293,11 @@
           "contentHtml",
           "author",
           "mentions",
-          "createdAt",
-          "canEdit"
+          "createdAt"
         ],
         "properties": {
           "author": {
             "$ref": "#/components/schemas/PersonDto"
-          },
-          "canEdit": {
-            "type": "boolean",
-            "description": "Whether the caller may edit or delete the task (any member may move it)."
           },
           "contentHtml": {
             "type": "string",

@@ -102,15 +102,13 @@ async fn lists_tasks_by_column_and_position() {
         .unwrap();
     assert!(first.position < second.position && second.position < third.position);
 
-    // Admin sees every task, in (status, position) order, and can edit all.
+    // Every task, in (status, position) order.
     let body = list(&app, &alice, team, "").await;
     assert_eq!(
         ids(&body),
         [first.id, second.id, third.id, done.id].map(|i| i.to_string())
     );
-    let as_admin = body.as_array().unwrap();
-    assert!(as_admin.iter().all(|t| t["canEdit"] == true));
-    let t = &as_admin[0];
+    let t = &body.as_array().unwrap()[0];
     assert_eq!(t["status"], "active");
     assert_eq!(t["position"], first.position);
     assert_eq!(t["contentHtml"], "<p>one</p>");
@@ -120,25 +118,9 @@ async fn lists_tasks_by_column_and_position() {
     assert_eq!(t["meetingId"], Value::Null);
     assert!(t["createdAt"].as_str().is_some());
 
-    // The author can edit their own tasks only.
-    let as_bob = list(&app, &bob, team, "").await;
-    let can_edit: Vec<bool> = as_bob
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["canEdit"].as_bool().unwrap())
-        .collect();
-    assert_eq!(can_edit, [true, false, true, true]);
-
-    // A member who wrote nothing can edit nothing.
+    // A plain member who wrote nothing sees the same board.
     let as_carol = list(&app, &carol, team, "").await;
-    assert!(
-        as_carol
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|t| t["canEdit"] == false)
-    );
+    assert_eq!(ids(&as_carol), ids(&body));
 }
 
 #[tokio::test]
@@ -395,7 +377,6 @@ async fn moves_to_the_end_of_another_column() {
     assert_eq!(body["status"], "done");
     assert!(body["position"].as_str().unwrap() > b.d.position.as_str());
     assert_eq!(body["author"]["displayName"], "Bob Bianchi");
-    assert_eq!(body["canEdit"], true);
 
     let all = list(&b.app, &b.alice, b.team, "").await;
     assert_eq!(
@@ -675,10 +656,8 @@ async fn any_member_can_move() {
     join(&b.app, &b.alice, b.team, &carol).await;
     let res = move_to(&b.app, &carol, b.a.id, "stuck", None, None).await;
     assert_eq!(res.status, 200, "{}", res.text());
-    assert_eq!(res.json()["canEdit"], false);
     let res = move_to(&b.app, &b.alice, b.b.id, "stuck", Some(b.a.id), None).await;
     assert_eq!(res.status, 200, "{}", res.text());
-    assert_eq!(res.json()["canEdit"], true);
     let res = move_to(&b.app, &b.bob, b.c.id, "future", None, None).await;
     assert_eq!(res.status, 200, "{}", res.text());
 }
@@ -721,7 +700,7 @@ async fn delete(app: &TestApp, token: &str, task: Uuid) -> common::TestResponse 
 }
 
 #[tokio::test]
-async fn author_and_admin_can_edit_others_cannot() {
+async fn any_member_can_edit() {
     let b = board().await;
     let carol = b
         .app
@@ -733,22 +712,23 @@ async fn author_and_admin_can_edit_others_cannot() {
     let res = edit(&b.app, &b.bob, b.a.id, "<p>by author</p>").await;
     assert_eq!(res.status, 200, "{}", res.text());
     assert_eq!(res.json()["contentHtml"], "<p>by author</p>");
-    assert_eq!(res.json()["canEdit"], true);
     // Alice is the admin.
     let res = edit(&b.app, &b.alice, b.a.id, "<p>by admin</p>").await;
     assert_eq!(res.status, 200, "{}", res.text());
     assert_eq!(res.json()["contentHtml"], "<p>by admin</p>");
     // Carol is a plain member who did not write it.
     let res = edit(&b.app, &carol, b.a.id, "<p>by carol</p>").await;
-    assert_eq!(res.status, 403, "{}", res.text());
-    assert_eq!(res.json()["code"], "forbidden");
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["contentHtml"], "<p>by carol</p>");
+    assert_eq!(res.json()["author"]["displayName"], "Bob Bianchi");
 
     let stored = task::Entity::find_by_id(b.a.id)
         .one(&b.app.db)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.content, "<p>by admin</p>");
+    assert_eq!(stored.content, "<p>by carol</p>");
+    assert_eq!(stored.author_id, b.a.author_id);
 }
 
 #[tokio::test]
@@ -823,7 +803,7 @@ async fn blank_content_is_rejected() {
 }
 
 #[tokio::test]
-async fn author_and_admin_can_delete_others_cannot() {
+async fn any_member_can_delete() {
     let b = board().await;
     let carol = b
         .app
@@ -831,17 +811,17 @@ async fn author_and_admin_can_delete_others_cannot() {
         .await;
     join(&b.app, &b.alice, b.team, &carol).await;
 
+    // Carol, a plain member, deletes a task Bob wrote; Bob and the admin
+    // delete theirs as well.
     let res = delete(&b.app, &carol, b.a.id).await;
-    assert_eq!(res.status, 403, "{}", res.text());
-    assert_eq!(res.json()["code"], "forbidden");
-
-    let res = delete(&b.app, &b.bob, b.a.id).await;
     assert_eq!(res.status, 204, "{}", res.text());
-    let res = delete(&b.app, &b.alice, b.b.id).await;
+    let res = delete(&b.app, &b.bob, b.b.id).await;
+    assert_eq!(res.status, 204, "{}", res.text());
+    let res = delete(&b.app, &b.alice, b.c.id).await;
     assert_eq!(res.status, 204, "{}", res.text());
 
     let remaining = list(&b.app, &b.alice, b.team, "").await;
-    assert_eq!(ids(&remaining), [b.c.id, b.d.id].map(|i| i.to_string()));
+    assert_eq!(ids(&remaining), [b.d.id].map(|i| i.to_string()));
 
     let res = delete(&b.app, &b.alice, b.a.id).await;
     assert_eq!(res.status, 404, "{}", res.text());
@@ -911,7 +891,6 @@ async fn dev_route_seeds_tasks_when_enabled() {
     assert_eq!(first["status"], "future");
     assert_eq!(first["contentHtml"], "<p>first</p>");
     assert_eq!(first["author"]["displayName"], "Alice Rossi");
-    assert_eq!(first["canEdit"], true);
 
     let res = seed(
         &app,

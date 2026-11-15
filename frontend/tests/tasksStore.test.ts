@@ -16,7 +16,6 @@ const task = (id: string, status: TaskDto['status'], position: string, extra = {
   mentions: [],
   meetingId: null,
   createdAt: '2026-11-14T10:00:00Z',
-  canEdit: true,
   ...extra,
 });
 

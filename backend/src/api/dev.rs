@@ -39,7 +39,7 @@ pub async fn seed_task(
     Path(team_id): Path<Uuid>,
     Json(body): Json<SeedTaskRequest>,
 ) -> AppResult<(StatusCode, Json<TaskDto>)> {
-    let role = teams::require_member(&state.db, team_id, user.id).await?;
+    teams::require_member(&state.db, team_id, user.id).await?;
     let author_id = body.author_id.unwrap_or(user.id);
     if author_id != user.id
         && teams::require_member(&state.db, team_id, author_id)
@@ -49,6 +49,6 @@ pub async fn seed_task(
         return Err(AppError::Invalid("invalid_author"));
     }
     let task = tasks::insert(&state.db, team_id, author_id, body.status, &body.content).await?;
-    let view = tasks::view(&state.db, task, role, user.id).await?;
+    let view = tasks::view(&state.db, task).await?;
     Ok((StatusCode::CREATED, Json(view.into())))
 }

@@ -209,7 +209,7 @@ function act(action: 'edit' | 'delete'): void {
       :style="{ position: 'fixed', ...placement }"
       @keydown="onKeyDown"
     >
-      <button v-if="task.canEdit" type="button" role="menuitem" class="item" @click="act('edit')">
+      <button type="button" role="menuitem" class="item" @click="act('edit')">
         <AppIcon name="pencil" :size="16" />
         {{ t('tasks.edit') }}
       </button>
@@ -246,13 +246,11 @@ function act(action: 'edit' | 'delete'): void {
           {{ t(`tasks.columns.${status}`) }}
         </button>
       </div>
-      <template v-if="task.canEdit">
-        <div class="menu__separator" role="separator" />
-        <button type="button" role="menuitem" class="item item--danger" @click="act('delete')">
-          <AppIcon name="trash" :size="16" />
-          {{ t('tasks.delete') }}
-        </button>
-      </template>
+      <div class="menu__separator" role="separator" />
+      <button type="button" role="menuitem" class="item item--danger" @click="act('delete')">
+        <AppIcon name="trash" :size="16" />
+        {{ t('tasks.delete') }}
+      </button>
     </div>
   </div>
 </template>

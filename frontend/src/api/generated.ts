@@ -274,8 +274,6 @@ export interface SessionResponse {
  */
 export interface TaskDto {
   author: PersonDto;
-  /** Whether the caller may edit or delete the task (any member may move it). */
-  canEdit: boolean;
   /** Sanitized rich text. */
   contentHtml: string;
   createdAt: string;
@@ -948,11 +946,6 @@ export type deleteTaskResponse401 = {
   status: 401;
 };
 
-export type deleteTaskResponse403 = {
-  data: Problem;
-  status: 403;
-};
-
 export type deleteTaskResponse404 = {
   data: Problem;
   status: 404;
@@ -961,9 +954,7 @@ export type deleteTaskResponse404 = {
 export type deleteTaskResponseSuccess = deleteTaskResponse204 & {
   headers: Headers;
 };
-export type deleteTaskResponseError = (
-  deleteTaskResponse401 | deleteTaskResponse403 | deleteTaskResponse404
-) & {
+export type deleteTaskResponseError = (deleteTaskResponse401 | deleteTaskResponse404) & {
   headers: Headers;
 };
 
@@ -974,7 +965,7 @@ export const getDeleteTaskUrl = (taskId: string) => {
 };
 
 /**
- * @summary Deletes a task. Only its author or a team admin may.
+ * @summary Deletes a task. Any team member may.
  */
 export const deleteTask = async (
   taskId: string,
@@ -1001,11 +992,6 @@ export type updateTaskResponse401 = {
   status: 401;
 };
 
-export type updateTaskResponse403 = {
-  data: Problem;
-  status: 403;
-};
-
 export type updateTaskResponse404 = {
   data: Problem;
   status: 404;
@@ -1015,7 +1001,7 @@ export type updateTaskResponseSuccess = updateTaskResponse200 & {
   headers: Headers;
 };
 export type updateTaskResponseError = (
-  updateTaskResponse400 | updateTaskResponse401 | updateTaskResponse403 | updateTaskResponse404
+  updateTaskResponse400 | updateTaskResponse401 | updateTaskResponse404
 ) & {
   headers: Headers;
 };
@@ -1027,7 +1013,7 @@ export const getUpdateTaskUrl = (taskId: string) => {
 };
 
 /**
- * @summary Edits a task's content. Only its author or a team admin may.
+ * @summary Edits a task's content. Any team member may.
  */
 export const updateTask = async (
   taskId: string,

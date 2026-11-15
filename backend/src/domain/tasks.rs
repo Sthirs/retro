@@ -15,8 +15,7 @@ use crate::{
         task::{self, TaskStatus},
         task_mention,
         team::{self},
-        team_member::{self, Role},
-        user,
+        team_member, user,
     },
     error::AppError,
 };
@@ -38,8 +37,6 @@ pub struct TaskView {
     pub task: task::Model,
     pub author: user::Model,
     pub mentions: Vec<user::Model>,
-    /// The caller may edit the task: they wrote it or they are a team admin.
-    pub can_edit: bool,
 }
 
 /// The team's tasks, ordered by `(status, position, id)`. Non-members get
@@ -50,7 +47,7 @@ pub async fn list(
     actor: Uuid,
     filter: BoardFilter,
 ) -> Result<Vec<TaskView>, AppError> {
-    let role = teams::require_member(db, team_id, actor).await?;
+    teams::require_member(db, team_id, actor).await?;
 
     let mut query = task::Entity::find().filter(task::Column::TeamId.eq(team_id));
     if let Some(author) = filter.author {
@@ -77,15 +74,13 @@ pub async fn list(
         .all(db)
         .await?;
 
-    views(db, rows, role, actor).await
+    views(db, rows).await
 }
 
-/// Attaches author, mentions and `can_edit` to `rows`, loading both in bulk.
+/// Attaches author and mentions to `rows`, loading both in bulk.
 async fn views(
     db: &impl ConnectionTrait,
     rows: Vec<task::Model>,
-    role: Role,
-    actor: Uuid,
 ) -> Result<Vec<TaskView>, AppError> {
     let mut mention_ids: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
     if !rows.is_empty() {
@@ -120,25 +115,18 @@ async fn views(
                 .flatten()
                 .filter_map(|id| people.get(id).cloned())
                 .collect();
-            let can_edit = role == Role::Admin || task.author_id == actor;
             Ok(TaskView {
                 task,
                 author,
                 mentions,
-                can_edit,
             })
         })
         .collect()
 }
 
-/// A single task with its author, mentions and `can_edit`, as `list` returns it.
-pub async fn view(
-    db: &impl ConnectionTrait,
-    task: task::Model,
-    role: Role,
-    actor: Uuid,
-) -> Result<TaskView, AppError> {
-    views(db, vec![task], role, actor)
+/// A single task with its author and mentions, as `list` returns it.
+pub async fn view(db: &impl ConnectionTrait, task: task::Model) -> Result<TaskView, AppError> {
+    views(db, vec![task])
         .await?
         .pop()
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("task is missing")))
@@ -235,12 +223,12 @@ async fn lock_task(
     txn: &impl ConnectionTrait,
     task_id: Uuid,
     actor: Uuid,
-) -> Result<(task::Model, Role), AppError> {
+) -> Result<task::Model, AppError> {
     let task = task::Entity::find_by_id(task_id)
         .one(txn)
         .await?
         .ok_or(AppError::NotFound("task_not_found"))?;
-    let role = teams::require_member(txn, task.team_id, actor)
+    teams::require_member(txn, task.team_id, actor)
         .await
         .map_err(|e| match e {
             AppError::NotFound(_) => AppError::NotFound("task_not_found"),
@@ -259,7 +247,7 @@ async fn lock_task(
         .one(txn)
         .await?
         .ok_or(AppError::NotFound("task_not_found"))?;
-    Ok((task, role))
+    Ok(task)
 }
 
 /// Moves a task to `status`, directly after `after`, or directly before
@@ -282,7 +270,7 @@ pub async fn move_task(
 ) -> Result<TaskView, AppError> {
     let txn = db.begin().await?;
 
-    let (task, role) = lock_task(&txn, task_id, actor).await?;
+    let task = lock_task(&txn, task_id, actor).await?;
 
     let after_key = neighbour_position(&txn, &task, status, after).await?;
     let before_key = neighbour_position(&txn, &task, status, before).await?;
@@ -349,7 +337,7 @@ pub async fn move_task(
     })?;
     txn.commit().await?;
 
-    views(db, vec![moved], role, actor)
+    views(db, vec![moved])
         .await?
         .pop()
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("moved task is missing")))
@@ -376,8 +364,8 @@ async fn neighbour_position(
         .ok_or(AppError::Invalid("invalid_position"))
 }
 
-/// Replaces a task's content. Only its author or a team admin may edit; any
-/// other member gets `forbidden`. The content is sanitized (`invalid_task_content`
+/// Replaces a task's content. Any team member may edit any task (spec §10);
+/// a non-member gets `task_not_found`. The content is sanitized (`invalid_task_content`
 /// when blank or invalid) and the mentions are replaced by those of the new
 /// content, keeping only team members.
 pub async fn edit(
@@ -387,8 +375,7 @@ pub async fn edit(
     raw_content: &str,
 ) -> Result<TaskView, AppError> {
     let txn = db.begin().await?;
-    let (task, role) = lock_task(&txn, task_id, actor).await?;
-    require_can_edit(&task, role, actor)?;
+    let task = lock_task(&txn, task_id, actor).await?;
     let content = rich_text::sanitize(raw_content)?;
 
     let edited = task::ActiveModel {
@@ -406,29 +393,20 @@ pub async fn edit(
     insert_mentions(&txn, task.team_id, task.id, content.mention_ids).await?;
     txn.commit().await?;
 
-    view(db, edited, role, actor).await
+    view(db, edited).await
 }
 
-/// Deletes a task and its mentions. Only its author or a team admin may; any
-/// other member gets `forbidden`.
+/// Deletes a task and its mentions. Any team member may delete any task
+/// (spec §10); a non-member gets `task_not_found`.
 pub async fn delete(
     db: &(impl TransactionTrait + ConnectionTrait),
     task_id: Uuid,
     actor: Uuid,
 ) -> Result<(), AppError> {
     let txn = db.begin().await?;
-    let (task, role) = lock_task(&txn, task_id, actor).await?;
-    require_can_edit(&task, role, actor)?;
+    let task = lock_task(&txn, task_id, actor).await?;
     // The mentions go with the task (ON DELETE CASCADE).
     task::Entity::delete_by_id(task.id).exec(&txn).await?;
     txn.commit().await?;
     Ok(())
-}
-
-fn require_can_edit(task: &task::Model, role: Role, actor: Uuid) -> Result<(), AppError> {
-    if role == Role::Admin || task.author_id == actor {
-        Ok(())
-    } else {
-        Err(AppError::Forbidden)
-    }
 }

@@ -63,12 +63,18 @@ pub async fn me(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
 ) -> AppResult<Json<MeResponse>> {
-    let teams = teams::list_for_user(&state.db, user.id).await?;
-    let invitations = invitations::pending_for_user(&state.db, &user).await?;
-    let linked = user_identity::Entity::find()
-        .filter(user_identity::Column::UserId.eq(user.id))
-        .count(&state.db)
-        .await?;
+    // Independent reads: run them concurrently on the pool.
+    let (teams, invitations, linked) = tokio::try_join!(
+        teams::list_for_user(&state.db, user.id),
+        invitations::pending_for_user(&state.db, &user),
+        async {
+            user_identity::Entity::find()
+                .filter(user_identity::Column::UserId.eq(user.id))
+                .count(&state.db)
+                .await
+                .map_err(AppError::from)
+        },
+    )?;
     let sign_in_method = if linked > 0 {
         SignInMethod::Sso
     } else {

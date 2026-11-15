@@ -253,6 +253,7 @@ export const meetingState = (overrides: Record<string, unknown> = {}) => ({
   phase: 'icebreaker',
   facilitatorId: ALICE.id,
   participants: [participant(ALICE, { role: 'admin' }), participant(BOB)],
+  onlineIds: [ALICE.id, BOB.id],
   greeting: { text: 'Ciao!', language: 'Italian', langCode: 'it' },
   question: "What's a small thing that made your week better?",
   icebreaker: { order: [ALICE.id, BOB.id], index: 0, skipped: [] },

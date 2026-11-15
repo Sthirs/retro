@@ -19,10 +19,7 @@ use uuid::Uuid;
 use super::{Channel, ticket};
 use crate::{
     domain::teams,
-    entities::{
-        meeting::{self, MeetingStatus},
-        meeting_participant,
-    },
+    entities::meeting::{self, MeetingStatus},
     error::AppError,
     state::AppState,
 };
@@ -158,8 +155,9 @@ async fn command(
     }
 }
 
-/// Team members only. A meeting channel also marks a participant of a running
-/// meeting as present.
+/// Team members only. Subscribing to a running meeting's channel means being
+/// in its room, so it also marks the member as present (the room joins the
+/// meeting right after; presence does not wait for that).
 async fn authorize(
     state: &AppState,
     user_id: Uuid,
@@ -181,12 +179,7 @@ async fn authorize(
                     AppError::NotFound(_) => AppError::NotFound("meeting_not_found"),
                     other => other,
                 })?;
-            let participant = meeting_participant::Entity::find_by_id((meeting_id, user_id))
-                .one(&state.db)
-                .await?
-                .is_some();
-            Ok((participant && meeting.status == MeetingStatus::Active)
-                .then_some((meeting_id, meeting.team_id)))
+            Ok((meeting.status == MeetingStatus::Active).then_some((meeting_id, meeting.team_id)))
         }
     }
 }

@@ -130,6 +130,9 @@ pub struct MeetingStateDto {
     pub facilitator_id: Uuid,
     /// In joining order.
     pub participants: Vec<ParticipantDto>,
+    /// Everyone in the meeting room right now, including people whose join
+    /// is still on its way.
+    pub online_ids: Vec<Uuid>,
     pub greeting: GreetingDto,
     pub question: String,
     pub icebreaker: IcebreakerDto,
@@ -160,6 +163,11 @@ impl MeetingStateDto {
             phase: m.phase,
             facilitator_id: m.facilitator_id,
             participants,
+            online_ids: {
+                let mut ids: Vec<Uuid> = online.iter().copied().collect();
+                ids.sort();
+                ids
+            },
             greeting: GreetingDto {
                 text: m.greeting_text,
                 language: m.greeting_language,

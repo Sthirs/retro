@@ -302,6 +302,11 @@ export interface MeetingStateDto {
   greeting: GreetingDto;
   icebreaker: IcebreakerDto;
   id: string;
+  /**
+   * Everyone in the meeting room right now, including people whose join
+   * is still on its way.
+   */
+  onlineIds: string[];
   /** In joining order. */
   participants: ParticipantDto[];
   phase: MeetingPhase;

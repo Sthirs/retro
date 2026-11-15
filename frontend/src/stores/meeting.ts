@@ -40,6 +40,15 @@ export const useMeetingStore = defineStore('meeting', () => {
   const notice = ref<MeetingNotice | null>(null);
   /** Events that arrived before the snapshot. */
   let queued: RealtimeEvent[] = [];
+  /**
+   * Who is in the room, participant or not yet: presence can arrive before
+   * the participant's join, so it is kept apart and applied to participants.
+   */
+  let online = new Set<string>();
+
+  function markOnline(): void {
+    for (const p of meeting.value?.participants ?? []) p.online = online.has(p.id);
+  }
   let loadSeq = 0;
 
   const me = computed(() => session.user?.id ?? null);
@@ -82,6 +91,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     actionError.value = null;
     notice.value = null;
     queued = [];
+    online = new Set();
   }
 
   watch(
@@ -94,6 +104,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     if (state.id !== meetingId.value) return;
     if (meeting.value && meeting.value.seq > state.seq) return;
     meeting.value = state;
+    online = new Set(state.onlineIds);
+    markOnline();
   }
 
   /** Opens a meeting: joins it while it runs, then loads its state. */
@@ -133,6 +145,8 @@ export const useMeetingStore = defineStore('meeting', () => {
       if (res.status !== 200) throw apiError(res);
       if (seq !== loadSeq) return;
       meeting.value = res.data;
+      online = new Set(res.data.onlineIds);
+      markOnline();
     } catch (e) {
       if (seq === loadSeq) loadError.value = errorCode(e);
     }
@@ -162,16 +176,17 @@ export const useMeetingStore = defineStore('meeting', () => {
       case 'participant.joined': {
         const joined = p.participant as ParticipantDto;
         const existing = m.participants.find((x) => x.id === joined.id);
-        if (existing) Object.assign(existing, { ...joined, online: existing.online });
-        else m.participants.push(joined);
+        if (existing) Object.assign(existing, joined);
+        else m.participants.push({ ...joined });
+        markOnline();
         m.icebreaker.order = p.order as string[];
         break;
       }
-      case 'presence.changed': {
-        const participant = m.participants.find((x) => x.id === p.userId);
-        if (participant) participant.online = Boolean(p.online);
+      case 'presence.changed':
+        if (p.online) online.add(p.userId as string);
+        else online.delete(p.userId as string);
+        markOnline();
         break;
-      }
       case 'facilitator.changed': {
         m.facilitatorId = p.facilitatorId as string;
         const name = participantsById.value.get(m.facilitatorId)?.displayName ?? '';

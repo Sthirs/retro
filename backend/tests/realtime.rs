@@ -339,3 +339,60 @@ async fn task_changes_reach_the_team_channel() {
         created["seq"].as_i64().unwrap() + 1
     );
 }
+
+#[tokio::test]
+async fn people_in_the_room_are_present_before_their_join_lands() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let bob_id = user_id(&app, &bob).await;
+    let team = create_team(&app, &alice, "Platform").await;
+    join_team(&app, &alice, team, &bob).await;
+    let meeting = app
+        .call(
+            "POST",
+            &format!("/api/v1/teams/{team}/meetings"),
+            &alice,
+            None,
+        )
+        .await
+        .json();
+    let m = meeting["id"].as_str().unwrap().to_owned();
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+
+    // Bob's room subscribes first, then joins.
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+    let online = loop {
+        let event = next_of(&mut alice_socket, "presence.changed").await;
+        if event["payload"]["userId"] == bob_id {
+            break event;
+        }
+    };
+    assert_eq!(online["payload"]["online"], true);
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    assert!(
+        state["onlineIds"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::String(bob_id.clone()))
+    );
+
+    let res = app
+        .call("POST", &format!("/api/v1/meetings/{m}/join"), &bob, None)
+        .await;
+    let bob_entry = res.json()["participants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == bob_id)
+        .unwrap()
+        .clone();
+    assert_eq!(bob_entry["online"], true);
+}

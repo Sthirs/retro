@@ -98,6 +98,34 @@ describe('meeting store', () => {
     expect(store.isActive).toBe(false);
   });
 
+  it('keeps presence that arrives before the join', async () => {
+    const { store } = await opened();
+    const dana = { ...BOB, id: '0190a4e0-0000-7000-8000-000000000004', displayName: 'Dana Neri' };
+    store.apply({
+      type: 'presence.changed',
+      channel,
+      seq: null,
+      payload: { userId: dana.id, online: true },
+    });
+    store.apply({
+      type: 'participant.joined',
+      channel,
+      seq: 3,
+      payload: {
+        participant: participant(dana, { online: false }),
+        order: [ALICE.id, BOB.id, dana.id],
+      },
+    });
+    expect(store.participantsById.get(dana.id)?.online).toBe(true);
+    store.apply({
+      type: 'presence.changed',
+      channel,
+      seq: null,
+      payload: { userId: dana.id, online: false },
+    });
+    expect(store.participantsById.get(dana.id)?.online).toBe(false);
+  });
+
   it('reloads the snapshot after a gap or a resync', async () => {
     const { store, calls } = await opened({
       [STATE]: { status: 200, body: meetingState({ seq: 9, phase: 'group' }) },

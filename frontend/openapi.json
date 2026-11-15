@@ -3068,6 +3068,7 @@
           "phase",
           "facilitatorId",
           "participants",
+          "onlineIds",
           "greeting",
           "question",
           "icebreaker",
@@ -3101,6 +3102,14 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "onlineIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Everyone in the meeting room right now, including people whose join\nis still on its way."
           },
           "participants": {
             "type": "array",

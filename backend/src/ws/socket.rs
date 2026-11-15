@@ -97,6 +97,11 @@ async fn serve(socket: WebSocket, state: AppState, user_id: Uuid) {
     }
 }
 
+/// An error about a channel, in the shape of every message (spec §11.1).
+fn error_message(channel: &str, code: &str) -> serde_json::Value {
+    json!({ "type": "error", "channel": channel, "seq": null, "payload": { "code": code } })
+}
+
 fn text_message(value: serde_json::Value) -> Message {
     Message::Text(Utf8Bytes::from(value.to_string()))
 }
@@ -116,8 +121,7 @@ async fn command(
     out: &mpsc::Sender<Message>,
     subscriptions: &mut HashMap<String, Subscription>,
 ) -> serde_json::Value {
-    let error =
-        |channel: &str, code: &str| json!({ "type": "error", "channel": channel, "code": code });
+    let error = error_message;
     let Ok(command) = serde_json::from_str::<Command>(text) else {
         return error("", "invalid_message");
     };
@@ -202,5 +206,23 @@ async fn forward(
         if out.send(message).await.is_err() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn errors_have_the_shape_of_every_message() {
+        assert_eq!(
+            error_message("meeting:x", "meeting_not_found"),
+            json!({
+                "type": "error",
+                "channel": "meeting:x",
+                "seq": null,
+                "payload": { "code": "meeting_not_found" },
+            })
+        );
     }
 }

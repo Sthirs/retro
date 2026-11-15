@@ -125,13 +125,23 @@ async fn subscriptions_are_limited_to_team_members() {
     let team = create_team(&app, &alice, "Platform").await;
     let mut socket = connect(&addr, &ticket(&app, &bob).await).await;
 
-    let reply = subscribe(&mut socket, &format!("team:{team}")).await;
-    assert_eq!(reply["type"], "error");
-    assert_eq!(reply["code"], "team_not_found");
+    // Errors have the shape of every message: the code is in the payload.
+    let channel = format!("team:{team}");
+    let reply = subscribe(&mut socket, &channel).await;
+    assert_eq!(
+        reply,
+        json!({
+            "type": "error",
+            "channel": channel,
+            "seq": null,
+            "payload": { "code": "team_not_found" },
+        })
+    );
     let reply = subscribe(&mut socket, "nonsense").await;
-    assert_eq!(reply["code"], "invalid_channel");
+    assert_eq!(reply["payload"]["code"], "invalid_channel");
     let reply = subscribe(&mut socket, &format!("meeting:{}", Uuid::now_v7())).await;
-    assert_eq!(reply["code"], "meeting_not_found");
+    assert_eq!(reply["payload"]["code"], "meeting_not_found");
+    assert!(reply.get("code").is_none());
 }
 
 #[tokio::test]

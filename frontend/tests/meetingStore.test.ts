@@ -171,4 +171,40 @@ describe('meeting store', () => {
     expect(store.previousSpeaker).toBeNull();
     expect(calls.at(-1)?.body).toEqual({ userId: ALICE.id });
   });
+
+  it('shows the code of a refused or ended subscription, from the payload', async () => {
+    const { store } = await opened();
+    store.apply({
+      type: 'error',
+      channel,
+      seq: null,
+      payload: { code: 'meeting_not_found' },
+    });
+    expect(store.loadError).toBe('meeting_not_found');
+    expect(store.meeting).toBeNull();
+    // Later events find no room to update.
+    store.apply({ type: 'meeting.renamed', channel, seq: 3, payload: { title: 'Leak' } });
+    expect(store.meeting).toBeNull();
+  });
+
+  it('falls back to "unknown" for an error without a code', async () => {
+    const { store } = await opened();
+    store.apply({ type: 'error', channel, seq: null, payload: {} });
+    expect(store.loadError).toBe('unknown');
+  });
+
+  it('does not queue an error that arrives before the snapshot', async () => {
+    const store = useMeetingStore();
+    useSessionStore().setUser({ ...ALICE, pictureVersion: null });
+    await nextTick();
+    mockFetch({ [JOIN]: { status: 200, body: meetingState() } });
+    const opening = store.open(MEETING_ID);
+    store.apply({ type: 'error', channel, seq: null, payload: { code: 'internal' } });
+    expect(store.loadError).toBe('internal');
+    await opening;
+    // The snapshot that answers afterwards is dropped: the room is not live.
+    expect(store.meeting).toBeNull();
+    expect(store.loadError).toBe('internal');
+    expect(store.loading).toBe(false);
+  });
 });

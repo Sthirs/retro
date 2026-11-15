@@ -334,4 +334,16 @@ describe('Meeting room', () => {
     const { wrapper } = await open();
     expect(wrapper.text()).toContain('This meeting no longer exists');
   });
+
+  it('leaves the room when the server ends the subscription', async () => {
+    mockFetch(routes());
+    const { wrapper } = await open();
+    const socket = await openSocket();
+    expect(wrapper.get('h1').text()).toBe('Icebreaker');
+    // E.g. an admin removed this user from the team (spec §11.1).
+    socket.emit({ type: 'error', channel, payload: { code: 'meeting_not_found' } });
+    await flushPromises();
+    expect(wrapper.text()).toContain('This meeting no longer exists');
+    expect(wrapper.find('[role="toolbar"]').exists()).toBe(false);
+  });
 });

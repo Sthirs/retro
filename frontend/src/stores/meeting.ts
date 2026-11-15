@@ -159,6 +159,18 @@ export const useMeetingStore = defineStore('meeting', () => {
       void resync();
       return;
     }
+    // The server refused or ended the subscription (spec §11.1: the code is
+    // in the payload), e.g. the user was removed from the team. The room
+    // cannot stay live: drop the snapshot, and any load in flight, and show
+    // the error instead.
+    if (event.type === 'error') {
+      loadSeq++;
+      meeting.value = null;
+      queued = [];
+      loading.value = false;
+      loadError.value = (event.payload?.code as string | undefined) ?? 'unknown';
+      return;
+    }
     const m = meeting.value;
     if (!m) {
       queued.push(event);
@@ -206,9 +218,6 @@ export const useMeetingStore = defineStore('meeting', () => {
       case 'meeting.ended':
         m.status = MeetingStatus.ended;
         m.endedAt = p.endedAt as string;
-        break;
-      case 'error':
-        loadError.value = (p?.code as string | undefined) ?? 'unknown';
         break;
     }
   }

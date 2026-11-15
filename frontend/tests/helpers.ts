@@ -13,22 +13,36 @@ export interface FakeRoute {
   body?: unknown;
 }
 
-/** Routes `fetch` calls by "METHOD path" to canned JSON responses. */
+/** Routes `fetch` calls by "METHOD path" to canned responses (JSON, or a `Blob` body as is). */
 export function mockFetch(routes: Record<string, FakeRoute | (() => FakeRoute)>) {
   const calls: { method: string; path: string; body: unknown; headers: Headers }[] = [];
   const fetchMock = vi.fn(async (input: Request) => {
     const url = new URL(input.url);
     const key = `${input.method} ${url.pathname}`;
-    const text = await input.clone().text();
+    const isJson = input.headers.get('Content-Type')?.includes('json') ?? false;
+    let body: unknown;
+    if (isJson) {
+      const text = await input.clone().text();
+      body = text ? JSON.parse(text) : undefined;
+    } else {
+      const bytes = await input.clone().arrayBuffer();
+      body = bytes.byteLength > 0 ? bytes : undefined;
+    }
     calls.push({
       method: input.method,
       path: url.pathname + url.search,
-      body: text ? JSON.parse(text) : undefined,
+      body,
       headers: input.headers,
     });
     const route = routes[key];
     const resolved = typeof route === 'function' ? route() : route;
     if (!resolved) return new Response(null, { status: 404 });
+    if (resolved.body instanceof Blob) {
+      return new Response(resolved.body, {
+        status: resolved.status,
+        headers: { 'Content-Type': resolved.body.type || 'application/octet-stream' },
+      });
+    }
     return new Response(resolved.body === undefined ? null : JSON.stringify(resolved.body), {
       status: resolved.status,
       headers: { 'Content-Type': 'application/json' },
@@ -105,9 +119,17 @@ export const me = (
   teams: unknown[] = [],
   invitations: unknown[] = [],
   user: typeof ALICE = ALICE,
+  extra: Record<string, unknown> = {},
 ) => ({
   status: 200,
-  body: { user, teams, invitations },
+  body: {
+    user,
+    teams,
+    invitations,
+    memberSince: '2026-09-29T10:00:00Z',
+    signInMethod: 'password',
+    ...extra,
+  },
 });
 
 export const problem = (status: number, code: string) => ({

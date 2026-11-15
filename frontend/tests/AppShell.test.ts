@@ -128,4 +128,44 @@ describe('app shell', () => {
       ?.trigger('click');
     await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'));
   });
+
+  it('keeps the remembered team in the shell on /account', async () => {
+    localStorage.setItem(`retro.lastTeam.${ALICE.id}`, OTHER_TEAM_ID);
+    mockFetch(base());
+    const { wrapper, router } = await renderAt('/account');
+    expect(wrapper.find('[data-testid="team-selector"]').text()).toContain('Mobile Squad');
+    const hrefs = wrapper.findAll('nav[aria-label="Team"] a').map((a) => a.attributes('href'));
+    expect(hrefs).toEqual([
+      `/teams/${OTHER_TEAM_ID}/meetings`,
+      `/teams/${OTHER_TEAM_ID}/tasks`,
+      `/teams/${OTHER_TEAM_ID}/settings`,
+    ]);
+    await wrapper.find('[data-testid="team-selector"]').trigger('click');
+    await wrapper
+      .findAll('[role="menuitem"]')
+      .find((i) => i.text().includes('Platform Team'))
+      ?.trigger('click');
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.fullPath).toBe(`/teams/${TEAM_ID}/meetings`),
+    );
+  });
+
+  it('shows no team navigation on /account without teams', async () => {
+    mockFetch(base({ 'GET /api/v1/me': me([]) }));
+    const { wrapper } = await renderAt('/account');
+    expect(wrapper.find('nav[aria-label="Team"]').exists()).toBe(false);
+    expect(wrapper.find('h1').text()).toBe('Your account');
+    expect(wrapper.find('[data-testid="team-selector"]').text()).toContain('No team yet');
+  });
+
+  it('links to the account page from the user menu and closes the menu', async () => {
+    mockFetch(base());
+    const { wrapper, router } = await renderAt(`/teams/${TEAM_ID}/meetings`);
+    await wrapper.find('button[aria-label="User menu"]').trigger('click');
+    const link = wrapper.find('#user-menu a[href="/account"]');
+    expect(link.text()).toBe('Your account');
+    await link.trigger('click');
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('account'));
+    expect(wrapper.find('#user-menu').isVisible()).toBe(false);
+  });
 });

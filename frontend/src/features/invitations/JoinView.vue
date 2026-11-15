@@ -2,7 +2,7 @@
 /** `/join/:joinToken`: joins the team behind the link (spec §6.2). */
 import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import { api, type TeamRefDto } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
@@ -10,6 +10,7 @@ import AppButton from '@/components/ui/AppButton.vue';
 import LinkLayout from '@/features/invitations/LinkLayout.vue';
 import LinkStateCard from '@/features/invitations/LinkStateCard.vue';
 import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 type State =
   | { kind: 'joining' }
@@ -18,14 +19,20 @@ type State =
   | { kind: 'error'; code: string };
 
 const { t } = useI18n();
+const errorText = useErrorText();
 const route = useRoute();
+const router = useRouter();
 const teams = useTeamsStore();
 const state = ref<State>({ kind: 'joining' });
 
 onMounted(async () => {
   try {
     const res = await api.joinTeam(encodeURIComponent(String(route.params.joinToken)));
-    if (res.status === 200) {
+    if (res.status === 200 && res.data.alreadyMember) {
+      // Nothing was joined: open the team, as an invitation link does.
+      await teams.load().catch(() => undefined);
+      await router.replace({ name: 'team-meetings', params: { teamId: res.data.team.id } });
+    } else if (res.status === 200) {
       await teams.load();
       state.value = { kind: 'joined', team: res.data.team };
     } else if (res.status === 404) {
@@ -71,7 +78,7 @@ onMounted(async () => {
       v-else
       icon="alert"
       :title="t('linkStates.joinInvalidTitle')"
-      :text="t(`errors.${state.code}`)"
+      :text="errorText(state.code)"
     >
       <AppButton to="/">{{ t('common.backToRetro') }}</AppButton>
     </LinkStateCard>

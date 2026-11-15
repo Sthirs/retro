@@ -4,11 +4,11 @@ use std::time::Instant;
 
 use axum::{
     Router,
-    extract::{MatchedPath, Request},
+    extract::{DefaultBodyLimit, MatchedPath, Request},
     http::{HeaderName, HeaderValue, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
 };
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -16,7 +16,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::{api, openapi, state::AppState};
+use crate::{api, domain::pictures::PICTURE_MAX_BYTES, openapi, state::AppState};
 
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
@@ -29,9 +29,17 @@ pub fn router(state: AppState) -> Router {
         .route("/oidc", get(api::auth::oidc_start))
         .route("/oidc/callback", get(api::auth::oidc_callback));
 
-    let v1 = Router::new()
+    let mut v1 = Router::new()
         .nest("/auth", auth)
-        .route("/me", get(api::me::me))
+        .route("/me", get(api::me::me).patch(api::me::update_me))
+        // One byte over the limit, so the handler (not axum) rejects an
+        // oversize body with problem JSON.
+        .route(
+            "/me/picture",
+            put(api::me::put_picture)
+                .delete(api::me::delete_picture)
+                .layer(DefaultBodyLimit::max(PICTURE_MAX_BYTES + 1)),
+        )
         .route(
             "/teams",
             get(api::teams::list_teams).post(api::teams::create_team),
@@ -51,6 +59,12 @@ pub fn router(state: AppState) -> Router {
             "/teams/{team_id}/join-link",
             get(api::teams::get_join_link).post(api::teams::update_join_link),
         )
+        .route("/teams/{team_id}/tasks", get(api::tasks::list_tasks))
+        .route(
+            "/tasks/{task_id}",
+            patch(api::tasks::update_task).delete(api::tasks::delete_task),
+        )
+        .route("/tasks/{task_id}/position", put(api::tasks::move_task))
         .route(
             "/teams/{team_id}/invitations",
             get(api::invitations::list_invitations).post(api::invitations::create_invitation),
@@ -72,13 +86,29 @@ pub fn router(state: AppState) -> Router {
             post(api::invitations::decline_invitation),
         )
         .route("/join/{token}", post(api::join::join_team))
-        .route("/openapi.json", get(openapi_json))
+        .route("/openapi.json", get(openapi_json));
+    // Development-only: refused in production by the configuration.
+    if state.config.seed_dev_users {
+        v1 = v1.route("/dev/teams/{team_id}/tasks", post(api::dev::seed_task));
+    }
+    let v1 = v1
         // Responses carry tokens and personal data (access and refresh tokens,
         // invitation and join links): never cache any of them.
         .layer(SetResponseHeaderLayer::overriding(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),
         ));
+
+    // Picture bytes are immutable per `pictureVersion`, so the handler sets its
+    // own `Cache-Control` on success. Error responses (401, 404) get `no-store`
+    // like every other `/api/v1` response.
+    let pictures = Router::new()
+        .route("/users/{user_id}/picture", get(api::me::get_picture))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        ));
+    let v1 = v1.merge(pictures);
 
     Router::new()
         .route("/healthz", get(api::health::healthz))

@@ -41,4 +41,8 @@ We will test at three levels:
 
 - Positive: endpoint behaviour is verified against PostgreSQL on every run.
 - Negative: backend tests need Docker or Podman locally.
+- Frontend tests run on happy-dom. The exception is `frontend/tests/RichText.test.ts`, which needs a
+  spec-complete DOM for DOMPurify (it misbehaves under happy-dom, e.g. empty node names strip every
+  tag); it opts into jsdom with a per-file `// @vitest-environment jsdom` header. Everything else
+  stays on happy-dom.
 - Follow-ups: WebSocket integration tests; accessibility checks in e2e.

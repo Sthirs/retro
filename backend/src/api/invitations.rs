@@ -104,7 +104,11 @@ impl From<invitations::PendingForUser> for PendingInvitationDto {
             invited_by: p
                 .inviter_id
                 .zip(p.inviter_name)
-                .map(|(id, display_name)| PersonDto { id, display_name }),
+                .map(|(id, display_name)| PersonDto {
+                    id,
+                    display_name,
+                    picture_version: None,
+                }),
             expires_at: p.expires_at,
         }
     }
@@ -291,7 +295,7 @@ pub async fn decline_invitation(
     record_token_failure(
         &state.token_limiter,
         user.id,
-        invitations::decline(&state.db, &token).await,
+        invitations::decline(&state.db, &token, user.id).await,
     )?;
     Ok(StatusCode::NO_CONTENT)
 }

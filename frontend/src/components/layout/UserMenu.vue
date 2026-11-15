@@ -5,20 +5,22 @@
  */
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
+import { RouterLink, useRouter } from 'vue-router';
 
-import { errorCode } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
 import type { IconName } from '@/components/icons';
 import AppAlert from '@/components/ui/AppAlert.vue';
 import TeamTile from '@/components/TeamTile.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
+import { usePendingInvitations } from '@/composables/usePendingInvitations';
 import { usePopover } from '@/composables/usePopover';
-import { applyThemePreference, readThemePreference, type ThemePreference } from '@/lib/theme';
+import { useThemePreference, type ThemePreference } from '@/lib/theme';
 import { useSessionStore } from '@/stores/session';
 import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 const { t } = useI18n();
+const errorText = useErrorText();
 const router = useRouter();
 const session = useSessionStore();
 const teams = useTeamsStore();
@@ -26,9 +28,8 @@ const teams = useTeamsStore();
 const root = ref<HTMLElement | null>(null);
 const trigger = ref<HTMLButtonElement | null>(null);
 const { open, close } = usePopover(root, trigger);
-const theme = ref<ThemePreference>(readThemePreference());
-const busy = ref<string | null>(null);
-const error = ref<string | null>(null);
+const { theme, setTheme } = useThemePreference();
+const { busy, error, accept, decline } = usePendingInvitations({ onAccepted: () => close() });
 
 const count = computed(() => teams.invitations.length);
 
@@ -38,47 +39,18 @@ const themes: { value: ThemePreference; icon: IconName }[] = [
   { value: 'system', icon: 'monitor' },
 ];
 
-function setTheme(value: ThemePreference): void {
-  theme.value = value;
-  applyThemePreference(value);
-}
-
 function toggle(): void {
   open.value = !open.value;
   error.value = null;
 }
 
-async function accept(token: string): Promise<void> {
-  busy.value = token;
-  error.value = null;
-  try {
-    const team = await teams.acceptInvitation(token);
-    close();
-    await router.push({ name: 'team-meetings', params: { teamId: team.id } });
-  } catch (e) {
-    error.value = errorCode(e);
-    await teams.load().catch(() => undefined);
-  } finally {
-    busy.value = null;
-  }
-}
-
-async function decline(token: string): Promise<void> {
-  busy.value = token;
-  error.value = null;
-  try {
-    await teams.declineInvitation(token);
-  } catch (e) {
-    error.value = errorCode(e);
-    await teams.load().catch(() => undefined);
-  } finally {
-    busy.value = null;
-  }
-}
-
 async function logout(): Promise<void> {
   close();
-  await session.logout();
+  try {
+    await session.logout();
+  } catch {
+    // The session is cleared locally even when the request fails.
+  }
   await router.replace({ name: 'login' });
 }
 
@@ -107,7 +79,11 @@ defineExpose({ toggle });
       aria-controls="user-menu"
       @click="toggle"
     >
-      <UserAvatar :user-id="session.user.id" :name="session.user.displayName" />
+      <UserAvatar
+        :user-id="session.user.id"
+        :name="session.user.displayName"
+        :picture-version="session.user.pictureVersion"
+      />
       <span class="trigger__name" data-testid="current-user">{{ session.user.displayName }}</span>
       <AppIcon name="chevronDown" :size="16" />
     </button>
@@ -120,7 +96,12 @@ defineExpose({ toggle });
       :aria-label="t('topBar.userMenu')"
     >
       <div class="panel__identity">
-        <UserAvatar :user-id="session.user.id" :name="session.user.displayName" :size="40" />
+        <UserAvatar
+          :user-id="session.user.id"
+          :name="session.user.displayName"
+          :picture-version="session.user.pictureVersion"
+          :size="40"
+        />
         <div class="panel__who">
           <span class="panel__name">{{ session.user.displayName }}</span>
           <span class="panel__email">{{ session.user.email }}</span>
@@ -160,7 +141,7 @@ defineExpose({ toggle });
           </li>
         </ul>
         <div v-if="error" class="panel__error">
-          <AppAlert>{{ t(`errors.${error}`) }}</AppAlert>
+          <AppAlert>{{ errorText(error) }}</AppAlert>
         </div>
       </template>
 
@@ -183,6 +164,10 @@ defineExpose({ toggle });
       </div>
 
       <div class="panel__separator" />
+      <RouterLink :to="{ name: 'account' }" class="panel__item" @click="close()">
+        <AppIcon name="user" />
+        {{ t('userMenu.account') }}
+      </RouterLink>
       <button type="button" class="panel__item" @click="logout">
         <AppIcon name="logout" />
         {{ t('userMenu.logout') }}
@@ -412,6 +397,7 @@ defineExpose({ toggle });
   font-size: 14px;
   font-weight: 500;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
 }
 .panel__item:hover {

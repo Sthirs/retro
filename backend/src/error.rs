@@ -48,6 +48,12 @@ pub enum AppError {
     /// The resource existed but can no longer be used, e.g. `invitation_expired`.
     #[error("gone: {0}")]
     Gone(&'static str),
+    /// An uploaded body exceeds its size limit, e.g. `picture_too_large`.
+    #[error("payload too large")]
+    PayloadTooLarge,
+    /// An uploaded body is not a supported media type.
+    #[error("unsupported media type")]
+    UnsupportedMediaType,
     #[error("service unavailable: {0}")]
     Unavailable(String),
     #[error(transparent)]
@@ -83,6 +89,16 @@ impl AppError {
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden", None),
             Self::Conflict(code) => (StatusCode::CONFLICT, code, None),
             Self::Gone(code) => (StatusCode::GONE, code, None),
+            Self::PayloadTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "picture_too_large",
+                Some("The picture must be 5 MB or smaller.".into()),
+            ),
+            Self::UnsupportedMediaType => (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_picture_type",
+                Some("The picture must be a PNG, JPEG, GIF or WebP image.".into()),
+            ),
             Self::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "unavailable", None),
             Self::Database(_) | Self::Internal(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal", None)

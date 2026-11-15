@@ -12,6 +12,7 @@ export const ICONS = {
   refresh: ['M21 12a9 9 0 1 1-2.6-6.4L21 8', 'M21 3v5h-5'],
   mail: ['rect:3,5,18,14,2', 'm3 7 9 6 9-6'],
   trash: ['M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6'],
+  user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'circle:12,7,4'],
   logout: ['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9'],
   users: [
     'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2',
@@ -28,7 +29,23 @@ export const ICONS = {
     'M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
   ],
   moon: ['M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'],
+  image: ['rect:3,3,18,18,2', 'circle:9,9,2', 'm21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21'],
+  lock: ['rect:4,11,16,10,2', 'M8 11V7a4 4 0 0 1 8 0v4'],
   monitor: ['rect:2,3,20,14,2', 'M8 21h8M12 17v4'],
+  bold: ['M6 4h8a4 4 0 0 1 0 8H6zM6 12h9a4 4 0 0 1 0 8H6z'],
+  italic: ['M19 4h-9M14 20H5M15 4 9 20'],
+  link: [
+    'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71',
+    'M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
+  ],
+  filter: ['M3 5h18l-7 8v6l-4 2v-8z'],
+  atSign: ['circle:12,12,4', 'M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8'],
+  pencil: ['M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z'],
+  move: ['M5 9 2 12l3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20'],
+  chevronRight: ['m9 6 6 6-6 6'],
+  moreVertical: ['circle:12,5,1.4', 'circle:12,12,1.4', 'circle:12,19,1.4'],
+  search: ['circle:11,11,7', 'm20 20-3.5-3.5'],
+  list: ['M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01'],
 } as const;
 
 export type IconName = keyof typeof ICONS;

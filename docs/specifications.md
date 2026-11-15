@@ -81,7 +81,7 @@ Authentication is performed by the **backend**, which issues Retro's own session
   1. a known identity signs in its user;
   2. otherwise, a user with the same (verified) email gets the identity linked;
   3. otherwise, a new user is created when auto-registration is on (`OIDC_AUTO_REGISTER`, default on), or the sign-in is refused.
-- `email`, display name and picture are synced from the provider's claims on each SSO sign-in.
+- `email` is synced from the provider's claims on each SSO sign-in. The display name is synced too, until the user sets their own on their account page. The `picture` claim is not displayed: provider-hosted images are blocked by the Content Security Policy.
 
 ### 3.3 Session
 
@@ -98,10 +98,12 @@ Authentication is performed by the **backend**, which issues Retro's own session
 
 ## 4. Users
 
-- A user has: id, email (unique), optional username (unique, local accounts), display name, avatar URL, optional password hash, created/updated timestamps, and zero or more linked SSO identities (§3.2).
+- A user has: id, email (unique), optional username (unique, local accounts), display name, avatar URL (the provider's picture claim, stored but not displayed), optional password hash, created/updated timestamps, and zero or more linked SSO identities (§3.2).
 - A user can belong to zero or more teams.
 - A user with no teams sees an empty state that invites them to create a team or accept an invitation.
 - The user's email is the key used to match pending invitations (see §6).
+- **Your account** page (`/account`, from the user menu): display name (editable, trimmed, 1–80 characters), picture (upload PNG, JPEG, GIF or WebP up to 5 MB, or remove; initials otherwise), email (read-only), sign-in method, member since, the user's teams (open, leave, create), pending invitations (accept, decline), preferences (theme, language, team opened by default on this browser) and log out.
+- A user's picture is visible to themselves and to members of teams they share.
 
 ---
 
@@ -140,7 +142,8 @@ Authentication is performed by the **backend**, which issues Retro's own session
 - The invitation appears in the invitee's **pending invitations** (user menu and onboarding screen) when they log in with an account whose email matches. They can accept or decline it there. Accepting makes them a member.
 - After creating an invitation, the inviter can copy its personal accept link (`/invite/{token}`) and share it through any channel. Only the inviter and admins can see that link; other members see the pending invitation without it. Opening the link takes the user through login (if needed) and then the acceptance step. The token in the link is the credential: whoever holds the link can accept it, whatever the email of their account. The acceptance step shows the email the invitation was sent to.
 - Invitations can be revoked by the inviter or by an admin. Accepting a revoked or expired invitation fails with a clear message.
-- When a user becomes a member by any route (invitation or join link), the open invitations to that team for their email are closed as accepted. A user who is already a member and opens someone else's invitation link does not use it up.
+- When a user becomes a member by any route (invitation or join link), the open invitations to that team for their email are closed as accepted. A user who is already a member and opens someone else's invitation link does not use it up: accepting or declining it leaves it open.
+- When a member leaves or is removed, the open invitations whose link they could see (all of them for an admin, their own for a member) get a new token, so a former member cannot rejoin with a link they knew. The invitations stay open: the invitee can still accept them from their pending invitations, and the inviter and admins can copy the new link.
 
 ### 6.2 Join link
 
@@ -167,7 +170,8 @@ Authentication is performed by the **backend**, which issues Retro's own session
 - **Team selector** (dropdown) listing the user's teams. Its last entry is **"+ Add team"**, which opens a dialog to create a team.
 - The selected team is the **context of the whole UI**: meetings, tasks and settings all refer to it. Changing team re-routes to the same section of the new team.
 - The selected team is part of the URL (`/teams/:teamId/...`) and the last used team is remembered per user (stored in the browser).
-- User menu on the right: avatar, name, pending invitations, logout.
+- **Default team**: in *Your account* the user picks the team Retro opens after sign-in (and at `/`). Either a specific team, or **Last used** (the default), which opens the last used team. The choice is stored per user in the browser; a pinned team the user has left falls back to the last used one.
+- User menu on the right: avatar, name, pending invitations, theme, **Your account**, logout.
 
 ### 7.2 Left menu
 
@@ -281,6 +285,7 @@ The individual meeting phases cannot be replayed.
 - **Center**: **one group at a time** — the group title and all its reflections (rich text, anonymous, with column label).
 - **Reactions**: participants can add emoji reactions to each reflection. Multiple different reactions per reflection are allowed, and a user can add several different emojis to the same reflection (one of each kind). Counts are shown per emoji and reacting is a toggle.
 - **Right panel — Tasks**: participants create tasks linked to the current group. Each task has rich text (same editor as reflections, including pasted images) with **@mentions** of team members, plus its author and creation time. New tasks start in the **Active** column of the board.
+  - *Interim:* until image attachments ship, task text is plain rich text (bold, italic, links, mentions); pasted images are a long-term goal (see ADR-0010's follow-ups).
 - **Navigation**: the facilitator moves to the **next** or **previous** group. Everyone follows the facilitator's current group. A participant can preview other groups locally without affecting the others.
 - After the last group, the facilitator is prompted to **End meeting**.
 
@@ -295,15 +300,16 @@ The individual meeting phases cannot be replayed.
 - Task card:
   - creation date (and source meeting, as a link);
   - rich text (including images), which can contain **@mentions** of team members (rendered as chips; mentioned users can filter "my tasks"). Mentions do **not** trigger notifications;
+    - *Interim:* until image attachments ship, task text is plain rich text (bold, italic, links, mentions); images are a long-term goal (see ADR-0010's follow-ups).
   - author at the bottom (avatar + name).
 - Cards can be **dragged and dropped** between columns and reordered within a column. Any team member can move cards.
-- Changes are broadcast in real time to anyone viewing the board.
-- The task author and team admins can edit or delete a task.
-- Filters: mentioned user, author, meeting.
+- Changes are broadcast in real time to anyone viewing the board. Until the real-time hub (§11) exists, the board refreshes when the window regains focus.
+- Any team member can edit or delete any task.
+- Filters: mentioned users (several can be picked; a task matches if it mentions any of them), author, meeting. Filters combine with AND.
 
 ### 10.2 Ordering
 
-- Each task has `status` and a `position`. Positions use fractional indexing (or sparse integers) so that a move updates a single row.
+- Each task has `status` and a `position`. Positions are fractional-index string keys (base 62, compared byte-wise), so that a move updates a single row. A move whose neighbours are out of date (`afterId` not before `beforeId`) conflicts and the client reloads; otherwise the card lands directly after `afterId`, or directly before `beforeId`, whatever other tasks (for example ones hidden by a filter) sit in between.
 
 ---
 
@@ -400,7 +406,7 @@ Constraints and mitigations:
 | Group cards, rename groups | ✗ | ✓ | ✓ | ✓ |
 | Vote, react, create tasks | ✗ | ✓ | ✓ | ✓ |
 | Move tasks on board | ✗ | ✓ | ✓ | ✓ |
-| Edit/delete task | ✗ | author | ✓ | — |
+| Edit/delete task | ✗ | ✓ | ✓ | ✓ |
 
 \* Team admins cannot perform facilitator actions directly. They first **take over the facilitator role**, which they can do at any time, and then act as the facilitator.
 
@@ -411,9 +417,12 @@ Constraints and mitigations:
 The backend owns the schema and manages it through ORM migrations. All IDs are UUIDv7 and all timestamps are `timestamptz` (UTC).
 
 ```text
-users(id, email UNIQUE, username UNIQUE NULL, display_name, avatar_url NULL,
-      password_hash NULL, created_at, updated_at)
+users(id, email UNIQUE, username UNIQUE NULL, display_name, display_name_custom BOOL DEFAULT false,
+      avatar_url NULL, -- provider picture claim; not displayed (see user_pictures)
+      picture_version NULL, password_hash NULL, created_at, updated_at)
     -- email and username are stored lower-cased
+
+user_pictures(user_id PK → users, content_type, size_bytes, sha256, data BYTEA, created_at)
 
 user_identities(id, user_id → users, issuer, subject, created_at)
     UNIQUE(issuer, subject)
@@ -461,8 +470,9 @@ reactions(reflection_id, user_id, emoji, created_at)
     PK(reflection_id, user_id, emoji)
 
 tasks(id, team_id, meeting_id NULL, group_id NULL, author_id → users,
-      content, status ENUM('future','stuck','active','done'), position,
+      content, status ENUM('future','stuck','active','done'), position TEXT,
       created_at, updated_at)
+    UNIQUE(team_id, status, position)
 
 task_mentions(task_id, user_id)  PK(task_id, user_id)
 
@@ -497,6 +507,10 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | GET | `/auth/oidc?redirect=&remember=` | Starts single sign-on (redirect to the provider) |
 | GET | `/auth/oidc/callback` | Provider callback; sets the refresh cookie, redirects to `/auth/callback` (or `/login?error=…`) |
 | GET | `/me` | Current user, their teams and pending invitations |
+| PATCH | `/me` | `{ displayName }` |
+| PUT | `/me/picture` | Raw image body |
+| DELETE | `/me/picture` | Remove the picture |
+| GET | `/users/{id}/picture` | Picture; owner or teammates |
 | POST | `/ws-ticket` | Short-lived ticket to open the WebSocket |
 
 ### 14.2 Teams
@@ -564,9 +578,9 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | --- | --- | --- |
 | GET | `/teams/{teamId}/tasks` | Board, with filters |
 | POST | `/meetings/{id}/tasks` | Create a task (Discuss phase) |
-| PATCH | `/tasks/{tid}` | Edit content (author/admin) |
-| PUT | `/tasks/{tid}/position` | `{ status, before_id?, after_id? }` |
-| DELETE | `/tasks/{tid}` | Delete (author/admin) |
+| PATCH | `/tasks/{tid}` | Edit content |
+| PUT | `/tasks/{tid}/position` | `{ status, beforeId?, afterId? }`: the moved task ends up directly after `afterId`, or directly before `beforeId` when only that is given; with neither, at the end of the column. A stale pair (`afterId` not before `beforeId`) answers 409 `stale_position` |
+| DELETE | `/tasks/{tid}` | Delete |
 
 ### 14.6 Operational
 
@@ -602,6 +616,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 /teams/:teamId/meetings/:id     → meeting room (phase-driven view), or summary if ended
 /teams/:teamId/tasks            → task board
 /teams/:teamId/settings         → team settings
+/account                        → your account
 /                               → redirect to the last used team, or onboarding
 ```
 
@@ -744,6 +759,7 @@ The full guide is [`docs/development.md`](development.md) (ADR-0007).
 - **Minikube** (ingress addon) provides a local Kubernetes cluster. The same Helm chart deploys the application into it, with the `values-dev.yaml` overlay. The application is served at `retro.<minikube ip>.nip.io`.
 - In development, **PostgreSQL** (ephemeral) and **dex** (OIDC provider, served under `/dex` on the application host) run inside Minikube, rendered by the chart only in dev mode.
 - **Seed users**: in dev mode the backend seeds at least two users (`alice`, `bob`, password `password`) at startup. dex has the same users, so each can sign in with a password or through single sign-on. dex also has `carol@retro.local`, who exists only there and can sign in only through single sign-on.
+- **Demo data**: in dev mode the backend also creates demo teams with tasks for `alice` and `bob` at startup, only when they are missing, so a fresh cluster has populated boards. Further password-only users exist for the end-to-end suite, which never changes `alice`'s and `bob`'s data.
 - **Telepresence** lets you run the frontend and/or backend **locally** (with hot reload: `vite dev`, `cargo watch`) while they talk to the services in the cluster as if they were running there.
 - **Helper scripts** (`scripts/`):
 
@@ -783,7 +799,7 @@ Images and the Helm chart are pushed to the registry when a release is published
 
 - **Real-time latency**: events delivered to participants within 300 ms (p95) under normal load.
 - **Scale target**: meetings of up to 50 participants, 500 concurrent meetings per deployment.
-- **Security**: OWASP ASVS L1 baseline; server-side sanitization of rich text; CSP headers on the frontend; rate limiting on sign-in, invitation and join endpoints; every `/api/v1` response carries `Cache-Control: no-store`, since responses hold tokens (access, refresh, invitation and join links); size/type limits on uploads (default 5 MB, images only).
+- **Security**: OWASP ASVS L1 baseline; server-side sanitization of rich text; CSP headers on the frontend; rate limiting on sign-in, invitation and join endpoints; every `/api/v1` response carries `Cache-Control: no-store`, since responses hold tokens (access, refresh, invitation and join links), except successful image responses (`GET /users/{id}/picture` and, later, `GET /attachments/{id}`), which are served `private, immutable` and keyed by version, and carry `X-Content-Type-Options: nosniff` (their error responses stay `no-store`); size/type limits on uploads (default 5 MB, images only).
 - **Privacy**: reflection authorship is never exposed through the API or WS. Logs never contain reflection content or tokens.
 - **Accessibility**: WCAG 2.1 AA. Every drag-and-drop interaction has a keyboard alternative (e.g. a "Move to…" menu).
 - **Browser support**: latest two versions of Chrome, Firefox, Safari and Edge.

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** Placeholder for the Meetings and Tasks sections until they are built. */
+/** Placeholder for the Meetings section until it is built. */
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink, useRoute } from 'vue-router';
@@ -7,7 +7,6 @@ import { RouterLink, useRoute } from 'vue-router';
 import AppIcon from '@/components/AppIcon.vue';
 import { useTeamsStore } from '@/stores/teams';
 
-const props = defineProps<{ section: 'meetings' | 'tasks' }>();
 const { t } = useI18n();
 const route = useRoute();
 const teams = useTeamsStore();
@@ -17,7 +16,7 @@ const team = computed(() => teams.byId(String(route.params.teamId)));
 <template>
   <div v-if="team" class="page">
     <div class="page__header">
-      <h1 class="page__title">{{ t(`comingSoon.${props.section}`) }}</h1>
+      <h1 class="page__title">{{ t('comingSoon.meetings') }}</h1>
       <p class="page__subtitle">
         {{
           t('comingSoon.subtitle', { team: team.name, count: team.memberCount }, team.memberCount)
@@ -26,7 +25,7 @@ const team = computed(() => teams.byId(String(route.params.teamId)));
     </div>
     <section class="empty">
       <span class="empty__icon" aria-hidden="true">
-        <AppIcon :name="section === 'meetings' ? 'calendar' : 'tasks'" :size="26" />
+        <AppIcon name="calendar" :size="26" />
       </span>
       <p class="empty__text">{{ t('comingSoon.text') }}</p>
       <RouterLink :to="{ name: 'team-settings', params: { teamId: team.id } }" class="empty__link">

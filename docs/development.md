@@ -47,18 +47,42 @@ prints the host at any time.
 In dev mode the backend seeds `alice` and `bob` at startup, and dex has the same
 people, so each can sign in **with a password or through single sign-on**. `carol`
 exists only in dex: she can sign in **only through single sign-on**, and her Retro
-account is created on her first sign-in (`OIDC_AUTO_REGISTER`).
+account is created on her first sign-in (`OIDC_AUTO_REGISTER`). The backend also
+seeds `dana`, `erin`, `finn`, `gina` and `hugo` (password only, not in dex); the
+end-to-end suite owns them: `dana` for the account spec, `erin` and `finn` for the
+tasks spec, `gina` and `hugo` for the teams spec. The suite never changes `alice`,
+`bob` or `carol`, so they are yours to use by hand.
 
 | Username | Email | Name | Password | Sign-in methods |
 | --- | --- | --- | --- | --- |
 | `alice` | `alice@retro.local` | Alice Rossi | `password` | password, SSO |
 | `bob` | `bob@retro.local` | Bob Bianchi | `password` | password, SSO |
+| `dana` | `dana@retro.local` | Dana Neri | `password` | password only (not in dex) |
+| `erin` | `erin@retro.local` | Erin Gallo | `password` | password only (not in dex) |
+| `finn` | `finn@retro.local` | Finn Moretti | `password` | password only (not in dex) |
+| `gina` | `gina@retro.local` | Gina Ferri | `password` | password only (not in dex) |
+| `hugo` | `hugo@retro.local` | Hugo Conti | `password` | password only (not in dex) |
 | — | `carol@retro.local` | Carol Verdi | `password` (in dex) | SSO only |
 
 On the first SSO sign-in, the backend links the dex identity to the existing account
 with the same verified email ([ADR-0005](adr/0005-authentication.md)). The seed runs
 on every backend start and resets names and passwords; it is refused when
 `APP_ENV=production`.
+
+### Demo data
+
+After the users, the seed creates two demo teams with tasks in every column of
+the board, some mentioning the other person:
+
+| Team | Admin | Member |
+| --- | --- | --- |
+| Platform | `alice` | `bob` |
+| Mobile | `bob` | `alice` |
+
+A demo team is created only when its admin has no team with that name, so your
+changes survive restarts, and deleting or renaming a team brings a fresh copy on
+the next start. `scripts/db-reset.sh` restores the whole demo. The data is in
+`DEMO_TEAMS` in `backend/src/seed.rs`.
 
 ## Daily development
 
@@ -88,6 +112,31 @@ scripts/dev-frontend.sh                     # vite; HMR through the ingress host
 
 Run both intercepts, then `npm run dev` (backend and frontend side by side). Stop with
 `scripts/telepresence-leave.sh`.
+
+### Putting tasks on a local board
+
+Tasks are created in meetings, which do not exist yet, so the product has no API
+that creates a task. Until the Discuss phase does, a **development-only** route
+adds tasks to a board. The end-to-end tests use it to build each test's board, and
+you can use it to add tasks beyond the demo data:
+
+```bash
+curl -X POST "https://$(scripts/dev-host.sh)/api/v1/dev/teams/$TEAM_ID/tasks" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"status":"active","content":"<p>Write the retro notes</p>"}'
+```
+
+`POST /api/v1/dev/teams/{teamId}/tasks` takes `{ "status", "content", "authorId"? }`:
+`status` is `future`, `stuck`, `active` or `done`; `content` is rich text,
+sanitized like any task (mentions use
+`<span data-type="mention" data-id="<userId>" data-label="<name>">@Name</span>`);
+`authorId` defaults to the caller and must be a team member (`invalid_author`
+otherwise). The caller must be a member of the team. The task is appended to
+the end of the column and the response is the created task. The route exists
+only when `SEED_DEV_USERS=true`, which configuration refuses in production, and
+is not part of the OpenAPI contract. The end-to-end suite uses it (`seedTask` in
+`tests/e2e/api.ts`), signing in with `POST /api/v1/auth/login` to get the bearer
+token. Remove it once meetings create tasks.
 
 ### Testing a rebuilt image
 
@@ -165,7 +214,7 @@ The chart sets them from `values.yaml` (ConfigMap and Secrets).
 | `OIDC_BUTTON_TEXT` | `Continue with single sign-on` | |
 | `OIDC_AUTO_REGISTER` | `true` | Create accounts for unknown SSO users |
 | `OIDC_CA_CERT_FILE` | — | PEM file of extra root CAs trusted for calls to the provider (chart: `oidc.caSecret`) |
-| `SEED_DEV_USERS` | `false` | Seed `alice` and `bob`; refused in production |
+| `SEED_DEV_USERS` | `false` | Seed `alice`, `bob`, `dana`, `erin` and `finn`; refused in production |
 
 The OIDC redirect URI to register with the provider is
 `<PUBLIC_URL>/api/v1/auth/oidc/callback`.

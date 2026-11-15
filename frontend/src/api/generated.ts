@@ -30,6 +30,11 @@ export interface AuthConfig {
 export interface PersonDto {
   displayName: string;
   id: string;
+  /**
+   * Content hash of the uploaded picture; `null` when there is none.
+   * @nullable
+   */
+  pictureVersion?: string | null;
 }
 
 /**
@@ -137,6 +142,16 @@ export interface PendingInvitationDto {
 }
 
 /**
+ * How the user signs in.
+ */
+export type SignInMethod = (typeof SignInMethod)[keyof typeof SignInMethod];
+
+export const SignInMethod = {
+  password: 'password',
+  sso: 'sso',
+} as const;
+
+/**
  * A member's role in a team (spec §5.1).
  */
 export type Role = (typeof Role)[keyof typeof Role];
@@ -166,6 +181,11 @@ export interface UserDto {
   displayName: string;
   email: string;
   id: string;
+  /**
+   * Content hash of the uploaded picture; `null` when there is none.
+   * @nullable
+   */
+  pictureVersion?: string | null;
   /** @nullable */
   username?: string | null;
 }
@@ -173,6 +193,10 @@ export interface UserDto {
 export interface MeResponse {
   /** Open invitations sent to the user's email, newest first. */
   invitations: PendingInvitationDto[];
+  /** When the account was created. */
+  memberSince: string;
+  /** `sso` when the user has a linked identity, else `password`. */
+  signInMethod: SignInMethod;
   /** Teams the user belongs to, by name. */
   teams: TeamDto[];
   user: UserDto;
@@ -182,6 +206,38 @@ export interface MemberDto {
   joinedAt: string;
   role: Role;
   user: UserDto;
+}
+
+/**
+ * Where a task sits on the board (spec §9).
+ */
+export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
+
+export const TaskStatus = {
+  future: 'future',
+  stuck: 'stuck',
+  active: 'active',
+  done: 'done',
+} as const;
+
+/**
+ * Where to put a task.
+ */
+export interface MoveTaskRequest {
+  /**
+   * The task the moved one should land directly after, if any.
+   * @nullable
+   */
+  afterId?: string | null;
+  /**
+   * The task the moved one should land directly before when `afterId` is
+   * absent. With both, the task lands directly after `afterId`, and
+   * `beforeId` must be below it.
+   * @nullable
+   */
+  beforeId?: string | null;
+  /** The column to move the task to. */
+  status: TaskStatus;
 }
 
 /**
@@ -213,9 +269,39 @@ export interface SessionResponse {
   user: UserDto;
 }
 
+/**
+ * A task on the board.
+ */
+export interface TaskDto {
+  author: PersonDto;
+  /** Sanitized rich text. */
+  contentHtml: string;
+  createdAt: string;
+  id: string;
+  /** @nullable */
+  meetingId?: string | null;
+  mentions: PersonDto[];
+  /** Ordering key within the column; compare as plain strings. */
+  position: string;
+  status: TaskStatus;
+}
+
 export interface TeamNameRequest {
   /** 1–60 characters after trimming. */
   name: string;
+}
+
+export interface UpdateMeRequest {
+  /** New display name; trimmed, 1 to 80 characters. */
+  displayName: string;
+}
+
+/**
+ * New content for a task.
+ */
+export interface UpdateTaskRequest {
+  /** Rich text; sanitized by the server. */
+  content: string;
 }
 
 export type OidcStartParams = {
@@ -229,6 +315,20 @@ export type OidcCallbackParams = {
   code?: string;
   state?: string;
   error?: string;
+};
+
+export type ListTasksParams = {
+  /** Comma-separated user ids: only tasks mentioning any of them. */
+  mentioned?: string;
+  /** Only tasks written by this user. */
+  author?: string;
+  /** Only tasks attached to this meeting. */
+  meeting?: string;
+};
+
+export type GetPictureParams = {
+  /** The `pictureVersion` the caller knows. */
+  v?: string;
 };
 
 export type configResponse200 = {
@@ -672,6 +772,359 @@ export const me = async (options?: Parameters<typeof apiFetch>[1]): Promise<meRe
   return apiFetch<meResponse>(getMeUrl(), {
     ...options,
     method: 'GET',
+  });
+};
+
+export type updateMeResponse200 = {
+  data: UserDto;
+  status: 200;
+};
+
+export type updateMeResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type updateMeResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type updateMeResponseSuccess = updateMeResponse200 & {
+  headers: Headers;
+};
+export type updateMeResponseError = (updateMeResponse400 | updateMeResponse401) & {
+  headers: Headers;
+};
+
+export type updateMeResponse = updateMeResponseSuccess | updateMeResponseError;
+
+export const getUpdateMeUrl = () => {
+  return `/api/v1/me`;
+};
+
+/**
+ * @summary Changes the signed-in user's display name.
+ */
+export const updateMe = async (
+  updateMeRequest: UpdateMeRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<updateMeResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<updateMeResponse>(getUpdateMeUrl(), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateMeRequest),
+  });
+};
+
+export type putPictureResponse200 = {
+  data: UserDto;
+  status: 200;
+};
+
+export type putPictureResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type putPictureResponse413 = {
+  data: Problem;
+  status: 413;
+};
+
+export type putPictureResponse415 = {
+  data: Problem;
+  status: 415;
+};
+
+export type putPictureResponseSuccess = putPictureResponse200 & {
+  headers: Headers;
+};
+export type putPictureResponseError = (
+  putPictureResponse401 | putPictureResponse413 | putPictureResponse415
+) & {
+  headers: Headers;
+};
+
+export type putPictureResponse = putPictureResponseSuccess | putPictureResponseError;
+
+export const getPutPictureUrl = () => {
+  return `/api/v1/me/picture`;
+};
+
+/**
+ * @summary Replaces the signed-in user's picture with the request body.
+ */
+export const putPicture = async (
+  putPictureBody: Blob,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<putPictureResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<putPictureResponse>(getPutPictureUrl(), {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/*', ...getHeaders(options?.headers) },
+    body: putPictureBody,
+  });
+};
+
+export type deletePictureResponse200 = {
+  data: UserDto;
+  status: 200;
+};
+
+export type deletePictureResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type deletePictureResponseSuccess = deletePictureResponse200 & {
+  headers: Headers;
+};
+export type deletePictureResponseError = deletePictureResponse401 & {
+  headers: Headers;
+};
+
+export type deletePictureResponse = deletePictureResponseSuccess | deletePictureResponseError;
+
+export const getDeletePictureUrl = () => {
+  return `/api/v1/me/picture`;
+};
+
+/**
+ * @summary Removes the signed-in user's picture.
+ */
+export const deletePicture = async (
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<deletePictureResponse> => {
+  return apiFetch<deletePictureResponse>(getDeletePictureUrl(), {
+    ...options,
+    method: 'DELETE',
+  });
+};
+
+export type deleteTaskResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type deleteTaskResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type deleteTaskResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type deleteTaskResponseSuccess = deleteTaskResponse204 & {
+  headers: Headers;
+};
+export type deleteTaskResponseError = (deleteTaskResponse401 | deleteTaskResponse404) & {
+  headers: Headers;
+};
+
+export type deleteTaskResponse = deleteTaskResponseSuccess | deleteTaskResponseError;
+
+export const getDeleteTaskUrl = (taskId: string) => {
+  return `/api/v1/tasks/${taskId}`;
+};
+
+/**
+ * @summary Deletes a task. Any team member may.
+ */
+export const deleteTask = async (
+  taskId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<deleteTaskResponse> => {
+  return apiFetch<deleteTaskResponse>(getDeleteTaskUrl(taskId), {
+    ...options,
+    method: 'DELETE',
+  });
+};
+
+export type updateTaskResponse200 = {
+  data: TaskDto;
+  status: 200;
+};
+
+export type updateTaskResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type updateTaskResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type updateTaskResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type updateTaskResponseSuccess = updateTaskResponse200 & {
+  headers: Headers;
+};
+export type updateTaskResponseError = (
+  updateTaskResponse400 | updateTaskResponse401 | updateTaskResponse404
+) & {
+  headers: Headers;
+};
+
+export type updateTaskResponse = updateTaskResponseSuccess | updateTaskResponseError;
+
+export const getUpdateTaskUrl = (taskId: string) => {
+  return `/api/v1/tasks/${taskId}`;
+};
+
+/**
+ * @summary Edits a task's content. Any team member may.
+ */
+export const updateTask = async (
+  taskId: string,
+  updateTaskRequest: UpdateTaskRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<updateTaskResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<updateTaskResponse>(getUpdateTaskUrl(taskId), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateTaskRequest),
+  });
+};
+
+export type moveTaskResponse200 = {
+  data: TaskDto;
+  status: 200;
+};
+
+export type moveTaskResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type moveTaskResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type moveTaskResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type moveTaskResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type moveTaskResponseSuccess = moveTaskResponse200 & {
+  headers: Headers;
+};
+export type moveTaskResponseError = (
+  moveTaskResponse400 | moveTaskResponse401 | moveTaskResponse404 | moveTaskResponse409
+) & {
+  headers: Headers;
+};
+
+export type moveTaskResponse = moveTaskResponseSuccess | moveTaskResponseError;
+
+export const getMoveTaskUrl = (taskId: string) => {
+  return `/api/v1/tasks/${taskId}/position`;
+};
+
+/**
+ * @summary Moves a task between or within columns. With neither neighbour, the task
+goes to the end of the column. Any team member may move any task.
+ */
+export const moveTask = async (
+  taskId: string,
+  moveTaskRequest: MoveTaskRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<moveTaskResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<moveTaskResponse>(getMoveTaskUrl(taskId), {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(moveTaskRequest),
   });
 };
 
@@ -1336,6 +1789,124 @@ export const updateMember = async (
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(roleRequest),
+  });
+};
+
+export type listTasksResponse200 = {
+  data: TaskDto[];
+  status: 200;
+};
+
+export type listTasksResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type listTasksResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type listTasksResponseSuccess = listTasksResponse200 & {
+  headers: Headers;
+};
+export type listTasksResponseError = (listTasksResponse401 | listTasksResponse404) & {
+  headers: Headers;
+};
+
+export type listTasksResponse = listTasksResponseSuccess | listTasksResponseError;
+
+export const getListTasksUrl = (teamId: string, params?: ListTasksParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/teams/${teamId}/tasks?${stringifiedParams}`
+    : `/api/v1/teams/${teamId}/tasks`;
+};
+
+/**
+ * @summary Lists the team's tasks, ordered by status column and position.
+ */
+export const listTasks = async (
+  teamId: string,
+  params?: ListTasksParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<listTasksResponse> => {
+  return apiFetch<listTasksResponse>(getListTasksUrl(teamId, params), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export type getPictureResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type getPictureResponse302 = {
+  data: void;
+  status: 302;
+};
+
+export type getPictureResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type getPictureResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type getPictureResponseSuccess = getPictureResponse200 & {
+  headers: Headers;
+};
+export type getPictureResponseError = (
+  getPictureResponse302 | getPictureResponse401 | getPictureResponse404
+) & {
+  headers: Headers;
+};
+
+export type getPictureResponse = getPictureResponseSuccess | getPictureResponseError;
+
+export const getGetPictureUrl = (userId: string, params?: GetPictureParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/users/${userId}/picture?${stringifiedParams}`
+    : `/api/v1/users/${userId}/picture`;
+};
+
+/**
+ * The bytes are cached as immutable under their version (spec §20), so they
+ * are only sent when `v` is the current `pictureVersion`. Any other `v`, or
+ * none, is redirected to the current version's URL.
+ * @summary A user's picture. Visible to the user and to people sharing a team with them.
+ */
+export const getPicture = async (
+  userId: string,
+  params?: GetPictureParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<getPictureResponse> => {
+  return apiFetch<getPictureResponse>(getGetPictureUrl(userId, params), {
+    ...options,
+    method: 'GET',
   });
 };
 

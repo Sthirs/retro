@@ -6,7 +6,7 @@ use utoipa::{
     openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
 };
 
-use crate::{api, error::Problem};
+use crate::{api, entities::task::TaskStatus, error::Problem};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -21,6 +21,10 @@ use crate::{api, error::Problem};
         api::auth::oidc_start,
         api::auth::oidc_callback,
         api::me::me,
+        api::me::update_me,
+        api::me::put_picture,
+        api::me::delete_picture,
+        api::me::get_picture,
         api::teams::list_teams,
         api::teams::create_team,
         api::teams::get_team,
@@ -38,8 +42,12 @@ use crate::{api, error::Problem};
         api::invitations::accept_invitation,
         api::invitations::decline_invitation,
         api::join::join_team,
+        api::tasks::list_tasks,
+        api::tasks::move_task,
+        api::tasks::update_task,
+        api::tasks::delete_task,
     ),
-    components(schemas(Problem)),
+    components(schemas(Problem, TaskStatus)),
     modifiers(&BearerAuth),
 )]
 pub struct ApiDoc;

@@ -10,10 +10,12 @@ import AppButton from '@/components/ui/AppButton.vue';
 import AppDialog from '@/components/ui/AppDialog.vue';
 import TextField from '@/components/ui/TextField.vue';
 import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
 const { t } = useI18n();
+const errorText = useErrorText();
 const router = useRouter();
 const teams = useTeamsStore();
 
@@ -63,7 +65,7 @@ async function submit(): Promise<void> {
         autocomplete="off"
         :label="t('createTeam.name')"
         :placeholder="t('createTeam.placeholder')"
-        :error="error ? t(`errors.${error}`) : undefined"
+        :error="error ? errorText(error) : undefined"
       />
       <div class="note">
         <AppIcon name="shield" :size="17" />

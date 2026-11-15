@@ -486,6 +486,381 @@
             "bearer": []
           }
         ]
+      },
+      "patch": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Changes the signed-in user's display name.",
+        "operationId": "update_me",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The updated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_display_name`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid access token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/me/picture": {
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Replaces the signed-in user's picture with the request body.",
+        "operationId": "put_picture",
+        "requestBody": {
+          "description": "A PNG, JPEG, GIF or WebP image of at most 5 MB",
+          "content": {
+            "image/*": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The updated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid access token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`picture_too_large`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "`unsupported_picture_type`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Removes the signed-in user's picture.",
+        "operationId": "delete_picture",
+        "responses": {
+          "200": {
+            "description": "The updated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid access token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}": {
+      "delete": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Deletes a task. Any team member may.",
+        "operationId": "delete_task",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Task id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`task_not_found`: no such task or not a member of its team",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Edits a task's content. Any team member may.",
+        "operationId": "update_task",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Task id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The edited task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_task_content`: blank or invalid content",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`task_not_found`: no such task or not a member of its team",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/tasks/{task_id}/position": {
+      "put": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Moves a task between or within columns. With neither neighbour, the task\ngoes to the end of the column. Any team member may move any task.",
+        "operationId": "move_task",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Task id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The moved task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_position`: a neighbour is not in the team and target column, or is the task itself",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`task_not_found`: no such task or not a member of its team",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`stale_position`: `afterId` is not before `beforeId`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/api/v1/teams": {
@@ -1267,6 +1642,172 @@
         ]
       }
     },
+    "/api/v1/teams/{team_id}/tasks": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Lists the team's tasks, ordered by status column and position.",
+        "operationId": "list_tasks",
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "description": "Team id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "mentioned",
+            "in": "query",
+            "description": "Comma-separated user ids: only tasks mentioning any of them.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "author",
+            "in": "query",
+            "description": "Only tasks written by this user.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "meeting",
+            "in": "query",
+            "description": "Only tasks attached to this meeting.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The tasks, by status then position",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TaskDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`team_not_found`: no such team or not a member",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/picture": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "A user's picture. Visible to the user and to people sharing a team with them.",
+        "description": "The bytes are cached as immutable under their version (spec §20), so they\nare only sent when `v` is the current `pictureVersion`. Any other `v`, or\nnone, is redirected to the current version's URL.",
+        "operationId": "get_picture",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "description": "The picture's owner",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "description": "The `pictureVersion` the caller knows.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image bytes, when `v` is the current version",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "`v` is missing or not the current version: `Location` is the current version's URL"
+          },
+          "401": {
+            "description": "Missing or invalid access token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`picture_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/healthz": {
       "get": {
         "tags": [
@@ -1518,7 +2059,9 @@
         "required": [
           "user",
           "teams",
-          "invitations"
+          "invitations",
+          "memberSince",
+          "signInMethod"
         ],
         "properties": {
           "invitations": {
@@ -1527,6 +2070,15 @@
               "$ref": "#/components/schemas/PendingInvitationDto"
             },
             "description": "Open invitations sent to the user's email, newest first."
+          },
+          "memberSince": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the account was created."
+          },
+          "signInMethod": {
+            "$ref": "#/components/schemas/SignInMethod",
+            "description": "`sso` when the user has a linked identity, else `password`."
           },
           "teams": {
             "type": "array",
@@ -1557,6 +2109,35 @@
           },
           "user": {
             "$ref": "#/components/schemas/UserDto"
+          }
+        }
+      },
+      "MoveTaskRequest": {
+        "type": "object",
+        "description": "Where to put a task.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "afterId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The task the moved one should land directly after, if any."
+          },
+          "beforeId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The task the moved one should land directly before when `afterId` is\nabsent. With both, the task lands directly after `afterId`, and\n`beforeId` must be below it."
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus",
+            "description": "The column to move the task to."
           }
         }
       },
@@ -1605,6 +2186,13 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "pictureVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Content hash of the uploaded picture; `null` when there is none."
           }
         }
       },
@@ -1683,6 +2271,14 @@
           }
         }
       },
+      "SignInMethod": {
+        "type": "string",
+        "description": "How the user signs in.",
+        "enum": [
+          "password",
+          "sso"
+        ]
+      },
       "SsoConfig": {
         "type": "object",
         "required": [
@@ -1697,6 +2293,66 @@
             "type": "boolean"
           }
         }
+      },
+      "TaskDto": {
+        "type": "object",
+        "description": "A task on the board.",
+        "required": [
+          "id",
+          "status",
+          "position",
+          "contentHtml",
+          "author",
+          "mentions",
+          "createdAt"
+        ],
+        "properties": {
+          "author": {
+            "$ref": "#/components/schemas/PersonDto"
+          },
+          "contentHtml": {
+            "type": "string",
+            "description": "Sanitized rich text."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "meetingId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "mentions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonDto"
+            }
+          },
+          "position": {
+            "type": "string",
+            "description": "Ordering key within the column; compare as plain strings."
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          }
+        }
+      },
+      "TaskStatus": {
+        "type": "string",
+        "description": "Where a task sits on the board (spec §9).",
+        "enum": [
+          "future",
+          "stuck",
+          "active",
+          "done"
+        ]
       },
       "TeamDto": {
         "type": "object",
@@ -1754,6 +2410,31 @@
           }
         }
       },
+      "UpdateMeRequest": {
+        "type": "object",
+        "required": [
+          "displayName"
+        ],
+        "properties": {
+          "displayName": {
+            "type": "string",
+            "description": "New display name; trimmed, 1 to 80 characters."
+          }
+        }
+      },
+      "UpdateTaskRequest": {
+        "type": "object",
+        "description": "New content for a task.",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Rich text; sanitized by the server."
+          }
+        }
+      },
       "UserDto": {
         "type": "object",
         "description": "A user as exposed by the API.",
@@ -1778,6 +2459,13 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "pictureVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Content hash of the uploaded picture; `null` when there is none."
           },
           "username": {
             "type": [

@@ -73,3 +73,32 @@ async fn sso_registered_users_cannot_sign_in_with_a_password() {
         assert_eq!(res.json()["code"], "invalid_credentials");
     }
 }
+
+#[tokio::test]
+async fn sso_sign_in_keeps_a_custom_display_name() {
+    use serde_json::json;
+    let app = TestApp::new().await;
+    let alice = identity("sub-a", "alice@retro.local");
+    sign_in_with_identity(&app.db, &alice, false)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let token = app.token_for("alice").await;
+    let res = app
+        .call(
+            "PATCH",
+            "/api/v1/me",
+            &token,
+            Some(json!({ "displayName": "Ali" })),
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+
+    let (user, outcome) = sign_in_with_identity(&app.db, &alice, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outcome, SsoOutcome::Existing);
+    assert_eq!(user.display_name, "Ali");
+}

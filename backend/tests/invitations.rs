@@ -576,3 +576,136 @@ async fn token_responses_are_not_cached() {
         assert_eq!(res.headers["cache-control"], "no-store", "{path}");
     }
 }
+
+impl Ctx {
+    async fn user_id(&self, token: &str) -> String {
+        self.app.get_with_token("/api/v1/me", token).await.json()["user"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    fn member_path(&self, user_id: &str) -> String {
+        format!("/api/v1/teams/{}/members/{user_id}", self.team)
+    }
+}
+
+/// A removed admin cannot rejoin with an invitation link they saw; the
+/// invitation stays open for its invitee under a new token (spec §6.1).
+#[tokio::test]
+async fn removing_an_admin_rotates_every_open_invitation() {
+    let ctx = setup().await;
+    ctx.bob_joins().await;
+    let bob_id = ctx.user_id(&ctx.bob).await;
+    let res = ctx
+        .app
+        .call(
+            "PATCH",
+            &ctx.member_path(&bob_id),
+            &ctx.alice,
+            Some(json!({ "role": "admin" })),
+        )
+        .await;
+    assert_eq!(res.status, 204, "{}", res.text());
+    let inv = ctx.invite(&ctx.alice, "nina@acme.dev").await;
+    let old = token_of(&inv);
+
+    let res = ctx
+        .app
+        .call("DELETE", &ctx.member_path(&bob_id), &ctx.alice, None)
+        .await;
+    assert_eq!(res.status, 204);
+
+    let res = ctx
+        .app
+        .call(
+            "POST",
+            &format!("/api/v1/invitations/{old}/accept"),
+            &ctx.bob,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 404);
+    assert_eq!(res.json()["code"], "invitation_not_found");
+
+    let pending = ctx.pending().await;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0]["id"], inv["id"]);
+    let new = token_of(&pending[0]);
+    assert_ne!(new, old);
+
+    let nina = ctx
+        .app
+        .create_user("nina", "nina@acme.dev", "Nina Weber")
+        .await;
+    let me = ctx.app.get_with_token("/api/v1/me", &nina).await.json();
+    assert_eq!(me["invitations"].as_array().unwrap().len(), 1);
+    let res = ctx
+        .app
+        .call(
+            "POST",
+            &format!("/api/v1/invitations/{new}/accept"),
+            &nina,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+}
+
+/// A member who leaves only saw the links of the invitations they made.
+#[tokio::test]
+async fn a_member_leaving_rotates_only_their_own_invitations() {
+    let ctx = setup().await;
+    ctx.bob_joins().await;
+    let bob_id = ctx.user_id(&ctx.bob).await;
+    let bobs = ctx.invite(&ctx.bob, "nina@acme.dev").await;
+    let alices = ctx.invite(&ctx.alice, "omar@acme.dev").await;
+
+    let res = ctx
+        .app
+        .call("DELETE", &ctx.member_path(&bob_id), &ctx.bob, None)
+        .await;
+    assert_eq!(res.status, 204);
+
+    let res = ctx
+        .app
+        .call(
+            "POST",
+            &format!("/api/v1/invitations/{}/accept", token_of(&bobs)),
+            &ctx.bob,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 404);
+
+    let pending = ctx.pending().await;
+    assert_eq!(pending.len(), 2);
+    for inv in &pending {
+        if inv["id"] == bobs["id"] {
+            assert_ne!(token_of(inv), token_of(&bobs));
+        } else {
+            assert_eq!(inv["id"], alices["id"]);
+            assert_eq!(token_of(inv), token_of(&alices));
+        }
+    }
+}
+
+/// A member who declines someone else's invitation does not use it up.
+#[tokio::test]
+async fn a_member_declining_keeps_someone_elses_invitation_open() {
+    let ctx = setup().await;
+    let inv = ctx.invite(&ctx.alice, "nina@acme.dev").await;
+    let res = ctx
+        .app
+        .call(
+            "POST",
+            &format!("/api/v1/invitations/{}/decline", token_of(&inv)),
+            &ctx.alice,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 204);
+    let pending = ctx.pending().await;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0]["id"], inv["id"]);
+}

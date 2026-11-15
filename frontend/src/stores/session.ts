@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 
 import { api, setTokenSource, type SessionResponse, type User } from '@/api/client';
+import { clearImageCache } from '@/lib/images';
 
 /** Error codes the sign-in page knows how to explain. */
 export type LoginErrorCode = 'invalid_credentials' | 'too_many_requests' | 'unknown';
@@ -30,9 +31,15 @@ export const useSessionStore = defineStore('session', () => {
     user.value = session.user;
   }
 
+  /** Replaces the signed-in user after they changed their own profile. */
+  function setUser(next: User): void {
+    user.value = next;
+  }
+
   function clear(): void {
     accessToken.value = null;
     user.value = null;
+    clearImageCache();
   }
 
   async function login(login: string, password: string, remember: boolean): Promise<void> {
@@ -86,5 +93,5 @@ export const useSessionStore = defineStore('session', () => {
 
   setTokenSource({ token: () => accessToken.value, renew: refresh });
 
-  return { accessToken, user, ready, isAuthenticated, login, refresh, restore, logout };
+  return { accessToken, user, ready, isAuthenticated, login, refresh, restore, logout, setUser };
 });

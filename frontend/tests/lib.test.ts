@@ -4,7 +4,7 @@ import { ssoUrl } from '@/auth/config';
 import { AVATAR_COLORS, avatarColorIndex, initials } from '@/lib/avatar';
 import { safeRedirect } from '@/lib/redirect';
 import { applyThemePreference, readThemePreference, resolveTheme } from '@/lib/theme';
-import { relativeFromNow } from '@/lib/time';
+import { formatDate, formatDayMonth, relativeFromNow } from '@/lib/time';
 
 describe('theme', () => {
   it('resolves system preference', () => {
@@ -84,5 +84,19 @@ describe('relativeFromNow', () => {
     expect(relativeFromNow(at(24 * 3600e3), 'en', now)).toBe('tomorrow');
     expect(relativeFromNow(at(3 * 3600e3), 'en', now)).toBe('in 3 hours');
     expect(relativeFromNow(at(10 * 60e3), 'en', now)).toBe('in 10 minutes');
+  });
+});
+
+describe('formatDate', () => {
+  it('formats as "d MMM yyyy" with a three-letter month', () => {
+    expect(formatDate('2026-09-29T10:00:00Z')).toBe('29 Sep 2026');
+    expect(formatDate('2026-01-05T10:00:00Z')).toBe('5 Jan 2026');
+  });
+});
+
+describe('formatDayMonth', () => {
+  it('formats as "d MMM" with a three-letter month', () => {
+    expect(formatDayMonth('2026-11-10T10:00:00Z')).toBe('10 Nov');
+    expect(formatDayMonth('2026-09-03T10:00:00Z')).toBe('3 Sep');
   });
 });

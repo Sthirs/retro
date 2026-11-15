@@ -13,8 +13,9 @@ import AppAlert from '@/components/ui/AppAlert.vue';
 import AppButton from '@/components/ui/AppButton.vue';
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
+import { useLeaveTeam } from '@/composables/useLeaveTeam';
 import SettingsPanel from '@/features/teams/settings/SettingsPanel.vue';
-import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 const props = defineProps<{
   team: TeamDto;
@@ -24,12 +25,13 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ changed: [] }>();
 const { t } = useI18n();
+const errorText = useErrorText();
 const router = useRouter();
-const teams = useTeamsStore();
+const leave = useLeaveTeam();
 
 const error = ref<string | null>(null);
 const busyId = ref<string | null>(null);
-const confirming = ref<{ kind: 'leave' | 'remove'; member: MemberDto } | null>(null);
+const removing = ref<MemberDto | null>(null);
 const confirmError = ref<string | null>(null);
 
 /** You first, then admins, then by name (the server sends admins first). */
@@ -55,49 +57,39 @@ async function setRole(member: MemberDto, role: 'admin' | 'member'): Promise<voi
 }
 
 function ask(kind: 'leave' | 'remove', member: MemberDto): void {
+  if (kind === 'leave') {
+    leave.ask(props.team, soleMember.value);
+    return;
+  }
   confirmError.value = null;
-  confirming.value = { kind, member };
+  removing.value = member;
 }
 
-async function confirm(): Promise<void> {
-  const pending = confirming.value;
-  if (!pending) return;
-  busyId.value = pending.member.user.id;
+async function confirmLeave(): Promise<void> {
+  if (await leave.confirm(props.currentUserId)) await router.push({ name: 'home' });
+}
+
+async function confirmRemove(): Promise<void> {
+  const member = removing.value;
+  if (!member) return;
+  busyId.value = member.user.id;
   confirmError.value = null;
   try {
-    const res = await api.removeMember(props.team.id, pending.member.user.id);
+    const res = await api.removeMember(props.team.id, member.user.id);
     if (res.status !== 204) throw apiError(res);
-    confirming.value = null;
-    if (pending.kind === 'leave') {
-      await teams.load();
-      await router.push({ name: 'home' });
-      return;
-    }
+    removing.value = null;
     emit('changed');
   } catch (e) {
-    confirmError.value = t(`errors.${errorCode(e)}`);
+    confirmError.value = errorText(errorCode(e));
   } finally {
     busyId.value = null;
   }
 }
 
-const dialog = computed(() => {
-  const pending = confirming.value;
-  if (!pending) return null;
-  if (pending.kind === 'leave') {
-    return soleMember.value
-      ? {
-          title: t('settings.leave.lastTitle', { team: props.team.name }),
-          text: t('settings.leave.lastText'),
-          confirm: t('settings.leave.lastConfirm'),
-        }
-      : {
-          title: t('settings.leave.title', { team: props.team.name }),
-          text: t('settings.leave.text'),
-          confirm: t('settings.leave.confirm'),
-        };
-  }
-  const name = pending.member.user.displayName;
+const removeDialog = computed(() => {
+  const member = removing.value;
+  if (!member) return null;
+  const name = member.user.displayName;
   return {
     title: t('settings.remove.title', { name }),
     text: t('settings.remove.text', { name, team: props.team.name }),
@@ -112,10 +104,15 @@ const dialog = computed(() => {
     :title="t('settings.members.title', { count: members.length })"
     :description="t('settings.members.hint')"
   >
-    <AppAlert v-if="error" class="error">{{ t(`errors.${error}`) }}</AppAlert>
+    <AppAlert v-if="error" class="error">{{ errorText(error) }}</AppAlert>
     <ul class="list">
       <li v-for="member in ordered" :key="member.user.id" class="item" data-testid="member">
-        <UserAvatar :user-id="member.user.id" :name="member.user.displayName" :size="36" />
+        <UserAvatar
+          :user-id="member.user.id"
+          :name="member.user.displayName"
+          :picture-version="member.user.pictureVersion"
+          :size="36"
+        />
         <div class="item__text">
           <span class="item__name">
             {{
@@ -166,15 +163,26 @@ const dialog = computed(() => {
       </li>
     </ul>
     <ConfirmDialog
-      :open="!!confirming"
-      :title="dialog?.title ?? ''"
-      :text="dialog?.text ?? ''"
-      :confirm-label="dialog?.confirm ?? ''"
+      :open="!!leave.pending.value"
+      :title="leave.dialog.value?.title ?? ''"
+      :text="leave.dialog.value?.text ?? ''"
+      :confirm-label="leave.dialog.value?.confirm ?? ''"
+      :busy="leave.busy.value"
+      :error="leave.error.value"
+      danger
+      @close="leave.cancel()"
+      @confirm="confirmLeave"
+    />
+    <ConfirmDialog
+      :open="!!removing"
+      :title="removeDialog?.title ?? ''"
+      :text="removeDialog?.text ?? ''"
+      :confirm-label="removeDialog?.confirm ?? ''"
       :busy="busyId !== null"
       :error="confirmError"
       danger
-      @close="confirming = null"
-      @confirm="confirm"
+      @close="removing = null"
+      @confirm="confirmRemove"
     />
   </SettingsPanel>
 </template>

@@ -179,14 +179,40 @@ pub async fn create(
     })
 }
 
+/// Locks the team row, then the actor's membership, and checks that the actor
+/// is an admin. Same lock order as [`remove_member`] and [`join_with_token`];
+/// the share lock on the membership waits for a concurrent [`change_role`], so
+/// an admin who is being demoted cannot act on the team.
+async fn lock_team_as_admin(
+    txn: &impl ConnectionTrait,
+    team_id: Uuid,
+    actor: Uuid,
+) -> Result<team::Model, AppError> {
+    let team = team::Entity::find_by_id(team_id)
+        .lock_exclusive()
+        .one(txn)
+        .await?
+        .ok_or(AppError::NotFound("team_not_found"))?;
+    let membership = team_member::Entity::find_by_id((team_id, actor))
+        .lock_shared()
+        .one(txn)
+        .await?
+        .ok_or(AppError::NotFound("team_not_found"))?;
+    if membership.role != Role::Admin {
+        return Err(AppError::Forbidden);
+    }
+    Ok(team)
+}
+
 /// Renames a team (admin).
 pub async fn rename(
-    db: &impl ConnectionTrait,
+    db: &(impl TransactionTrait + ConnectionTrait),
     team_id: Uuid,
     actor: Uuid,
     name: &str,
 ) -> Result<TeamSummary, AppError> {
-    require_admin(db, team_id, actor).await?;
+    let txn = db.begin().await?;
+    lock_team_as_admin(&txn, team_id, actor).await?;
     let name = validate_team_name(name)?;
     team::ActiveModel {
         id: Set(team_id),
@@ -194,15 +220,23 @@ pub async fn rename(
         updated_at: Set(OffsetDateTime::now_utc()),
         ..Default::default()
     }
-    .update(db)
+    .update(&txn)
     .await?;
-    summary(db, team_id, actor).await
+    let summary = summary(&txn, team_id, actor).await?;
+    txn.commit().await?;
+    Ok(summary)
 }
 
 /// Deletes a team and, through `ON DELETE CASCADE`, everything in it (admin).
-pub async fn delete(db: &impl ConnectionTrait, team_id: Uuid, actor: Uuid) -> Result<(), AppError> {
-    require_admin(db, team_id, actor).await?;
-    team::Entity::delete_by_id(team_id).exec(db).await?;
+pub async fn delete(
+    db: &(impl TransactionTrait + ConnectionTrait),
+    team_id: Uuid,
+    actor: Uuid,
+) -> Result<(), AppError> {
+    let txn = db.begin().await?;
+    lock_team_as_admin(&txn, team_id, actor).await?;
+    team::Entity::delete_by_id(team_id).exec(&txn).await?;
+    txn.commit().await?;
     Ok(())
 }
 
@@ -280,6 +314,13 @@ pub async fn change_role(
     role: Role,
 ) -> Result<(), AppError> {
     let txn = db.begin().await?;
+    // Team row first, then memberships, like every other team mutation: a
+    // concurrent team delete would otherwise deadlock on its cascade.
+    team::Entity::find_by_id(team_id)
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .ok_or(AppError::NotFound("team_not_found"))?;
     let rows = lock_members(&txn, team_id).await?;
     match rows.iter().find(|m| m.user_id == actor) {
         None => return Err(AppError::NotFound("team_not_found")),
@@ -305,8 +346,9 @@ pub async fn change_role(
 
 /// Removes `target` from the team: an admin removing someone, or anyone
 /// leaving. When the last member leaves, the team is deleted. Otherwise the
-/// join link is regenerated, so a former member cannot come back with the
-/// link they knew (spec §6.2).
+/// join link and the open invitation links the member could see get new
+/// tokens, so a former member cannot come back with a link they knew
+/// (spec §6.1, §6.2).
 pub async fn remove_member(
     db: &(impl TransactionTrait + ConnectionTrait),
     team_id: Uuid,
@@ -345,6 +387,13 @@ pub async fn remove_member(
                  WHERE id = $1 AND join_token IS NOT NULL",
                 [team_id.into(), random_token().into()],
             ))
+            .await?;
+            crate::domain::invitations::rotate_tokens_seen_by(
+                &txn,
+                team_id,
+                target,
+                member.role == Role::Admin,
+            )
             .await?;
         }
     }
@@ -403,18 +452,16 @@ pub async fn join_link(
 }
 
 /// Regenerates (invalidating the old token), enables or disables the join
-/// link (admin).
+/// link (admin). The team row stays locked from the read to the write, so a
+/// concurrent member removal cannot have its regenerated token overwritten.
 pub async fn update_join_link(
-    db: &impl ConnectionTrait,
+    db: &(impl TransactionTrait + ConnectionTrait),
     team_id: Uuid,
     actor: Uuid,
     action: JoinLinkAction,
 ) -> Result<JoinLink, AppError> {
-    require_admin(db, team_id, actor).await?;
-    let team = team::Entity::find_by_id(team_id)
-        .one(db)
-        .await?
-        .ok_or(AppError::NotFound("team_not_found"))?;
+    let txn = db.begin().await?;
+    let team = lock_team_as_admin(&txn, team_id, actor).await?;
     let (token, enabled) = match action {
         JoinLinkAction::Regenerate => (Some(random_token()), team.join_enabled),
         JoinLinkAction::Enable => (team.join_token.or_else(|| Some(random_token())), true),
@@ -427,8 +474,9 @@ pub async fn update_join_link(
         updated_at: Set(OffsetDateTime::now_utc()),
         ..Default::default()
     }
-    .update(db)
+    .update(&txn)
     .await?;
+    txn.commit().await?;
     Ok(JoinLink { token, enabled })
 }
 

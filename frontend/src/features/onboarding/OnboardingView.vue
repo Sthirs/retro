@@ -17,8 +17,10 @@ import TextField from '@/components/ui/TextField.vue';
 import { relativeFromNow } from '@/lib/time';
 import { useSessionStore } from '@/stores/session';
 import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 const { t, locale } = useI18n();
+const errorText = useErrorText();
 const router = useRouter();
 const session = useSessionStore();
 const teams = useTeamsStore();
@@ -130,7 +132,7 @@ function expires(iso: string): string {
                 autocomplete="off"
                 :label="t('createTeam.name')"
                 :placeholder="t('createTeam.placeholder')"
-                :error="nameError ? t(`errors.${nameError}`) : undefined"
+                :error="nameError ? errorText(nameError) : undefined"
               />
               <AppButton type="submit" variant="primary" size="touch" :disabled="creating">
                 {{ creating ? t('createTeam.creating') : t('createTeam.submit') }}
@@ -185,7 +187,7 @@ function expires(iso: string): string {
             <p v-else class="card__text">
               {{ t('onboarding.none', { email: session.user.email }) }}
             </p>
-            <AppAlert v-if="inviteError">{{ t(`errors.${inviteError}`) }}</AppAlert>
+            <AppAlert v-if="inviteError">{{ errorText(inviteError) }}</AppAlert>
             <p class="card__hint">{{ t('onboarding.linkHint') }}</p>
           </section>
         </div>

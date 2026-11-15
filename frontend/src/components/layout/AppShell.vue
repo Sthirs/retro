@@ -1,5 +1,9 @@
 <script setup lang="ts">
-/** Team pages: top bar with the team selector, left menu, content (spec §7). */
+/**
+ * Team pages: top bar with the team selector, left menu, content (spec §7).
+ * Pages outside a team (the account page) keep the shell around the user's
+ * remembered team.
+ */
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink, RouterView, useRoute } from 'vue-router';
@@ -7,10 +11,21 @@ import { RouterLink, RouterView, useRoute } from 'vue-router';
 import AppIcon from '@/components/AppIcon.vue';
 import type { IconName } from '@/components/icons';
 import AppTopBar from '@/components/layout/AppTopBar.vue';
+import { useTeamsStore } from '@/stores/teams';
 
 const { t } = useI18n();
 const route = useRoute();
-const teamId = computed(() => String(route.params.teamId));
+const teams = useTeamsStore();
+const teamId = computed(() => {
+  const param = route.params.teamId;
+  return typeof param === 'string' ? param : teams.currentTeam()?.id;
+});
+// Team pages remount when the team changes. Other pages (the account page)
+// must stay mounted when the remembered or default team changes, so they key
+// on the route, not on the resolved team.
+const viewKey = computed(() =>
+  typeof route.params.teamId === 'string' ? route.params.teamId : String(route.name),
+);
 
 const entries: { name: string; label: string; icon: IconName }[] = [
   { name: 'team-meetings', label: 'nav.meetings', icon: 'calendar' },
@@ -23,7 +38,7 @@ const entries: { name: string; label: string; icon: IconName }[] = [
   <div class="shell">
     <AppTopBar team-selector />
     <div class="shell__body">
-      <nav class="nav" :aria-label="t('nav.label')">
+      <nav v-if="teamId" class="nav" :aria-label="t('nav.label')">
         <RouterLink
           v-for="entry in entries"
           :key="entry.name"
@@ -36,7 +51,7 @@ const entries: { name: string; label: string; icon: IconName }[] = [
         </RouterLink>
       </nav>
       <main class="shell__main">
-        <RouterView :key="teamId" />
+        <RouterView :key="viewKey" />
       </main>
     </div>
   </div>

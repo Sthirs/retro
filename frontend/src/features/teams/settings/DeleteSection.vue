@@ -14,9 +14,11 @@ import AppButton from '@/components/ui/AppButton.vue';
 import AppDialog from '@/components/ui/AppDialog.vue';
 import TextField from '@/components/ui/TextField.vue';
 import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 const props = defineProps<{ team: TeamDto; memberCount: number; invitationCount: number }>();
 const { t } = useI18n();
+const errorText = useErrorText();
 const router = useRouter();
 const teams = useTeamsStore();
 
@@ -87,7 +89,7 @@ async function remove(): Promise<void> {
           :label="t('settings.delete.confirmLabel')"
         />
       </form>
-      <AppAlert v-if="error">{{ t(`errors.${error}`) }}</AppAlert>
+      <AppAlert v-if="error">{{ errorText(error) }}</AppAlert>
       <template #footer>
         <AppButton variant="ghost" @click="open = false">{{ t('common.cancel') }}</AppButton>
         <AppButton variant="danger" type="submit" form="delete-form" :disabled="!matches || busy">

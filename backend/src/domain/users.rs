@@ -32,6 +32,32 @@ pub async fn find_by_login(
         .await?)
 }
 
+/// Longest allowed display name, in characters.
+pub const DISPLAY_NAME_MAX: usize = 80;
+
+/// Trims a display name and checks its length.
+pub fn validate_display_name(raw: &str) -> Result<String, AppError> {
+    let name = raw.trim();
+    if name.is_empty() || name.chars().count() > DISPLAY_NAME_MAX {
+        return Err(AppError::Invalid("invalid_display_name"));
+    }
+    Ok(name.to_owned())
+}
+
+/// Sets the user's display name and pins it so SSO sign-ins no longer overwrite it.
+pub async fn update_display_name(
+    db: &impl ConnectionTrait,
+    user: user::Model,
+    raw: &str,
+) -> Result<user::Model, AppError> {
+    let name = validate_display_name(raw)?;
+    let mut active: user::ActiveModel = user.into();
+    active.display_name = Set(name);
+    active.display_name_custom = Set(true);
+    active.updated_at = Set(OffsetDateTime::now_utc());
+    Ok(active.update(db).await?)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum SsoOutcome {
     Existing,
@@ -84,7 +110,10 @@ pub async fn sign_in_with_identity(
             {
                 active.email = Set(identity.email.clone());
             }
-            if let Some(name) = &identity.name {
+            // A name the user chose themselves is never overwritten by the provider.
+            if !user.display_name_custom
+                && let Some(name) = &identity.name
+            {
                 active.display_name = Set(name.clone());
             }
             if identity.picture.is_some() {
@@ -103,6 +132,8 @@ pub async fn sign_in_with_identity(
                     .clone()
                     .unwrap_or_else(|| identity.email.split('@').next().unwrap_or("").to_owned())),
                 avatar_url: Set(identity.picture.clone()),
+                display_name_custom: Set(false),
+                picture_version: Set(None),
                 password_hash: Set(None),
                 created_at: Set(now),
                 updated_at: Set(now),
@@ -128,4 +159,36 @@ pub async fn sign_in_with_identity(
 
     txn.commit().await?;
     Ok(Some((user, outcome)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trims_the_name() {
+        assert_eq!(validate_display_name("  Alice R. ").unwrap(), "Alice R.");
+    }
+
+    #[test]
+    fn rejects_empty_and_whitespace_only() {
+        for raw in ["", " ", " \t\n "] {
+            assert!(validate_display_name(raw).is_err(), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn counts_characters_not_bytes() {
+        let ok = "é".repeat(80);
+        assert_eq!(ok.len(), 160);
+        assert_eq!(validate_display_name(&ok).unwrap(), ok);
+        assert!(validate_display_name(&"é".repeat(81)).is_err());
+    }
+
+    #[test]
+    fn limit_applies_after_trimming() {
+        let padded = format!("  {}  ", "a".repeat(80));
+        assert_eq!(validate_display_name(&padded).unwrap(), "a".repeat(80));
+        assert!(validate_display_name(&"a".repeat(81)).is_err());
+    }
 }

@@ -33,3 +33,4 @@ Legend: 🟢 accepted · 🟡 proposed · 🔴 rejected · ⚪ superseded
 | [0007](0007-development-environment.md) | Minikube, Telepresence and dex as the development environment | 🟡 proposed |
 | [0008](0008-testing-strategy.md) | Testing strategy | 🟡 proposed |
 | [0009](0009-ci-release-and-versioning.md) | CI, releases and versioning | 🟡 proposed |
+| [0010](0010-rich-text-format.md) | Rich text is stored as server-sanitized HTML | 🟡 proposed |

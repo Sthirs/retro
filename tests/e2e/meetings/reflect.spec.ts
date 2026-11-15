@@ -415,8 +415,8 @@ test.describe('reflect', () => {
     // One more minute restarts the countdown from now.
     await lena.addMinute.click();
     await expect(lena.timesUp).toBeHidden();
-    await expect(milo.timer).toHaveText(/^0[01]:\d\d$/);
-    expect(await secondsLeft(milo.timer)).toBeGreaterThan(50);
+    // Milo hears of it on his own: wait for the restarted countdown.
+    await expect.poll(() => secondsLeft(milo.timer)).toBeGreaterThan(50);
     // Still there in the next phase.
     await lena.nextGroup.click();
     await expect(milo.phase).toHaveText('Group');

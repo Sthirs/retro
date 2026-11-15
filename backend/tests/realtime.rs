@@ -1211,12 +1211,23 @@ async fn writing_messages_are_rate_limited() {
         send_writing(&mut bob_socket, &m, column, "new").await;
     }
     send_writing(&mut bob_socket, &m, json!("ideas"), "new").await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Each accepted toggle changes the total: one event each.
+    for i in 0..10 {
+        let event = next_of(&mut alice_socket, "reflection.writing").await;
+        let expected = if i % 2 == 0 { 1 } else { 0 };
+        assert_eq!(event["payload"]["counts"], writing("plus", expected, 0));
+    }
+    // Past the window, the next message goes through, and its event is the
+    // next one: the eleventh (Ideas), handled before it, was dropped.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    send_writing(&mut bob_socket, &m, json!("delta"), "new").await;
+    let event = next_of(&mut alice_socket, "reflection.writing").await;
+    assert_eq!(event["payload"]["counts"], writing("delta", 1, 0));
     let state = app
         .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
         .await
         .json();
-    assert_eq!(state["writing"], writing("plus", 0, 0));
+    assert_eq!(state["writing"], writing("delta", 1, 0));
 }
 
 #[tokio::test]

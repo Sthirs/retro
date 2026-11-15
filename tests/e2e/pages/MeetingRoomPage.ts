@@ -9,6 +9,8 @@ export class MeetingRoomPage {
   readonly adminActions: Locator;
   readonly footer: Locator;
   readonly nextPerson: Locator;
+  readonly previousPerson: Locator;
+  readonly greetingPronunciation: Locator;
   readonly transferDialog: Locator;
   readonly endDialog: Locator;
   readonly ended: Locator;
@@ -21,6 +23,10 @@ export class MeetingRoomPage {
     this.adminActions = page.getByRole('toolbar', { name: 'Admin actions' });
     this.footer = page.getByRole('contentinfo', { name: 'Meeting navigation' });
     this.nextPerson = this.footer.getByRole('button', { name: 'Next person' });
+    this.previousPerson = this.footer.getByRole('button', { name: 'Previous person' });
+    this.greetingPronunciation = page
+      .getByRole('region', { name: 'Icebreaker' })
+      .getByText(/^\/.+\/$/);
     this.transferDialog = page.getByRole('dialog', { name: 'Transfer facilitator role' });
     this.endDialog = page.getByRole('dialog', { name: 'End this meeting?' });
     this.ended = page.getByText('This meeting has ended');
@@ -34,6 +40,11 @@ export class MeetingRoomPage {
   /** The person speaking now, in the sidebar's queue. */
   current(): Locator {
     return this.queue.locator('[aria-current="true"]');
+  }
+
+  /** The facilitator's way back to someone in the queue who had their turn. */
+  goBackTo(name: string): Locator {
+    return this.queue.getByRole('button', { name: `Go back to ${name}` });
   }
 
   async waitForIcebreaker(): Promise<void> {

@@ -68,6 +68,7 @@ test.describe('meetings', () => {
     await expect(ivanRoom.sidebar).toContainText(`${USERS.ivan.name} (you)`);
     await expect(ivanRoom.facilitatorActions).toBeVisible();
     await expect(page.getByText("Today's question", { exact: true })).toBeVisible();
+    await expect(ivanRoom.greetingPronunciation).toBeVisible();
 
     // The new meeting appears on Jade's page without a reload.
     const card = jadeMeetings.card('Retro #1');
@@ -89,6 +90,18 @@ test.describe('meetings', () => {
     await ivanRoom.nextPerson.click();
     await expect(jadeRoom.answering(2, 2)).toBeVisible();
     await expect(ivanRoom.footer.getByRole('button', { name: 'Next: Reflect' })).toBeVisible();
+
+    // Previous person, then back again from the speaking order.
+    await ivanRoom.previousPerson.click();
+    await expect(jadeRoom.answering(1, 2)).toBeVisible();
+    await expect(ivanRoom.previousPerson).toBeDisabled();
+    await ivanRoom.nextPerson.click();
+    await expect(jadeRoom.answering(2, 2)).toBeVisible();
+    await expect(jadeRoom.queue.getByRole('button')).toHaveCount(0);
+    await ivanRoom.goBackTo(USERS.ivan.name).click();
+    await expect(jadeRoom.answering(1, 2)).toBeVisible();
+    await ivanRoom.nextPerson.click();
+    await expect(jadeRoom.answering(2, 2)).toBeVisible();
 
     // Ivan hands over to Jade, who gets the controls.
     await ivanRoom.transferTo(USERS.jade.name);

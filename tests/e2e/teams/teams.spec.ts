@@ -118,6 +118,11 @@ test.describe('teams', () => {
     await hugo.getByRole('link', { name: 'Go to meetings' }).click();
     await expect(hugo).toHaveURL(new RegExp(`/teams/${teamId}/meetings$`));
 
+    // Opening the link again, as a member, goes straight to the team.
+    await hugo.goto(new URL(joinLink).pathname);
+    await expect(hugo).toHaveURL(new RegExp(`/teams/${teamId}/meetings$`));
+    await expect(hugo.getByRole('heading', { level: 1, name: 'Meetings' })).toBeVisible();
+
     // Promote, demote and remove hugo.
     await page.reload();
     const hugoRow = settings.member(USERS.hugo.name);

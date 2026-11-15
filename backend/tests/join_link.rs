@@ -166,3 +166,55 @@ async fn rate_limits_unknown_tokens() {
     let res = app.call("POST", "/api/v1/join/nope", &bob, None).await;
     assert_eq!(res.status, 429);
 }
+
+/// A join-link change racing a member removal must not restore the token the
+/// removed member knew (spec §6.2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn removal_racing_a_link_change_keeps_the_new_token() {
+    let (app, alice, bob, _) = setup().await;
+    let bob_id = app.get_with_token("/api/v1/me", &bob).await.json()["user"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for round in 0..20 {
+        let team = app
+            .call(
+                "POST",
+                "/api/v1/teams",
+                &alice,
+                Some(json!({ "name": format!("Race {round}") })),
+            )
+            .await
+            .json()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let link_path = format!("/api/v1/teams/{team}/join-link");
+        let known = token_of(&app.call("GET", &link_path, &alice, None).await.json());
+        let join = format!("/api/v1/join/{known}");
+        assert_eq!(app.call("POST", &join, &bob, None).await.status, 200);
+
+        let remove = format!("/api/v1/teams/{team}/members/{bob_id}");
+        let (disabled, removed) = tokio::join!(
+            app.call(
+                "POST",
+                &link_path,
+                &alice,
+                Some(json!({ "action": "disable" }))
+            ),
+            app.call("DELETE", &remove, &alice, None),
+        );
+        assert_eq!(disabled.status, 200, "round {round}");
+        assert_eq!(removed.status, 204, "round {round}");
+        app.call(
+            "POST",
+            &link_path,
+            &alice,
+            Some(json!({ "action": "enable" })),
+        )
+        .await;
+
+        let res = app.call("POST", &join, &bob, None).await;
+        assert_eq!(res.status, 404, "round {round}: the old token came back");
+    }
+}

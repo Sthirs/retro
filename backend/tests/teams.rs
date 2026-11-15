@@ -391,3 +391,54 @@ async fn removing_or_leaving_regenerates_the_join_link() {
     );
     assert_ne!(link().await, after_removal);
 }
+
+/// Renaming a team while it is deleted answers `team_not_found`, never 500.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rename_racing_a_delete_is_not_found() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    for round in 0..10 {
+        let team = create_team(&app, &alice, &format!("Race {round}")).await;
+        let path = format!("/api/v1/teams/{team}");
+        let (renamed, deleted) = tokio::join!(
+            app.call("PATCH", &path, &alice, Some(json!({ "name": "New" }))),
+            app.call("DELETE", &path, &alice, None),
+        );
+        assert_eq!(deleted.status, 204, "round {round}");
+        match renamed.status {
+            200 => {}
+            404 => assert_eq!(renamed.json()["code"], "team_not_found", "round {round}"),
+            other => panic!("round {round}: rename answered {other}: {}", renamed.text()),
+        }
+    }
+}
+
+/// A demoted admin cannot delete the team in the same moment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn demotion_racing_a_delete_is_serialized() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let bob_id = user_id(&app, &bob).await;
+    for round in 0..10 {
+        let team = create_team(&app, &alice, &format!("Race {round}")).await;
+        join(&app, &alice, &team, &bob).await;
+        let role = format!("/api/v1/teams/{team}/members/{bob_id}");
+        app.call("PATCH", &role, &alice, Some(json!({ "role": "admin" })))
+            .await;
+        let path = format!("/api/v1/teams/{team}");
+        let (demoted, deleted) = tokio::join!(
+            app.call("PATCH", &role, &alice, Some(json!({ "role": "member" }))),
+            app.call("DELETE", &path, &bob, None),
+        );
+        // Either the delete ran first (and the demotion found no team) or
+        // the demotion ran first (and the delete was refused).
+        match (demoted.status, deleted.status) {
+            (404, 204) | (204, 403) | (200, 403) => {}
+            other => panic!("round {round}: {other:?}"),
+        }
+        if deleted.status != 204 {
+            app.call("DELETE", &path, &alice, None).await;
+        }
+    }
+}

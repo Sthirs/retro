@@ -10,18 +10,20 @@ import {
   Role,
   type MeetingStateDto,
   type ParticipantDto,
+  type ReflectionColumn,
+  type Timer,
+  type TimerAction,
 } from '@/api/client';
+import { isOwnEvent } from '@/api/clientId';
 import type { RealtimeEvent } from '@/api/realtime';
 import { useSessionStore } from '@/stores/session';
 
 export const PHASES = Object.values(MeetingPhase);
 
-/** A notice for everyone in the room, e.g. a new facilitator. */
-export interface MeetingNotice {
-  kind: 'facilitator';
-  userId: string;
-  name: string;
-}
+/** A notice in the room: a new facilitator, or this tab's drafts discarded. */
+export type MeetingNotice =
+  | { kind: 'facilitator'; userId: string; name: string }
+  | { kind: 'draftsDiscarded'; count: number };
 
 /**
  * The meeting room's state (spec §15.4): a snapshot from the server, kept up
@@ -52,6 +54,22 @@ export const useMeetingStore = defineStore('meeting', () => {
   let loadSeq = 0;
   /** A resync asked for while `open()` was loading: run once it is done. */
   let resyncWanted = false;
+  /**
+   * Server time minus local time, in ms, from the last `serverNow` seen: the
+   * timer counts down on server time, whatever the local clock says.
+   */
+  const clockOffset = ref(0);
+
+  function syncClock(serverNow: unknown): void {
+    if (typeof serverNow !== 'string') return;
+    const at = Date.parse(serverNow);
+    if (!Number.isNaN(at)) clockOffset.value = at - Date.now();
+  }
+
+  /** The current server time, in ms since the epoch. */
+  function serverTime(): number {
+    return Date.now() + clockOffset.value;
+  }
 
   const me = computed(() => session.user?.id ?? null);
   const isFacilitator = computed(() => !!me.value && meeting.value?.facilitatorId === me.value);
@@ -85,6 +103,20 @@ export const useMeetingStore = defineStore('meeting', () => {
   const previousSpeaker = computed(() => speakers.value[speakerIndex.value - 1] ?? null);
   const isLastSpeaker = computed(() => speakerIndex.value >= speakers.value.length - 1);
 
+  const participants = computed(() => meeting.value?.participants ?? []);
+  const readyCount = computed(() => participants.value.filter((p) => p.ready).length);
+  const iAmReady = computed(
+    () => participants.value.find((p) => p.id === me.value)?.ready ?? false,
+  );
+  /** Ready is pressed in Reflect, Group and Vote (spec §8.2). */
+  const hasReady = computed(() => {
+    const phase = meeting.value?.phase;
+    return (
+      phase === MeetingPhase.reflect || phase === MeetingPhase.group || phase === MeetingPhase.vote
+    );
+  });
+  const myReflections = computed(() => (meeting.value?.reflections ?? []).filter((r) => r.mine));
+
   function reset(): void {
     loadSeq++;
     meeting.value = null;
@@ -110,6 +142,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     meeting.value = state;
     online = new Set(state.onlineIds);
     markOnline();
+    syncClock(state.serverNow);
   }
 
   /** Opens a meeting: joins it while it runs, then loads its state. */
@@ -224,6 +257,29 @@ export const useMeetingStore = defineStore('meeting', () => {
       }
       case 'phase.changed':
         m.phase = p.phase as MeetingStateDto['phase'];
+        // Ready flags reset with every phase; the snapshot of the new phase
+        // (e.g. every reflection, from Group on) comes from the server.
+        for (const participant of m.participants) participant.ready = false;
+        void resync();
+        break;
+      case 'timer.updated':
+        syncClock(p.serverNow);
+        m.timer = (p.timer as Timer | null) ?? null;
+        break;
+      case 'ready.changed': {
+        const participant = m.participants.find((x) => x.id === p.userId);
+        if (participant) participant.ready = p.ready as boolean;
+        break;
+      }
+      case 'reflection.count_changed':
+        m.reflectionCounts = p.counts as MeetingStateDto['reflectionCounts'];
+        break;
+      case 'reflection.writing':
+        m.writing = p.counts as MeetingStateDto['writing'];
+        break;
+      case 'reflection.changed':
+        // Another tab of ours changed one of our reflections.
+        if (!isOwnEvent(p)) void resync();
         break;
       case 'icebreaker.person_changed':
         m.icebreaker.index = p.index as number;
@@ -248,7 +304,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     optimistic?.();
     try {
       const res = await call();
-      if (res.status !== 200) throw apiError(res);
+      if (res.status !== 200 && res.status !== 201) throw apiError(res);
       accept(res.data as MeetingStateDto);
       return true;
     } catch (e) {
@@ -321,6 +377,46 @@ export const useMeetingStore = defineStore('meeting', () => {
     return act(() => api.endMeeting(id));
   }
 
+  function setTimer(action: TimerAction): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(() => api.setTimer(id, action));
+  }
+
+  function setReady(ready: boolean): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(
+      () => api.setReady(id, { ready }),
+      () => {
+        const mine = meeting.value!.participants.find((p) => p.id === me.value);
+        if (mine) mine.ready = ready;
+      },
+    );
+  }
+
+  function createReflection(column: ReflectionColumn, content: string): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(() => api.createReflection(id, { column, content }));
+  }
+
+  function updateReflection(
+    reflectionId: string,
+    change: { column?: ReflectionColumn; content?: string },
+  ): Promise<boolean> {
+    return act(() => api.updateReflection(reflectionId, change));
+  }
+
+  function deleteReflection(reflectionId: string): Promise<boolean> {
+    return act(
+      () => api.deleteReflection(reflectionId),
+      () => {
+        const m = meeting.value!;
+        const gone = m.reflections.find((r) => r.id === reflectionId);
+        m.reflections = m.reflections.filter((r) => r.id !== reflectionId);
+        if (gone) m.reflectionCounts[gone.column] -= 1;
+      },
+    );
+  }
+
   return {
     meeting,
     meetingId,
@@ -342,6 +438,12 @@ export const useMeetingStore = defineStore('meeting', () => {
     nextSpeaker,
     previousSpeaker,
     isLastSpeaker,
+    readyCount,
+    iAmReady,
+    hasReady,
+    myReflections,
+    clockOffset,
+    serverTime,
     open,
     resync,
     apply,
@@ -352,5 +454,10 @@ export const useMeetingStore = defineStore('meeting', () => {
     rename,
     setFacilitator,
     end,
+    setTimer,
+    setReady,
+    createReflection,
+    updateReflection,
+    deleteReflection,
   };
 });

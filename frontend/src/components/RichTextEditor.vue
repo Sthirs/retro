@@ -1,12 +1,17 @@
 <script setup lang="ts">
 /**
  * Rich text editor for the subset ADR-0010 stores: paragraphs, line breaks,
- * bold, italic, http(s)/mailto links and `@` mentions. Everything else is
- * switched off so the editor cannot produce content the server would strip.
+ * bold, italic and http(s)/mailto links, plus per `kind`:
+ * - `task`: `@` mentions;
+ * - `reflection`: strikethrough, bullet lists and inline code (spec §9.2), in
+ *   the compact Reflect composer (toolbar under the text, a placeholder,
+ *   Ctrl/Cmd + Enter submits, Esc cancels).
+ * Everything else is switched off so the editor cannot produce content the
+ * server would strip.
  */
 import Mention from '@tiptap/extension-mention';
 import StarterKit from '@tiptap/starter-kit';
-import { EditorContent, useEditor } from '@tiptap/vue-3';
+import { EditorContent, Extension, useEditor, type AnyExtension } from '@tiptap/vue-3';
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
@@ -14,8 +19,19 @@ import type { PersonDto } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
 import '@/styles/prosemirror.css';
 
-const props = defineProps<{ modelValue: string; members: PersonDto[]; label: string }>();
-const emit = defineEmits<{ 'update:modelValue': [html: string] }>();
+const props = withDefaults(
+  defineProps<{
+    modelValue: string;
+    members?: PersonDto[];
+    label: string;
+    kind?: 'task' | 'reflection';
+    placeholder?: string;
+    autofocus?: boolean;
+  }>(),
+  { members: () => [], kind: 'task', placeholder: '', autofocus: false },
+);
+const emit = defineEmits<{ 'update:modelValue': [html: string]; submit: []; cancel: [] }>();
+const reflection = props.kind === 'reflection';
 const { t } = useI18n();
 
 const MAX_SUGGESTIONS = 6;
@@ -73,8 +89,27 @@ const RetroMention = Mention.extend({
   },
 });
 
+/** Reflections: Ctrl/Cmd + Enter sends, Esc cancels. */
+const Shortcuts = Extension.create({
+  name: 'retroShortcuts',
+  addKeyboardShortcuts() {
+    return {
+      'Mod-Enter': () => {
+        emit('submit');
+        return true;
+      },
+      Escape: () => {
+        if (linkOpen.value) return false;
+        emit('cancel');
+        return true;
+      },
+    };
+  },
+});
+
 const editor = useEditor({
   content: props.modelValue,
+  autofocus: props.autofocus ? 'end' : false,
   // The CSP forbids inline <style>: the base styles come from prosemirror.css.
   injectCSS: false,
   editorProps: {
@@ -89,15 +124,15 @@ const editor = useEditor({
   extensions: [
     StarterKit.configure({
       heading: false,
-      bulletList: false,
+      bulletList: reflection ? {} : false,
       orderedList: false,
-      listItem: false,
-      listKeymap: false,
+      listItem: reflection ? {} : false,
+      listKeymap: reflection ? {} : false,
       blockquote: false,
-      code: false,
+      code: reflection ? {} : false,
       codeBlock: false,
       horizontalRule: false,
-      strike: false,
+      strike: reflection ? {} : false,
       underline: false,
       link: {
         openOnClick: false,
@@ -108,57 +143,66 @@ const editor = useEditor({
         HTMLAttributes: { rel: 'noopener noreferrer', target: null, class: null },
       },
     }),
-    RetroMention.configure({
-      HTMLAttributes: { 'data-type': 'mention' },
-      suggestion: {
-        char: '@',
-        items: ({ query }) => {
-          const needle = query.trim().toLowerCase();
-          return props.members
-            .filter((m) => m.displayName.toLowerCase().includes(needle))
-            .slice(0, MAX_SUGGESTIONS);
-        },
-        render: () => ({
-          onStart: (p) => {
-            selectedIndex.value = 0;
-            suggestion.value = { items: p.items, command: p.command };
-          },
-          onUpdate: (p) => {
-            selectedIndex.value = 0;
-            suggestion.value = { items: p.items, command: p.command };
-          },
-          onExit: () => {
-            suggestion.value = null;
-          },
-          onKeyDown: ({ event }) => {
-            const count = suggestion.value?.items.length ?? 0;
-            if (count === 0) return false;
-            if (event.key === 'Escape') {
-              // The plugin closes the menu; keep the Esc from also closing a parent dialog.
-              event.stopPropagation();
-              event.preventDefault();
-              return true;
-            }
-            if (event.key === 'ArrowDown') {
-              selectedIndex.value = (selectedIndex.value + 1) % count;
-              return true;
-            }
-            if (event.key === 'ArrowUp') {
-              selectedIndex.value = (selectedIndex.value - 1 + count) % count;
-              return true;
-            }
-            if (event.key === 'Enter') {
-              selectItem(selectedIndex.value);
-              return true;
-            }
-            return false;
-          },
-        }),
-      },
-    }),
+    ...(reflection ? [Shortcuts] : [mentions()]),
   ],
   onUpdate: ({ editor: e }) => emit('update:modelValue', e.getHTML()),
 });
+
+/** Task mentions, with their own ARIA listbox. */
+function mentions(): AnyExtension {
+  return RetroMention.configure({
+    HTMLAttributes: { 'data-type': 'mention' },
+    suggestion: {
+      char: '@',
+      items: ({ query }) => {
+        const needle = query.trim().toLowerCase();
+        return props.members
+          .filter((m) => m.displayName.toLowerCase().includes(needle))
+          .slice(0, MAX_SUGGESTIONS);
+      },
+      render: () => ({
+        onStart: (p) => {
+          selectedIndex.value = 0;
+          suggestion.value = { items: p.items, command: p.command };
+        },
+        onUpdate: (p) => {
+          selectedIndex.value = 0;
+          suggestion.value = { items: p.items, command: p.command };
+        },
+        onExit: () => {
+          suggestion.value = null;
+        },
+        onKeyDown: ({ event }) => {
+          const count = suggestion.value?.items.length ?? 0;
+          if (count === 0) return false;
+          if (event.key === 'Escape') {
+            // The plugin closes the menu; keep the Esc from also closing a parent dialog.
+            event.stopPropagation();
+            event.preventDefault();
+            return true;
+          }
+          if (event.key === 'ArrowDown') {
+            selectedIndex.value = (selectedIndex.value + 1) % count;
+            return true;
+          }
+          if (event.key === 'ArrowUp') {
+            selectedIndex.value = (selectedIndex.value - 1 + count) % count;
+            return true;
+          }
+          if (event.key === 'Enter') {
+            selectItem(selectedIndex.value);
+            return true;
+          }
+          return false;
+        },
+      }),
+    },
+  });
+}
+
+const empty = computed(() => editor.value?.isEmpty ?? props.modelValue === '');
+
+defineExpose({ focus: () => editor.value?.commands.focus('end') });
 
 watch(
   () => props.modelValue,
@@ -254,7 +298,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="rte">
+  <div class="rte" :class="{ 'rte--reflection': reflection }">
     <div class="rte-toolbar" role="toolbar" :aria-label="t('richText.toolbar')">
       <button
         type="button"
@@ -275,6 +319,16 @@ onBeforeUnmount(() => {
         <AppIcon name="italic" :size="16" />
       </button>
       <button
+        v-if="reflection"
+        type="button"
+        class="rte-btn"
+        :aria-label="t('richText.strike')"
+        :aria-pressed="editor?.isActive('strike') ?? false"
+        @click="editor?.chain().focus().toggleStrike().run()"
+      >
+        <AppIcon name="strikethrough" :size="16" />
+      </button>
+      <button
         ref="linkButton"
         type="button"
         class="rte-btn"
@@ -285,6 +339,26 @@ onBeforeUnmount(() => {
       >
         <AppIcon name="link" :size="16" />
       </button>
+      <template v-if="reflection">
+        <button
+          type="button"
+          class="rte-btn"
+          :aria-label="t('richText.bulletList')"
+          :aria-pressed="editor?.isActive('bulletList') ?? false"
+          @click="editor?.chain().focus().toggleBulletList().run()"
+        >
+          <AppIcon name="list" :size="16" />
+        </button>
+        <button
+          type="button"
+          class="rte-btn"
+          :aria-label="t('richText.code')"
+          :aria-pressed="editor?.isActive('code') ?? false"
+          @click="editor?.chain().focus().toggleCode().run()"
+        >
+          <AppIcon name="code" :size="16" />
+        </button>
+      </template>
     </div>
 
     <form
@@ -320,6 +394,9 @@ onBeforeUnmount(() => {
 
     <div class="rte-area">
       <EditorContent :editor="editor" />
+      <span v-if="placeholder && empty" class="rte-placeholder" aria-hidden="true">
+        {{ placeholder }}
+      </span>
       <ul
         v-if="suggestion && suggestion.items.length > 0"
         :id="listId"
@@ -443,6 +520,77 @@ onBeforeUnmount(() => {
 
 .rte-area {
   position: relative;
+}
+
+.rte-placeholder {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.rte-area :deep(.rte-content ul) {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.rte-area :deep(.rte-content code) {
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  background: var(--well);
+  font-size: 13px;
+}
+
+/* Reflect composer (Reflect artboard): text first, then a compact toolbar;
+   the composer around it draws the frame. */
+.rte--reflection {
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.rte--reflection:focus-within {
+  outline: none;
+}
+
+.rte--reflection .rte-area {
+  order: -1;
+}
+
+.rte--reflection .rte-area :deep(.rte-content) {
+  min-height: 64px;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.rte--reflection .rte-placeholder {
+  top: 12px;
+  left: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.rte--reflection .rte-toolbar {
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 2px 4px;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.rte--reflection .rte-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-control);
+}
+
+.rte--reflection .rte-link {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
 }
 
 .rte-area :deep(.rte-content) {

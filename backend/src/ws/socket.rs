@@ -282,7 +282,9 @@ async fn command(
     Some(subscription_command(state, user_id, command, out, subscriptions).await)
 }
 
-/// Records what the socket is writing in a running meeting it is in.
+/// Records what the socket is writing in a running meeting it is in. Its
+/// errors (`not_subscribed`, `not_writable`) are its own codes: clients must
+/// not take them for a lost subscription.
 async fn writing(
     state: &AppState,
     channel: &str,
@@ -291,7 +293,7 @@ async fn writing(
     subscriptions: &mut HashMap<String, Subscription>,
 ) -> Result<(), &'static str> {
     let subscription = subscriptions.get_mut(channel).ok_or("not_subscribed")?;
-    let (meeting, _) = subscription.presence.ok_or("invalid_channel")?;
+    let (meeting, _) = subscription.presence.ok_or("not_writable")?;
     let to = column.map(|c| (c, mode.unwrap_or(WritingMode::New)));
     let from = std::mem::replace(&mut subscription.writing, to);
     state.hub.set_writing(meeting, from, to).await;

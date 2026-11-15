@@ -1174,7 +1174,7 @@ async fn writing_needs_a_running_meeting_the_socket_follows() {
         .await
         .unwrap();
     let error = next_of(&mut socket, "error").await;
-    assert_eq!(error["payload"]["code"], "invalid_channel");
+    assert_eq!(error["payload"]["code"], "not_writable");
 
     // An unknown column is not a valid message.
     subscribe(&mut socket, &format!("meeting:{m}")).await;

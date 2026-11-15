@@ -5,6 +5,10 @@
  * acknowledges a subscription (the first one, or after a reconnect) the
  * channel gets a `resync` event: whatever its listeners read over REST before
  * that may have missed events published until the acknowledgement.
+ *
+ * It also carries the tab's ephemeral writing state (ADR-0012), which the
+ * server ties to the socket: it is sent again after every acknowledgement, so
+ * a reconnect restores it.
  */
 import { ref, type Ref } from 'vue';
 
@@ -22,6 +26,12 @@ export interface RealtimeEvent {
 
 export type RealtimeHandler = (event: RealtimeEvent) => void;
 
+/** What the tab is writing in a meeting: a column and whether it is a new reflection. */
+export interface WritingState {
+  column: string;
+  mode: 'new' | 'edit';
+}
+
 /**
  * `idle`: no subscriptions; `connecting`: the first attempt is under way;
  * `reconnecting`: the socket dropped, or an attempt failed, and it is coming back.
@@ -29,6 +39,8 @@ export type RealtimeHandler = (event: RealtimeEvent) => void;
 export type RealtimeStatus = 'idle' | 'connecting' | 'open' | 'reconnecting';
 
 const MAX_BACKOFF_MS = 30_000;
+/** Error codes that answer a `writing` message, not a subscription (ADR-0012). */
+const WRITING_ERRORS = new Set(['not_subscribed', 'not_writable']);
 /** How long the socket stays open without subscriptions (page changes resubscribe quickly). */
 const IDLE_CLOSE_MS = 10_000;
 
@@ -45,6 +57,8 @@ export class RealtimeClient {
   private generation = 0;
   /** The attempt (generation) waiting for its ticket, if any. */
   private ticketFor: number | null = null;
+  /** Writing state per meeting channel, re-sent after each acknowledgement. */
+  private readonly writing = new Map<string, WritingState>();
 
   constructor(
     private readonly ticket: () => Promise<string | null> = fetchTicket,
@@ -66,9 +80,28 @@ export class RealtimeClient {
     return () => this.unsubscribe(channel, handler);
   }
 
+  /**
+   * Tells the meeting `channel` what this tab is writing (`null`: nothing).
+   * Sent at once while the subscription is live, otherwise on its ack.
+   */
+  setWriting(channel: string, state: WritingState | null): void {
+    const before = this.writing.get(channel);
+    if (before?.column === state?.column && before?.mode === state?.mode) return;
+    if (state) this.writing.set(channel, state);
+    else this.writing.delete(channel);
+    if (this.handlers.has(channel) && !this.awaitingAck.has(channel)) {
+      this.sendWriting(channel, state);
+    }
+  }
+
+  private sendWriting(channel: string, state: WritingState | null): void {
+    this.send({ type: 'writing', channel, column: state?.column ?? null, mode: state?.mode });
+  }
+
   /** Closes the socket and forgets every subscription (sign-out). */
   disconnect(): void {
     this.handlers.clear();
+    this.writing.clear();
     this.close();
   }
 
@@ -77,6 +110,7 @@ export class RealtimeClient {
     if (!set?.delete(handler) || set.size > 0) return;
     this.handlers.delete(channel);
     this.awaitingAck.delete(channel);
+    this.writing.delete(channel);
     this.send({ type: 'unsubscribe', channel });
     if (this.handlers.size === 0) {
       this.idleTimer = setTimeout(() => this.close(), IDLE_CLOSE_MS);
@@ -140,12 +174,18 @@ export class RealtimeClient {
       if (event.type === 'subscribed') {
         // Live from here on: listeners re-read what they may have missed.
         if (this.awaitingAck.delete(event.channel)) {
+          const writing = this.writing.get(event.channel);
+          if (writing) this.sendWriting(event.channel, writing);
           this.dispatch({ type: 'resync', channel: event.channel, seq: null, payload: {} });
         }
         return;
       }
       if (event.type === 'unsubscribed') return;
-      if (event.type === 'error') this.awaitingAck.delete(event.channel);
+      if (event.type === 'error') {
+        // A refused writing message: the subscription itself is fine.
+        if (WRITING_ERRORS.has(event.payload?.code)) return;
+        this.awaitingAck.delete(event.channel);
+      }
       this.dispatch({ ...event, seq: event.seq ?? null, payload: event.payload ?? {} });
     };
     socket.onclose = () => {
@@ -177,7 +217,7 @@ export class RealtimeClient {
     this.send({ type: 'subscribe', channel });
   }
 
-  private send(message: { type: string; channel: string }): void {
+  private send(message: { type: string; channel: string; [key: string]: unknown }): void {
     if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message));
   }
 

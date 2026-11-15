@@ -610,7 +610,10 @@ impl Hub {
             if !*self.ready.borrow() {
                 continue;
             }
-            let expired = self.online.lock().expect("hub presence").expire(
+            // Announced under the lock, like every change of the cluster
+            // view: a later change cannot be announced before this one.
+            let mut online = self.online.lock().expect("hub presence");
+            let expired = online.expire(
                 Instant::now(),
                 self.heartbeat * MISSED_HEARTBEATS,
                 self.replica,
@@ -621,6 +624,7 @@ impl Hub {
             for (meeting, counts) in expired.writing {
                 self.send_writing(meeting, &counts);
             }
+            drop(online);
         }
     }
 
@@ -749,12 +753,10 @@ impl Hub {
             return;
         };
         self.heard_from(replica).await;
-        let changed = self
-            .online
-            .lock()
-            .expect("hub presence")
-            .apply(meeting, team, user, replica, online);
-        if changed {
+        // Announced under the lock: changes reach clients in the order they
+        // were folded in (the heartbeat's expiry included).
+        let mut view = self.online.lock().expect("hub presence");
+        if view.apply(meeting, team, user, replica, online) {
             self.send_presence(meeting, team, user, online);
         }
     }
@@ -772,12 +774,10 @@ impl Hub {
             return;
         };
         self.heard_from(replica).await;
-        let changed = self
-            .online
-            .lock()
-            .expect("hub presence")
-            .set_writing(meeting, replica, counts);
-        if let Some(total) = changed {
+        // Announced under the lock: a total cannot overtake a newer one (the
+        // heartbeat's expiry included).
+        let mut view = self.online.lock().expect("hub presence");
+        if let Some(total) = view.set_writing(meeting, replica, counts) {
             self.send_writing(meeting, &total);
         }
     }

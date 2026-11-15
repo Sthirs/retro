@@ -375,8 +375,7 @@ export default {
     title: 'End this meeting?',
     readOnly: 'The meeting becomes read-only and everyone goes to its summary.',
     link: 'The meeting invite link stops working.',
-    tasks:
-      '{tasks} stays on the Tasks board, in the Active column. | {tasks} stay on the Tasks board, in the Active column.',
+    tasks: '{tasks} stays on the Tasks board. | {tasks} stay on the Tasks board.',
     keepGoing: 'Keep going',
     confirm: 'End meeting',
   },

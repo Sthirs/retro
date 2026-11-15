@@ -41,6 +41,23 @@ describe('Meeting invite link', () => {
     wrapper.unmount();
   });
 
+  it('stays where the user went if they leave during the pause', async () => {
+    await mockSocket();
+    mockFetch({
+      'POST /api/v1/auth/refresh': session(),
+      'POST /api/v1/meeting-invites/tok/accept': accepted(true),
+      'GET /api/v1/me': me([team({ role: 'member' })]),
+      'POST /api/v1/ws-ticket': wsTicket(),
+      [`GET /api/v1/teams/${TEAM_ID}/tasks`]: { status: 200, body: [] },
+    });
+    const { wrapper, router } = await renderAt('/m/tok');
+    expect(wrapper.find('h1').text()).toBe('Joining Retro #3…');
+    await router.push(`/teams/${TEAM_ID}/tasks`);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(router.currentRoute.value.fullPath).toBe(`/teams/${TEAM_ID}/tasks`);
+    wrapper.unmount();
+  });
+
   it('takes a member straight into the room', async () => {
     await mockSocket();
     mockFetch({

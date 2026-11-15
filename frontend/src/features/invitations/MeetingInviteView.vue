@@ -3,7 +3,7 @@
  * `/m/:inviteToken`: joins the team if needed, then the running meeting, and
  * goes straight into its room (spec §6.3, LinkStates artboard).
  */
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
@@ -37,19 +37,30 @@ function enter(meeting: MeetingInviteAcceptedDto): Promise<unknown> {
   });
 }
 
+// Leaving the page (back button, another link) cancels the trip to the room.
+let left = false;
+let pause: ReturnType<typeof setTimeout> | undefined;
+onBeforeUnmount(() => {
+  left = true;
+  clearTimeout(pause);
+});
+
 onMounted(async () => {
   try {
     const res = await api.acceptMeetingInvite(encodeURIComponent(String(route.params.inviteToken)));
+    if (left) return;
     if (res.status === 200) {
-      // The room's guard checks membership against the teams store.
-      await teams.load();
+      // The room's guard checks membership against the teams store: read it
+      // afresh, a load started before the join would not have the team.
+      await teams.reload();
+      if (left) return;
       if (!res.data.joinedTeam) {
         await enter(res.data);
         return;
       }
       const team = teams.byId(res.data.teamId)?.name ?? '';
       state.value = { kind: 'joined', meeting: res.data, team };
-      setTimeout(() => void enter(res.data), JOINED_PAUSE_MS);
+      pause = setTimeout(() => void enter(res.data), JOINED_PAUSE_MS);
     } else if (res.status === 404) {
       state.value = { kind: 'ended' };
     } else {

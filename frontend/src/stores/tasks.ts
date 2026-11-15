@@ -95,32 +95,51 @@ export const useTasksStore = defineStore('tasks', () => {
     } catch (e) {
       if (seq === loadSeq) error.value = errorCode(e);
     } finally {
-      if (seq === loadSeq) loading.value = false;
+      if (seq === loadSeq) {
+        loading.value = false;
+        flushRefresh();
+      }
     }
   }
 
   /**
    * Reloads the board quietly after another member changed it (a real-time
-   * event). While one of our own moves is waiting for its answer, the reload
-   * waits too, so the card does not jump back and forth.
+   * event). While a load or one of our own moves is waiting for its answer,
+   * the reload waits too, so the card does not jump back and forth. An answer
+   * overtaken by one of our own changes is dropped and asked again: it may
+   * predate that change, whose own echo does not reload the board.
    */
   let refreshWanted = false;
+  // Bumped by each of our own changes that lands.
+  let mutationRev = 0;
   async function refresh(): Promise<void> {
     if (!last) return;
-    if (latestMove.size > 0) {
+    if (latestMove.size > 0 || loading.value) {
       refreshWanted = true;
       return;
     }
     refreshWanted = false;
     const { teamId, filter } = last;
     const seq = ++loadSeq;
+    const rev = mutationRev;
     try {
       const res = await api.listTasks(teamId, filter);
       if (res.status !== 200) throw apiError(res);
-      if (seq === loadSeq && latestMove.size === 0) tasks.value = res.data;
+      if (seq !== loadSeq) return;
+      if (latestMove.size > 0 || rev !== mutationRev) {
+        refreshWanted = true;
+        flushRefresh();
+        return;
+      }
+      tasks.value = res.data;
     } catch {
       // Keep the current board; the next event or load tries again.
     }
+  }
+
+  /** Runs the reload that had to wait, once nothing holds it back. */
+  function flushRefresh(): void {
+    if (refreshWanted && latestMove.size === 0 && !loading.value) void refresh();
   }
 
   /**
@@ -185,6 +204,7 @@ export const useTasksStore = defineStore('tasks', () => {
     try {
       const res = await api.moveTask(taskId, body);
       if (res.status !== 200) throw apiError(res);
+      mutationRev++;
       if (isLatest()) {
         latestMove.delete(taskId);
         replace(res.data);
@@ -200,7 +220,7 @@ export const useTasksStore = defineStore('tasks', () => {
       // board meanwhile.
       await refreshAfter(errorCode(e), MOVE_RELOAD_CODES);
     } finally {
-      if (refreshWanted && latestMove.size === 0) void refresh();
+      flushRefresh();
     }
   }
 
@@ -209,8 +229,10 @@ export const useTasksStore = defineStore('tasks', () => {
     try {
       const res = await api.updateTask(taskId, { content: contentHtml });
       if (res.status !== 200) throw apiError(res);
+      mutationRev++;
       error.value = null;
       replace(res.data);
+      flushRefresh();
     } catch (e) {
       await refreshAfter(errorCode(e), GONE_CODES);
       throw e;
@@ -221,8 +243,10 @@ export const useTasksStore = defineStore('tasks', () => {
     try {
       const res = await api.deleteTask(taskId);
       if (res.status !== 204) throw apiError(res);
+      mutationRev++;
       error.value = null;
       tasks.value = tasks.value.filter((t) => t.id !== taskId);
+      flushRefresh();
     } catch (e) {
       await refreshAfter(errorCode(e), GONE_CODES);
       throw e;

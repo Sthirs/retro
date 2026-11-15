@@ -217,7 +217,13 @@ async fn command(
             if subscriptions.len() >= MAX_SUBSCRIPTIONS {
                 return error(&name, "too_many_subscriptions");
             }
-            let Ok(channel) = name.parse::<Channel>() else {
+            // Only the canonical spelling (lowercase, hyphenated UUID): events
+            // are published under it, another spelling would never get any.
+            let Some(channel) = name
+                .parse::<Channel>()
+                .ok()
+                .filter(|c| c.to_string() == name)
+            else {
                 return error(&name, "invalid_channel");
             };
             let (team, presence) = match authorize(state, user_id, channel).await {

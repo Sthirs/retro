@@ -1,7 +1,9 @@
-import { expect, test, type Browser, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page, type Request } from "@playwright/test";
 
 import { createTeam, deleteTeam, seedTask, startMeeting, userIdOf } from "../api";
+import { watchCsp } from "../csp";
 import { PASSWORD, USERS } from "../fixtures";
+import { channelSubscribed } from "../realtime";
 import { AccountPage } from "../pages/AccountPage";
 import { AppShell } from "../pages/AppShell";
 import { SignInPage } from "../pages/SignInPage";
@@ -30,16 +32,20 @@ async function signIn(page: Page, user: keyof typeof USERS): Promise<AppShell> {
 
 test.describe("tasks board", () => {
   let teamId: string;
+  let cspViolations: string[];
 
   // Each test works in a team of its own and deletes only that team, so it
   // needs no particular starting state for erin and finn.
   test.beforeEach(async ({ page }) => {
     teamId = await createTeam(ERIN, TEAM);
+    cspViolations = await watchCsp(page);
     await signIn(page, "erin");
   });
 
   test.afterEach(async () => {
     await deleteTeam(ERIN, teamId);
+    // The board works within the app's own Content Security Policy.
+    expect(cspViolations).toEqual([]);
   });
 
   /** Finn joins through the team's join link, in his own browser session. */
@@ -255,6 +261,9 @@ test.describe("tasks board", () => {
     const finn = await finnJoins(page, browser);
     const finnTasks = new TasksPage(finn);
     await finnTasks.goto(teamId);
+    // The first load has answered (the empty state), so the seeded task can
+    // only reach Finn through the team channel.
+    await expect(finnTasks.empty).toBeVisible();
     await expect(finn.getByRole("article")).toHaveCount(0);
 
     // Erin's new task shows up on Finn's open board.
@@ -274,19 +283,28 @@ test.describe("tasks board", () => {
     const finn = await finnJoins(page, browser);
     await seedTask(ERIN, teamId, { status: "future", content: "<p>Mine to move</p>" });
     await seedTask(FINN, teamId, { status: "future", content: "<p>Finn's own</p>" });
+    const isList = (request: Request) =>
+      request.method() === "GET" &&
+      /^\/api\/v1\/teams\/[^/]+\/tasks$/.test(new URL(request.url()).pathname);
+    // A board loaded before its channel went live re-reads itself once it is
+    // (it may have missed events). Let any such re-read land before counting.
+    let inFlight = 0;
+    page.on("request", (r) => void (isList(r) && inFlight++));
+    page.on("requestfinished", (r) => void (isList(r) && inFlight--));
+    page.on("requestfailed", (r) => void (isList(r) && inFlight--));
+    const subscribed = channelSubscribed(page, `team:${teamId}`);
     const tasks = new TasksPage(page);
     await tasks.goto(teamId);
     const finnTasks = new TasksPage(finn);
     await finnTasks.goto(teamId);
     await expect(tasks.card("Mine to move")).toBeVisible();
     await expect(finnTasks.card("Mine to move")).toBeVisible();
+    await subscribed;
+    await expect.poll(() => inFlight).toBe(0);
 
     let reloads = 0;
     page.on("request", (request) => {
-      const path = new URL(request.url()).pathname;
-      if (request.method() === "GET" && /^\/api\/v1\/teams\/[^/]+\/tasks$/.test(path)) {
-        reloads++;
-      }
+      if (isList(request)) reloads++;
     });
 
     // Erin's move and edit reach Finn, and Erin's board does not reload for them.

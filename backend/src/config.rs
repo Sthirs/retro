@@ -2,7 +2,7 @@
 //!
 //! Every variable is documented in `docs/development.md` ("Configuration").
 
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use openidconnect::reqwest::Certificate;
 use url::Url;
@@ -95,7 +95,13 @@ pub struct Config {
     pub password_reset_url: Option<Url>,
     pub oidc: Option<OidcConfig>,
     pub seed_dev_users: bool,
+    /// How often each replica tells the others it is alive (ADR-0011); not
+    /// read from the environment, tests shorten it.
+    pub presence_heartbeat: Duration,
 }
+
+/// The presence heartbeat of a deployed backend.
+pub const PRESENCE_HEARTBEAT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -246,6 +252,7 @@ impl Config {
                 .transpose()?,
             oidc,
             seed_dev_users,
+            presence_heartbeat: PRESENCE_HEARTBEAT,
         })
     }
 
@@ -274,6 +281,7 @@ impl Config {
             password_reset_url: None,
             oidc: None,
             seed_dev_users: true,
+            presence_heartbeat: PRESENCE_HEARTBEAT,
         }
     }
 }

@@ -145,6 +145,27 @@ async fn subscriptions_are_limited_to_team_members() {
 }
 
 #[tokio::test]
+async fn channels_must_be_spelled_canonically() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let alice = app.token_for("alice").await;
+    let team = create_team(&app, &alice, "Platform").await;
+    let mut socket = connect(&addr, &ticket(&app, &alice).await).await;
+
+    // Events go out as `team:{lowercase hyphenated}`: another spelling of the
+    // same id would authorise but never receive anything.
+    let upper = format!("team:{}", team.to_string().to_uppercase());
+    let simple = format!("team:{}", team.simple());
+    let braced = format!("team:{}", team.braced());
+    for name in [&upper, &simple, &braced] {
+        let reply = subscribe(&mut socket, name).await;
+        assert_eq!(reply["payload"]["code"], "invalid_channel", "{name}");
+    }
+    let reply = subscribe(&mut socket, &format!("team:{team}")).await;
+    assert_eq!(reply["type"], "subscribed");
+}
+
+#[tokio::test]
 async fn teammates_see_a_new_meeting_live() {
     let app = TestApp::new().await;
     let addr = app.spawn_server().await;
@@ -868,4 +889,83 @@ async fn task_events_name_the_tab_that_made_the_change() {
     let deleted = next_of(&mut socket, "task.deleted").await;
     assert_eq!(deleted["payload"]["clientId"], tab);
     assert_eq!(deleted["payload"]["taskId"], task);
+}
+
+/// Publishes a notification as another replica would.
+async fn notify_raw(app: &TestApp, notification: Value) {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    app.db
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT pg_notify('retro_events', $1)",
+            [notification.to_string().into()],
+        ))
+        .await
+        .unwrap();
+}
+
+/// The next presence change of `user`.
+async fn presence_of(socket: &mut Socket, user: &str) -> bool {
+    loop {
+        let event = next_of(socket, "presence.changed").await;
+        if event["payload"]["userId"] == user {
+            return event["payload"]["online"].as_bool().unwrap();
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_replica_that_goes_silent_loses_its_presence() {
+    let app = TestApp::with_config(|c| c.presence_heartbeat = Duration::from_millis(100)).await;
+    let addr = app.spawn_server().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let bob_id = user_id(&app, &bob).await;
+    let team = create_team(&app, &alice, "Platform").await;
+    join_team(&app, &alice, team, &bob).await;
+    let m = start_meeting(&app, &alice, team).await;
+    let mut socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut socket, &format!("meeting:{m}")).await;
+
+    // Bob's socket lives on another replica, which then dies without a word.
+    notify_raw(
+        &app,
+        json!({
+            "channel": format!("meeting:{m}"),
+            "type": "presence.changed",
+            "seq": null,
+            "payload": {
+                "meetingId": m, "teamId": team, "userId": bob_id,
+                "online": true, "replica": Uuid::now_v7(),
+            },
+        }),
+    )
+    .await;
+    assert!(presence_of(&mut socket, &bob_id).await);
+    // Three missed heartbeats later, Bob is offline.
+    assert!(!presence_of(&mut socket, &bob_id).await);
+    let ids = online_ids(&app, &alice, &m).await;
+    assert!(!ids.contains(&json!(bob_id)), "{ids:?}");
+}
+
+#[tokio::test]
+async fn a_stopping_replica_takes_its_users_offline() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let bob_id = user_id(&app, &bob).await;
+    let team = create_team(&app, &alice, "Platform").await;
+    join_team(&app, &alice, team, &bob).await;
+    let m = start_meeting(&app, &alice, team).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+    assert!(presence_of(&mut alice_socket, &bob_id).await);
+
+    // The goodbye goes out although Bob's socket is still open.
+    app.state.hub.shutdown().await;
+    assert!(!presence_of(&mut alice_socket, &bob_id).await);
 }

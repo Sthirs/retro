@@ -1,9 +1,10 @@
 /**
  * The real-time WebSocket (spec §11, ADR-0011): one socket per tab, opened
  * with a short-lived ticket, carrying `meeting:{id}` and `team:{id}` channels.
- * It reconnects with exponential backoff and re-subscribes; after a
- * reconnect every channel gets a `resync` event, since events may have been
- * missed in between.
+ * It reconnects with exponential backoff and re-subscribes. Once the server
+ * acknowledges a subscription (the first one, or after a reconnect) the
+ * channel gets a `resync` event: whatever its listeners read over REST before
+ * that may have missed events published until the acknowledgement.
  */
 import { ref, type Ref } from 'vue';
 
@@ -35,11 +36,15 @@ export class RealtimeClient {
   readonly status: Ref<RealtimeStatus> = ref('idle');
   private socket: WebSocket | null = null;
   private readonly handlers = new Map<string, Set<RealtimeHandler>>();
+  /** Channels whose `subscribe` is sent but not yet acknowledged. */
+  private readonly awaitingAck = new Set<string>();
   private attempts = 0;
   private wasOpen = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private generation = 0;
+  /** The attempt (generation) waiting for its ticket, if any. */
+  private ticketFor: number | null = null;
 
   constructor(
     private readonly ticket: () => Promise<string | null> = fetchTicket,
@@ -56,7 +61,7 @@ export class RealtimeClient {
     }
     set.add(handler);
     this.clearIdle();
-    if (first) this.send({ type: 'subscribe', channel });
+    if (first) this.requestSubscription(channel);
     this.ensureConnected();
     return () => this.unsubscribe(channel, handler);
   }
@@ -71,6 +76,7 @@ export class RealtimeClient {
     const set = this.handlers.get(channel);
     if (!set?.delete(handler) || set.size > 0) return;
     this.handlers.delete(channel);
+    this.awaitingAck.delete(channel);
     this.send({ type: 'unsubscribe', channel });
     if (this.handlers.size === 0) {
       this.idleTimer = setTimeout(() => this.close(), IDLE_CLOSE_MS);
@@ -80,6 +86,7 @@ export class RealtimeClient {
   private close(): void {
     this.generation++;
     this.clearIdle();
+    this.awaitingAck.clear();
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.socket?.close();
@@ -96,14 +103,18 @@ export class RealtimeClient {
 
   private ensureConnected(): void {
     if (this.socket || this.retryTimer || this.handlers.size === 0) return;
+    // A ticket is already on its way: that attempt opens the socket.
+    if (this.ticketFor === this.generation) return;
     void this.connect();
   }
 
   private async connect(): Promise<void> {
     const generation = ++this.generation;
+    this.ticketFor = generation;
     this.status.value = this.wasOpen || this.attempts > 0 ? 'reconnecting' : 'connecting';
     const ticket = await this.ticket().catch(() => null);
     if (generation !== this.generation) return;
+    this.ticketFor = null;
     if (!ticket) {
       this.status.value = 'reconnecting';
       this.scheduleRetry();
@@ -113,16 +124,10 @@ export class RealtimeClient {
     this.socket = socket;
     socket.onopen = () => {
       if (socket !== this.socket) return;
-      const reconnected = this.wasOpen;
       this.attempts = 0;
       this.wasOpen = true;
       this.status.value = 'open';
-      for (const channel of this.handlers.keys()) this.send({ type: 'subscribe', channel });
-      if (reconnected) {
-        for (const channel of this.handlers.keys()) {
-          this.dispatch({ type: 'resync', channel, seq: null, payload: {} });
-        }
-      }
+      for (const channel of this.handlers.keys()) this.requestSubscription(channel);
     };
     socket.onmessage = (message) => {
       if (socket !== this.socket || typeof message.data !== 'string') return;
@@ -132,7 +137,15 @@ export class RealtimeClient {
       } catch {
         return;
       }
-      if (event.type === 'subscribed' || event.type === 'unsubscribed') return;
+      if (event.type === 'subscribed') {
+        // Live from here on: listeners re-read what they may have missed.
+        if (this.awaitingAck.delete(event.channel)) {
+          this.dispatch({ type: 'resync', channel: event.channel, seq: null, payload: {} });
+        }
+        return;
+      }
+      if (event.type === 'unsubscribed') return;
+      if (event.type === 'error') this.awaitingAck.delete(event.channel);
       this.dispatch({ ...event, seq: event.seq ?? null, payload: event.payload ?? {} });
     };
     socket.onclose = () => {
@@ -156,6 +169,12 @@ export class RealtimeClient {
       this.retryTimer = null;
       this.ensureConnected();
     }, jittered);
+  }
+
+  /** Subscribes on the open socket (else `onopen` does), awaiting the ack. */
+  private requestSubscription(channel: string): void {
+    this.awaitingAck.add(channel);
+    this.send({ type: 'subscribe', channel });
   }
 
   private send(message: { type: string; channel: string }): void {

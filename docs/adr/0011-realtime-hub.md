@@ -23,10 +23,15 @@ We will build the hub as follows:
 - **Authentication.** `POST /api/v1/ws-ticket` (Bearer-authenticated) returns a ticket valid
   for 30 seconds. The ticket is a stateless HS256 JWT (user id, expiry) signed with the JWT
   secret, so any replica can verify it; its issuer differs from access tokens', so neither is
-  accepted in place of the other. The client opens
-  `/api/v1/ws?ticket=…`; the ticket is short-lived, so leaking it in an access log is harmless.
+  accepted in place of the other. The client opens `/api/v1/ws?ticket=…`. The ticket is not
+  consumed: it can open sockets until it expires, and a socket opened with it stays
+  authenticated after that. A ticket leaked within those 30 seconds (an access log, a proxy)
+  therefore opens an authenticated socket for its user. Keeping `ticket` out of ingress and
+  proxy logs, and single-use tickets, are open follow-ups.
 - **Protocol.** After the handshake the client sends `{"type":"subscribe","channel":"…"}` or
-  `{"type":"unsubscribe","channel":"…"}`. The server checks team membership for each
+  `{"type":"unsubscribe","channel":"…"}`. Channel names must use the canonical spelling
+  (lowercase, hyphenated UUID), the one events are published under; any other is
+  `invalid_channel`. The server checks team membership for each
   subscription (a meeting channel resolves to its team) and answers
   `{"type":"subscribed","channel":"…"}` or
   `{"type":"error","channel":"…","seq":null,"payload":{"code":"…"}}`.
@@ -46,8 +51,10 @@ We will build the hub as follows:
   local sockets.
 - **Ordering.** `seq` is per channel: `meetings.event_seq` and `teams.event_seq` are
   incremented in the writing transaction, under the row lock that already serialises writes to
-  that meeting or team. A client that sees a gap, or reconnects, re-reads the full state
-  (`GET /meetings/{id}/state`, or the list it shows) instead of replaying events. No event log
+  that meeting or team. A client that sees a gap re-reads the full state
+  (`GET /meetings/{id}/state`, or the list it shows) instead of replaying events. It also
+  re-reads once each subscription is acknowledged, the first one or after a reconnect, since
+  events published between its REST read and the acknowledgement never reach it. No event log
   is kept. A write that touches a meeting locks the team row first and the meeting row second
   (the order of every team mutation, including the cascade of a team delete), so meeting
   writes, task writes and team deletion cannot deadlock.
@@ -59,7 +66,14 @@ We will build the hub as follows:
   keyed by replica id. A starting replica publishes `presence.sync`, to which every replica
   answers by re-announcing its local sockets. A replica holds one async lock from a socket
   count transition until its notification is sent, so its online/offline announcements commit
-  (and reach every replica) in the order of the transitions. Presence changes go to the
+  (and reach every replica) in the order of the transitions. An announcement that cannot be
+  published is retried on the next heartbeat, with the user's socket count at that time.
+  Every 15 seconds each replica publishes `presence.alive`; a replica silent for three
+  heartbeats (killed, partitioned) is forgotten, and its users go offline. If it speaks again,
+  `presence.sync` is published. A stopping replica announces its users offline as soon as it
+  receives SIGTERM, without waiting for its sockets to close. After its listener reconnects,
+  a replica rebuilds its own entries from its sockets (its own announcements may have been
+  missed too), and asks the others for theirs. Presence changes go to the
   meeting channel and, as `presence.changed` with the meeting id, to the team channel, where
   clients patch the meeting card instead of reloading the list.
 - **Echo suppression.** Each tab sends a random `X-Client-Id` header with its REST requests;
@@ -105,7 +119,9 @@ We will build the hub as follows:
   stateless apart from presence.
 - Negative: each replica holds one extra direct PostgreSQL connection, which must bypass a
   transaction-mode pooler.
-- Negative: presence is eventually consistent across replicas and is lost (then re-announced)
-  when a replica restarts.
+- Negative: presence is eventually consistent across replicas. A replica that dies without
+  a goodbye leaves its users shown online for up to 45 seconds.
+- Negative: a WebSocket ticket can be replayed for 30 seconds (see Authentication).
 - Follow-ups: ephemeral client messages (typing, drag in progress) and their throttling;
-  exporting `pg_notification_queue_usage()` as a metric; per-socket rate limiting.
+  exporting `pg_notification_queue_usage()` as a metric; per-socket rate limiting;
+  single-use tickets and redacting `ticket` from access logs.

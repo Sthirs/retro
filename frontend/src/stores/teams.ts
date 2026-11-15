@@ -84,6 +84,15 @@ export const useTeamsStore = defineStore('teams', () => {
     return pending;
   }
 
+  /**
+   * Loads afresh: unlike `load()`, never shares a request already on its way,
+   * whose answer may predate a change just made (e.g. joining a team).
+   */
+  async function reload(): Promise<void> {
+    await pending?.catch(() => undefined);
+    await load();
+  }
+
   async function ensureLoaded(): Promise<void> {
     if (!loaded.value) await load();
   }
@@ -157,6 +166,7 @@ export const useTeamsStore = defineStore('teams', () => {
     loaded,
     hasTeams,
     load,
+    reload,
     ensureLoaded,
     byId,
     defaultTeam,

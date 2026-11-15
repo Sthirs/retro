@@ -10,8 +10,13 @@ export class TasksPage {
   readonly menu: Locator;
   readonly editDialog: Locator;
   readonly deleteDialog: Locator;
+  /** Shown once the board has loaded and has no tasks. */
+  readonly empty: Locator;
 
   constructor(private readonly page: Page) {
+    this.empty = page.getByText(
+      'No tasks yet. Tasks are created in the Discuss phase of a meeting.',
+    );
     this.heading = page.getByRole('heading', { level: 1, name: 'Tasks' });
     this.myTasks = page.getByRole('button', { name: 'My tasks' });
     this.menu = page.getByRole('menu', { name: 'Task actions' });

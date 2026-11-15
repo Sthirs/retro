@@ -38,7 +38,7 @@ impl AppState {
     /// inside the Tokio runtime.
     pub fn new(db: DatabaseConnection, config: Config) -> Self {
         let config = Arc::new(config);
-        let hub = Hub::new(db.clone());
+        let hub = Hub::new(db.clone(), config.presence_heartbeat);
         hub.start(config.database_url.clone());
         let oidc = config.oidc.clone().map(|oidc| {
             Arc::new(OidcProvider::new(

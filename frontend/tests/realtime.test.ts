@@ -42,8 +42,34 @@ describe('RealtimeClient', () => {
       payload: { meetingId: 'm' },
     });
     socket.emit({ type: 'meeting.started', channel: 'team:2', seq: 1, payload: {} });
-    expect(seen.map((e) => e.type)).toEqual(['meeting.started']);
-    expect(seen[0]!.payload).toEqual({ meetingId: 'm' });
+    // Live once acknowledged: what was read before it is re-read.
+    expect(seen.map((e) => e.type)).toEqual(['resync', 'meeting.started']);
+    expect(seen[1]!.payload).toEqual({ meetingId: 'm' });
+  });
+
+  it('asks for a resync only once a subscription is acknowledged', async () => {
+    const rt = client();
+    const team: string[] = [];
+    const meeting: string[] = [];
+    rt.subscribe('team:1', (e) => team.push(e.type));
+    await flushPromises();
+    const socket = MockWebSocket.last!;
+    socket.open();
+    rt.subscribe('meeting:9', (e) => meeting.push(e.type));
+    expect(socket.sent.map((m) => m.channel)).toEqual(['team:1', 'meeting:9']);
+    expect(team).toEqual([]);
+
+    socket.emit({ type: 'subscribed', channel: 'meeting:9' });
+    expect(meeting).toEqual(['resync']);
+    expect(team).toEqual([]);
+    // A repeated acknowledgement asks nothing more.
+    socket.emit({ type: 'subscribed', channel: 'meeting:9' });
+    expect(meeting).toEqual(['resync']);
+
+    // A refused subscription gets its error, and no resync.
+    socket.emit({ type: 'error', channel: 'team:1', payload: { code: 'team_not_found' } });
+    socket.emit({ type: 'subscribed', channel: 'team:1' });
+    expect(team).toEqual(['error']);
   });
 
   it('unsubscribes when the last listener leaves, and closes when idle', async () => {
@@ -64,8 +90,12 @@ describe('RealtimeClient', () => {
     const rt = client(ticket);
     const seen: string[] = [];
     rt.subscribe('meeting:9', (e) => seen.push(e.type));
+    rt.subscribe('team:1', () => undefined);
     await flushPromises();
     MockWebSocket.last!.open();
+    MockWebSocket.last!.emit({ type: 'subscribed', channel: 'meeting:9' });
+    expect(seen).toEqual(['resync']);
+    seen.length = 0;
 
     MockWebSocket.last!.drop();
     expect(rt.status.value).toBe('reconnecting');
@@ -77,7 +107,10 @@ describe('RealtimeClient', () => {
     const second = MockWebSocket.last!;
     second.open();
     expect(rt.status.value).toBe('open');
-    expect(second.channels).toEqual(['meeting:9']);
+    expect(second.channels).toEqual(['meeting:9', 'team:1']);
+    // Not before the server confirms: events until then would still be missed.
+    expect(seen).toEqual([]);
+    second.emit({ type: 'subscribed', channel: 'meeting:9' });
     expect(seen).toEqual(['resync']);
   });
 
@@ -132,7 +165,7 @@ describe('RealtimeClient', () => {
     await vi.advanceTimersByTimeAsync(1000);
     MockWebSocket.last!.open();
     expect(rt.status.value).toBe('open');
-    // Nothing was ever received, so there is nothing to resync.
+    // Nothing is acknowledged yet, so there is nothing to resync.
     expect(seen).toEqual([]);
   });
 });

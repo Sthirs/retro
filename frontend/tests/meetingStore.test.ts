@@ -140,6 +140,74 @@ describe('meeting store', () => {
     expect(calls.filter((c) => c.path.endsWith('/state'))).toHaveLength(2);
   });
 
+  it('lets a resync asked for during the open wait for it', async () => {
+    const store = useMeetingStore();
+    useSessionStore().setUser({ ...ALICE, pictureVersion: null });
+    await nextTick();
+    const { calls } = mockFetch({
+      [JOIN]: { status: 200, body: meetingState({ seq: 2 }) },
+      [STATE]: { status: 200, body: meetingState({ seq: 3, title: 'Renamed' }) },
+    });
+    const opening = store.open(MEETING_ID);
+    // The subscription is acknowledged, and an event lands, before the join answers.
+    store.apply({ type: 'resync', channel, seq: null, payload: {} });
+    store.apply({ type: 'phase.changed', channel, seq: 3, payload: { phase: 'reflect' } });
+    await opening;
+    // The open completed: not loading, its queued event replayed.
+    expect(store.loading).toBe(false);
+    expect(store.meeting!.phase).toBe('reflect');
+    await new Promise((r) => setTimeout(r));
+    // Then the resync ran.
+    expect(calls.filter((c) => c.path.endsWith('/state'))).toHaveLength(1);
+    expect(store.meeting!.title).toBe('Renamed');
+  });
+
+  it('ignores a resync snapshot older than the events applied meanwhile', async () => {
+    let answer: (() => void) | null = null;
+    const { store, fetchMock } = await opened();
+    fetchMock.mockImplementationOnce((async () => {
+      await new Promise<void>((r) => (answer = r));
+      return new Response(JSON.stringify(meetingState({ seq: 2, title: 'Old' })), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as never);
+    const resyncing = store.resync();
+    store.apply({ type: 'meeting.renamed', channel, seq: 3, payload: { title: 'New' } });
+    answer!();
+    await resyncing;
+    expect(store.meeting!.title).toBe('New');
+    expect(store.meeting!.seq).toBe(3);
+  });
+
+  it('keeps events that landed while a refused action was on its way', async () => {
+    let refuse: (() => void) | null = null;
+    const { store, fetchMock } = await opened({
+      [STATE]: { status: 200, body: meetingState({ seq: 3, status: 'ended' }) },
+    });
+    fetchMock.mockImplementationOnce((async () => {
+      await new Promise<void>((r) => (refuse = r));
+      return new Response(JSON.stringify({ code: 'not_facilitator' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/problem+json' },
+      });
+    }) as never);
+    const pending = store.nextPerson();
+    store.apply({
+      type: 'meeting.ended',
+      channel,
+      seq: 3,
+      payload: { endedAt: '2026-11-15T10:00:00Z' },
+    });
+    refuse!();
+    expect(await pending).toBe(false);
+    // Not rolled back to the running meeting of before.
+    expect(store.meeting!.status).toBe('ended');
+    await new Promise((r) => setTimeout(r));
+    expect(store.meeting!.status).toBe('ended');
+    expect(store.meeting!.seq).toBe(3);
+  });
+
   it('moves to the next person at once and rolls back when refused', async () => {
     const { store, calls } = await opened({
       [`POST /api/v1/meetings/${MEETING_ID}/icebreaker/next`]: problem(403, 'not_facilitator'),

@@ -258,6 +258,94 @@ describe('tasks store', () => {
     expect(store.tasks.find((t) => t.id === 'd1')?.position).toBe('a0');
   });
 
+  describe('quiet refresh', () => {
+    const json = (status: number, body: unknown) =>
+      new Response(body === undefined ? null : JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+    /** A fetch the test answers by hand, request by request. */
+    function manualFetch() {
+      const pending: { path: string; method: string; answer: (r: Response) => void }[] = [];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (input: Request) =>
+            new Promise<Response>((answer) => {
+              pending.push({ path: new URL(input.url).pathname, method: input.method, answer });
+            }),
+        ),
+      );
+      return pending;
+    }
+
+    async function loaded() {
+      mockFetch({ [`GET ${TASKS_PATH}`]: { status: 200, body: board() } });
+      const store = useTasksStore();
+      await store.load(TEAM_ID, {});
+      return store;
+    }
+
+    it('does not bring back a task deleted while it was on its way', async () => {
+      const store = await loaded();
+      const pending = manualFetch();
+      const refreshing = store.refresh();
+      const removing = store.remove('a2');
+      await flushPromises();
+      // The delete lands first; the reload's answer predates it.
+      pending[1]!.answer(json(204, undefined));
+      await removing;
+      pending[0]!.answer(json(200, board()));
+      await refreshing;
+      await flushPromises();
+      expect(ids(store.columns.active)).toEqual(['a1', 'a3']);
+      // It was asked again, and that answer is applied.
+      expect(pending).toHaveLength(3);
+      pending[2]!.answer(
+        json(
+          200,
+          board().filter((t) => t.id !== 'a2'),
+        ),
+      );
+      await flushPromises();
+      expect(ids(store.columns.active)).toEqual(['a1', 'a3']);
+    });
+
+    it('asks again when a move started while it was on its way', async () => {
+      const store = await loaded();
+      const pending = manualFetch();
+      const refreshing = store.refresh();
+      const moving = store.move('f1', 'stuck', 0);
+      await flushPromises();
+      pending[0]!.answer(json(200, board()));
+      await refreshing;
+      // Dropped: it would put the card back in Future.
+      expect(ids(store.columns.stuck)).toEqual(['f1']);
+      pending[1]!.answer(json(200, task('f1', 'stuck', 'a0')));
+      await moving;
+      await flushPromises();
+      expect(pending).toHaveLength(3);
+      expect(pending[2]!.path).toBe(TASKS_PATH);
+    });
+
+    it('waits for a load in progress instead of overtaking it', async () => {
+      const store = useTasksStore();
+      const pending = manualFetch();
+      const loading = store.load(TEAM_ID, {});
+      await store.refresh();
+      expect(store.loading).toBe(true);
+      expect(pending).toHaveLength(1);
+      pending[0]!.answer(json(200, board()));
+      await loading;
+      expect(store.loading).toBe(false);
+      expect(ids(store.columns.active)).toEqual(['a1', 'a2', 'a3']);
+      // Then the reload it held back runs.
+      await flushPromises();
+      expect(pending).toHaveLength(2);
+    });
+  });
+
   it('remove deletes and drops the task', async () => {
     const { calls } = mockFetch({
       [`GET ${TASKS_PATH}`]: { status: 200, body: board() },

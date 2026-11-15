@@ -50,6 +50,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     for (const p of meeting.value?.participants ?? []) p.online = online.has(p.id);
   }
   let loadSeq = 0;
+  /** A resync asked for while `open()` was loading: run once it is done. */
+  let resyncWanted = false;
 
   const me = computed(() => session.user?.id ?? null);
   const isFacilitator = computed(() => !!me.value && meeting.value?.facilitatorId === me.value);
@@ -93,6 +95,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     notice.value = null;
     queued = [];
     online = new Set();
+    resyncWanted = false;
   }
 
   watch(
@@ -132,22 +135,34 @@ export const useMeetingStore = defineStore('meeting', () => {
     } catch (e) {
       if (seq === loadSeq) loadError.value = errorCode(e);
     } finally {
-      if (seq === loadSeq) loading.value = false;
+      if (seq === loadSeq) {
+        loading.value = false;
+        if (resyncWanted) {
+          resyncWanted = false;
+          if (meeting.value) void resync();
+        }
+      }
     }
   }
 
-  /** Reloads the snapshot (after a gap or a reconnect). */
+  /**
+   * Reloads the snapshot (after a gap, a subscription or a reconnect). While
+   * `open()` is loading it waits for it, so the open still completes.
+   */
   async function resync(): Promise<void> {
     const id = meetingId.value;
     if (!id) return;
+    if (loading.value) {
+      resyncWanted = true;
+      return;
+    }
     const seq = ++loadSeq;
     try {
       const res = await api.getMeetingState(id);
       if (res.status !== 200) throw apiError(res);
       if (seq !== loadSeq) return;
-      meeting.value = res.data;
-      online = new Set(res.data.onlineIds);
-      markOnline();
+      // Not older than the events applied while it was on its way.
+      accept(res.data);
     } catch (e) {
       if (seq === loadSeq) loadError.value = errorCode(e);
     }
@@ -167,6 +182,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       loadSeq++;
       meeting.value = null;
       queued = [];
+      resyncWanted = false;
       loading.value = false;
       loadError.value = (event.payload?.code as string | undefined) ?? 'unknown';
       return;
@@ -236,9 +252,24 @@ export const useMeetingStore = defineStore('meeting', () => {
       accept(res.data as MeetingStateDto);
       return true;
     } catch (e) {
-      if (optimistic && before) meeting.value = before;
+      if (optimistic && before) undo(before);
       actionError.value = errorCode(e);
       return false;
+    }
+  }
+
+  /**
+   * Takes back a refused optimistic change. If events moved the meeting on
+   * meanwhile (or another one is open), `before` is out of date: reload.
+   */
+  function undo(before: MeetingStateDto): void {
+    const now = meeting.value;
+    if (now && now.id === before.id && now.seq === before.seq) {
+      meeting.value = before;
+      // Presence carries no seq: keep the current one.
+      markOnline();
+    } else if (now?.id === before.id) {
+      void resync();
     }
   }
 

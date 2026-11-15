@@ -9,7 +9,9 @@ import {
   startMeeting,
   userIdOf,
 } from '../api';
+import { watchCsp } from '../csp';
 import { PASSWORD, USERS } from '../fixtures';
+import { channelSubscribed } from '../realtime';
 import { AppShell } from '../pages/AppShell';
 import { MeetingRoomPage } from '../pages/MeetingRoomPage';
 import { MeetingsPage } from '../pages/MeetingsPage';
@@ -38,14 +40,18 @@ async function newUser(browser: Browser, user: keyof typeof USERS): Promise<Page
 
 test.describe('meetings', () => {
   let teamId: string;
+  let cspViolations: string[];
 
   test.beforeEach(async ({ page }) => {
     teamId = await createTeam(IVAN, TEAM);
+    cspViolations = await watchCsp(page);
     await signIn(page, 'ivan');
   });
 
   test.afterEach(async () => {
     await deleteTeam(IVAN, teamId);
+    // The room works within the app's own Content Security Policy.
+    expect(cspViolations).toEqual([]);
   });
 
   /** Jade joins the team through its join link. */
@@ -83,7 +89,9 @@ test.describe('meetings', () => {
     await expect(card).toBeVisible();
     await expect(card).toContainText(`Facilitator: ${USERS.ivan.name}`);
     await expect(card).toContainText('Phase: Icebreaker');
-    await expect(jade.getByRole('navigation', { name: 'Team' }).getByRole('link', { name: /Meetings/ })).toContainText('1');
+    await expect(
+      jade.getByRole('navigation', { name: 'Team' }).getByRole('link', { name: /Meetings/ }),
+    ).toContainText('1');
 
     // Jade joins; Ivan sees her in the queue.
     await card.getByRole('link', { name: 'Join Retro #1' }).click();
@@ -220,17 +228,23 @@ test.describe('meetings', () => {
     const jade = await jadeJoins(page, browser);
     const meetingId = await startMeeting(IVAN, teamId);
     const jadeMeetings = new MeetingsPage(jade);
+    const isList = (url: string) =>
+      /^\/api\/v1\/teams\/[^/]+\/meetings$/.test(new URL(url).pathname);
+    // Once the team channel is live the page re-reads the list, once: what it
+    // loaded before may have missed events. Let that happen before counting.
+    // (The first load's request went out at mount, before the socket opened.)
+    const reread = channelSubscribed(jade, `team:${teamId}`)
+      .then(() => jade.waitForRequest((r) => r.method() === 'GET' && isList(r.url())))
+      .then((request) => request.response());
     await jadeMeetings.goto(teamId);
     const card = jadeMeetings.card('Retro #1');
     await expect(card).toBeVisible();
     await expect(jadeMeetings.onlineDots(card)).toHaveCount(0);
+    await reread;
 
     let reloads = 0;
     jade.on('request', (request) => {
-      const path = new URL(request.url()).pathname;
-      if (request.method() === 'GET' && /^\/api\/v1\/teams\/[^/]+\/meetings$/.test(path)) {
-        reloads++;
-      }
+      if (request.method() === 'GET' && isList(request.url())) reloads++;
     });
 
     // Ivan enters the room, leaves it, and comes back.

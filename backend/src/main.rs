@@ -72,16 +72,23 @@ async fn serve(db: sea_orm::DatabaseConnection, config: Config) -> anyhow::Resul
         .install()?;
 
     let addr = config.bind_addr;
-    let router = app::router(AppState::new(db, config));
+    let state = AppState::new(db, config);
+    let hub = state.hub.clone();
+    let router = app::router(state);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, version = VERSION, "listening");
     axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            // Open WebSockets may outlive the drain: say goodbye now, so this
+            // replica's users go offline elsewhere at once (ADR-0011).
+            hub.shutdown().await;
+        })
         .await?;
     Ok(())
 }
 
-async fn shutdown() {
+async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
     };

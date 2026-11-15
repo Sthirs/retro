@@ -14,8 +14,10 @@ const safeHtml = computed(() => sanitizeRichText(props.html));
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vue/no-v-html -- sanitised by DOMPurify in sanitizeRichText -->
+  <!-- eslint-disable vue/no-v-html -- sanitised by DOMPurify in sanitizeRichText (ADR-0010) -->
+  <!-- nosemgrep: javascript.vue.security.audit.xss.templates.avoid-v-html.avoid-v-html -->
   <div class="rich-text" v-html="safeHtml"></div>
+  <!-- eslint-enable vue/no-v-html -->
 </template>
 
 <style scoped>

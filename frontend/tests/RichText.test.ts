@@ -116,6 +116,26 @@ describe('RichText allowlist', () => {
     expect(wrapper.html()).not.toContain('data-x');
     expect(wrapper.get('span').attributes('data-id')).toBe(ALICE.id);
   });
+
+  it.each([
+    ['leading whitespace', '<p><a href=" javascript:steal()">x</a></p>'],
+    ['mixed case', '<p><a href="JaVaScRiPt:steal()">x</a></p>'],
+    ['entity-encoded colon', '<p><a href="javascript&colon;steal()">x</a></p>'],
+    ['control characters', '<p><a href="java&#x09;script:steal()">x</a></p>'],
+    ['data URI', '<p><a href="data:text/html,<script>steal()</script>">x</a></p>'],
+    ['svg link', '<svg><a xlink:href="javascript:steal()"><text>x</text></a></svg>'],
+    ['math mXSS', '<math><mtext><table><mglyph><style><img src=x onerror=steal()>'],
+    ['noscript mXSS', '<noscript><p title="</noscript><img src=x onerror=steal()>">'],
+  ])('RichText neutralises %s', (_name, html) => {
+    const wrapper = mount(RichText, { props: { html } });
+    const out = wrapper.html();
+    for (const a of wrapper.findAll('a')) {
+      const href = a.attributes('href');
+      if (href !== undefined) expect(href).toMatch(/^(?:https?|mailto):/i);
+    }
+    expect(out).not.toMatch(/<(?:svg|math|img|style|script|noscript)\b/i);
+    expect(out).not.toMatch(/\son\w+=/i);
+  });
 });
 
 describe('RichTextEditor', () => {

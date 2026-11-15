@@ -229,13 +229,13 @@ The individual meeting phases cannot be replayed.
 ### 9.1 Icebreaker
 
 - At meeting creation the backend picks:
-  - a **greeting** ("Hello") in a randomly chosen language, shown with the language name (e.g. *"Ciao — Italian"*);
+  - a **greeting** ("Hello") in a randomly chosen language, shown with its pronunciation (IPA) and the language name (e.g. *"Ciao! /ˈtʃa.o/ — Italian"*);
   - an **icebreaker question** from a curated list.
 
   Both differ from meeting to meeting. Where possible, the backend avoids repeating the team's recent picks.
 - The participants are shown **one at a time** on everyone's screen (avatar + name), in a randomized order. The meeting starts in this phase, so the order is built as people join: while the facilitator is still on the first person, each newcomer takes a random place among those who have not spoken yet; this shuffles everyone who joins at the start.
 - Only the **facilitator** can move to the **next person**. After the last person, the facilitator can move to the **next phase** (Reflect).
-- The facilitator can skip a person. Skipped people are shown as skipped, not as done.
+- The facilitator can go back to the **previous person**, or to **anyone who has already had their turn** by selecting them in the speaking order. The turn continues from that person: everyone after them is up again, and Next walks through them in the same order.
 - Participants who join after the first person has finished are added to the end of the queue.
 
 ### 9.2 Reflect
@@ -338,7 +338,7 @@ The individual meeting phases cannot be replayed.
 | `phase.changed` | phase | all |
 | `timer.updated` | state, ends_at, server_now | all |
 | `ready.changed` | user, ready, ready_count | all |
-| `icebreaker.person_changed` | index, skipped users | all |
+| `icebreaker.person_changed` | index | all |
 | `reflection.typing` | column (no author) | all |
 | `reflection.count_changed` | counts per column | all (Reflect) |
 | `reflection.upserted` / `reflection.deleted` | full reflection | author only in Reflect; all from Group onward |
@@ -453,7 +453,8 @@ meetings(id, team_id → teams, created_by → users, facilitator_id → users,
          phase ENUM('icebreaker','reflect','group','vote','discuss'),
          greeting_text, greeting_language, icebreaker_question,
          greeting_lang_code,                       -- BCP 47, for the `lang` attribute
-         icebreaker_order UUID[], icebreaker_index, icebreaker_skipped UUID[],
+         greeting_pronunciation,                   -- IPA, e.g. "/ˈtʃa.o/"
+         icebreaker_order UUID[], icebreaker_index,
          vote_budget DEFAULT 5, vote_max_per_group DEFAULT 3,
          discuss_group_id NULL,
          timer_state JSONB NULL,
@@ -490,7 +491,7 @@ attachments(id, team_id → teams, meeting_id NULL → meetings, uploader_id →
             content_type, size_bytes, sha256, data BYTEA, created_at)
 
 icebreaker_questions(id, text, active)
-greetings(id, language, lang_code, text)
+greetings(id, language, lang_code, text, pronunciation)
 ```
 
 Notes:
@@ -498,7 +499,7 @@ Notes:
 - When Vote starts, every ungrouped card is wrapped in an implicit single-card group, so votes always reference groups.
 - **Images** pasted into reflections or tasks are stored **only in PostgreSQL** (`attachments.data BYTEA`). There is no object storage. Uploads are limited to 5 MB and to the image types PNG, JPEG, GIF and WebP. The backend serves them through `GET /attachments/{id}` with membership checks and long-lived `Cache-Control: private, immutable` headers. Attachments not referenced by any reflection or task are removed by a periodic cleanup job.
 - **Cascade deletion**: every team-scoped table references `teams` (directly or through `meetings`) with `ON DELETE CASCADE`, so deleting a team removes all of its data (§5.1).
-- Seed data (50 greetings, each "Hello" in a different language, and 50 icebreaker questions) is loaded by a migration. A new meeting takes one of each at random.
+- Seed data (50 greetings, each "Hello" in a different language with its pronunciation, and 50 icebreaker questions) is loaded by a migration. A new meeting takes one of each at random.
 
 ---
 
@@ -561,6 +562,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/meetings/{id}/facilitator` | Transfer (facilitator) or take over (team admin) the facilitator role |
 | POST | `/meetings/{id}/phase/next` | Advance phase (facilitator) |
 | POST | `/meetings/{id}/icebreaker/next` | Next person (facilitator) |
+| POST | `/meetings/{id}/icebreaker/goto` | `{ userId }`: back to someone who already had their turn (facilitator) |
 | PUT | `/meetings/{id}/timer` | Start / pause / stop the timer (facilitator) |
 | PUT | `/meetings/{id}/ready` | Set own ready flag |
 | PATCH | `/meetings/{id}/settings` | Vote budget / max per group (facilitator) |

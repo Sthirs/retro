@@ -1,13 +1,12 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 
 export type ColumnName = 'Future' | 'Stuck' | 'Active' | 'Done';
+export type FilterName = 'mentioned' | 'author' | 'meeting';
 
 /** `/teams/:teamId/tasks`: the board of four columns. */
 export class TasksPage {
   readonly heading: Locator;
   readonly myTasks: Locator;
-  readonly mentioned: Locator;
-  readonly author: Locator;
   readonly menu: Locator;
   readonly editDialog: Locator;
   readonly deleteDialog: Locator;
@@ -15,8 +14,6 @@ export class TasksPage {
   constructor(private readonly page: Page) {
     this.heading = page.getByRole('heading', { level: 1, name: 'Tasks' });
     this.myTasks = page.getByRole('button', { name: 'My tasks' });
-    this.mentioned = page.getByRole('combobox', { name: 'Mentioned' });
-    this.author = page.getByRole('combobox', { name: 'Author' });
     this.menu = page.getByRole('menu', { name: 'Task actions' });
     this.editDialog = page.getByRole('dialog', { name: 'Edit task' });
     this.deleteDialog = page.getByRole('dialog', { name: 'Delete this task?' });
@@ -106,6 +103,31 @@ export class TasksPage {
 
     await expect(this.menu).toBeHidden();
     await expect(this.column(name)).toBeFocused();
+  }
+
+  /** A filter dropdown: its chip and, while open, its list. */
+  filter(name: FilterName): Locator {
+    return this.page.getByTestId(`filter-${name}`);
+  }
+
+  /** The chip button that opens a filter's list. */
+  filterButton(name: FilterName): Locator {
+    return this.filter(name).locator('button[aria-haspopup="listbox"]');
+  }
+
+  /**
+   * Opens a filter and picks options by (part of) their label. Mentioned takes
+   * several and is closed with Done; the others close on their choice.
+   */
+  async pick(name: FilterName, ...labels: string[]): Promise<void> {
+    await this.filterButton(name).click();
+    const list = this.filter(name).getByRole('listbox');
+    await expect(list).toBeVisible();
+    for (const label of labels) await list.getByRole('option', { name: label }).click();
+    if (name === 'mentioned') {
+      await this.filter(name).getByRole('button', { name: 'Done' }).click();
+    }
+    await expect(list).toBeHidden();
   }
 
   async filterMine(): Promise<void> {

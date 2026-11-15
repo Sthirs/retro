@@ -171,6 +171,82 @@ test.describe("tasks board", () => {
     await finn.context().close();
   });
 
+  test("filters: Mentioned takes several people, Meeting narrows the board", async ({
+    page,
+    browser,
+  }) => {
+    const finn = await finnJoins(page, browser);
+    await finn.context().close();
+    const [erinId, finnId] = await Promise.all([
+      userIdOf(ERIN),
+      userIdOf(FINN),
+    ]);
+    const chip = (id: string, name: string) =>
+      `<span data-type="mention" data-id="${id}" data-label="${name}">@${name}</span>`;
+    const [first, second] = [crypto.randomUUID(), crypto.randomUUID()];
+    await seedTask(ERIN, teamId, {
+      status: "future",
+      content: `<p>For Finn ${chip(finnId, USERS.finn.name)}</p>`,
+      meetingId: first,
+    });
+    await seedTask(ERIN, teamId, {
+      status: "stuck",
+      content: `<p>For Erin ${chip(erinId, USERS.erin.name)}</p>`,
+      meetingId: second,
+    });
+    await seedTask(ERIN, teamId, {
+      status: "active",
+      content: "<p>For nobody</p>",
+      meetingId: second,
+    });
+
+    const tasks = new TasksPage(page);
+    await tasks.goto(teamId);
+    await expect(page.getByRole("article")).toHaveCount(3);
+
+    // Two people: tasks that mention either of them.
+    await tasks.pick("mentioned", USERS.erin.name, USERS.finn.name);
+    await expect(tasks.filterButton("mentioned")).toHaveText(
+      `Mentioned: me, ${USERS.finn.name.split(" ")[0]}`,
+    );
+    await expect(page.getByRole("article")).toHaveCount(2);
+    await expect(tasks.card("For nobody")).toHaveCount(0);
+    await expect(page).toHaveURL(/mentioned=[^&]+(%2C|,)/);
+    await expect(tasks.myTasks).toHaveAttribute("aria-pressed", "false");
+
+    // The chip's ✕ clears only that filter.
+    await tasks
+      .filter("mentioned")
+      .getByRole("button", { name: "Clear Mentioned filter" })
+      .click();
+    await expect(page.getByRole("article")).toHaveCount(3);
+
+    await tasks.pick("meeting", "Meeting 2");
+    await expect(tasks.filterButton("meeting")).toHaveText(
+      "Meeting: Meeting 2",
+    );
+    await expect(page.getByRole("article")).toHaveCount(2);
+    await expect(tasks.card("For Finn")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Clear filters" }).click();
+    await expect(page.getByRole("article")).toHaveCount(3);
+    await expect(page).not.toHaveURL(/meeting=/);
+
+    // On a phone, a list opened near the right edge stays on screen.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await tasks.filterButton("meeting").click();
+    await expect(tasks.filter("meeting").getByRole("listbox")).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          scrollX: window.scrollX,
+          overflow:
+            document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        })),
+      )
+      .toEqual({ scrollX: 0, overflow: 0 });
+  });
+
   test("touch: a quick swipe over a card scrolls and never starts a drag", async ({
     browser,
   }) => {

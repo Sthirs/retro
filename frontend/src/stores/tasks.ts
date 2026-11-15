@@ -11,10 +11,22 @@ import {
 } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
 
+/** The board's filter, as sent to the API and kept in the URL. */
 export interface TaskFilter {
+  /** Comma-separated user ids: tasks mentioning any of them. */
   mentioned?: string;
   author?: string;
   meeting?: string;
+}
+
+/** The ids of a comma-separated list, without blanks or repeats. */
+export function splitIds(list: string | undefined): string[] {
+  return [...new Set((list ?? '').split(',').map((id) => id.trim()))].filter(Boolean);
+}
+
+/** The inverse of `splitIds`. */
+export function joinIds(ids: string[]): string {
+  return [...new Set(ids.filter(Boolean))].join(',');
 }
 
 const STATUSES = Object.values(TaskStatus);

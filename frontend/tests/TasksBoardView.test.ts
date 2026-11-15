@@ -218,6 +218,32 @@ describe('Tasks board', () => {
       wrapper.get('[role="group"][aria-label="Filters"] button[aria-pressed]');
     const taskCalls = (calls: { path: string }[]) =>
       calls.filter((c) => c.path.startsWith(TASKS_PATH)).map((c) => c.path);
+    const query = (params: Record<string, string>) =>
+      `${TASKS_PATH}?${new URLSearchParams(params).toString()}`;
+    const menu = (wrapper: VueWrapper, name: string) =>
+      wrapper.get(`[data-testid="filter-${name}"]`);
+    const trigger = (wrapper: VueWrapper, name: string) =>
+      menu(wrapper, name).get('button[aria-haspopup="listbox"]');
+    async function openMenu(wrapper: VueWrapper, name: string) {
+      await trigger(wrapper, name).trigger('click');
+      await flushPromises();
+      return menu(wrapper, name);
+    }
+    const labels = (wrapper: VueWrapper, name: string) =>
+      menu(wrapper, name)
+        .findAll('[role="option"] .option__label')
+        .map((o) => o.text());
+    const option = (wrapper: VueWrapper, name: string, label: string) =>
+      menu(wrapper, name)
+        .findAll('[role="option"]')
+        .find((o) => o.get('.option__label').text() === label)!;
+    async function pick(wrapper: VueWrapper, name: string, label: string) {
+      if (trigger(wrapper, name).attributes('aria-expanded') !== 'true') {
+        await openMenu(wrapper, name);
+      }
+      await option(wrapper, name, label).trigger('click');
+      await flushPromises();
+    }
 
     it('My tasks filters by mentioned=me and reflects in the URL', async () => {
       const { calls } = mockFetch(routes([task('a1', 'active', 'a0')]));
@@ -233,9 +259,11 @@ describe('Tasks board', () => {
       expect(router.currentRoute.value.query).toEqual({ mentioned: ALICE.id });
       expect(taskCalls(calls).at(-1)).toBe(`${TASKS_PATH}?mentioned=${ALICE.id}`);
       expect(myTasks(wrapper).attributes('aria-pressed')).toBe('true');
-      expect(
-        (wrapper.get('select[aria-label="Mentioned"]').element as HTMLSelectElement).value,
-      ).toBe(ALICE.id);
+      expect(trigger(wrapper, 'mentioned').text()).toBe('Mentioned: me');
+      await openMenu(wrapper, 'mentioned');
+      expect(option(wrapper, 'mentioned', 'Alice Rossi (you)').attributes('aria-selected')).toBe(
+        'true',
+      );
 
       await myTasks(wrapper).trigger('click');
       await flushPromises();
@@ -243,35 +271,80 @@ describe('Tasks board', () => {
       expect(taskCalls(calls).at(-1)).toBe(TASKS_PATH);
     });
 
-    it('choosing another person in Mentioned turns My tasks off', async () => {
+    it('Mentioned picks several people, and My tasks is on only for just me', async () => {
       const { calls } = mockFetch(routes([task('a1', 'active', 'a0')]));
       const { wrapper, router } = await open();
 
       await myTasks(wrapper).trigger('click');
       await flushPromises();
-      await wrapper.get('select[aria-label="Mentioned"]').setValue(BOB.id);
-      await flushPromises();
+      await openMenu(wrapper, 'mentioned');
+      expect(labels(wrapper, 'mentioned')).toEqual(['Alice Rossi (you)', 'Bob Bianchi']);
+      expect(
+        menu(wrapper, 'mentioned').get('[role="listbox"]').attributes('aria-multiselectable'),
+      ).toBe('true');
 
-      expect(router.currentRoute.value.query).toEqual({ mentioned: BOB.id });
-      expect(taskCalls(calls).at(-1)).toBe(`${TASKS_PATH}?mentioned=${BOB.id}`);
+      await pick(wrapper, 'mentioned', 'Bob Bianchi');
+      // A multiple choice keeps the list open.
+      expect(trigger(wrapper, 'mentioned').attributes('aria-expanded')).toBe('true');
+      expect(router.currentRoute.value.query).toEqual({ mentioned: `${ALICE.id},${BOB.id}` });
+      expect(taskCalls(calls).at(-1)).toBe(query({ mentioned: `${ALICE.id},${BOB.id}` }));
+      expect(trigger(wrapper, 'mentioned').text()).toBe('Mentioned: me, Bob');
       expect(myTasks(wrapper).attributes('aria-pressed')).toBe('false');
+
+      await pick(wrapper, 'mentioned', 'Alice Rossi (you)');
+      expect(router.currentRoute.value.query).toEqual({ mentioned: BOB.id });
+      expect(trigger(wrapper, 'mentioned').text()).toBe('Mentioned: Bob');
+
+      // Done closes the list.
+      const done = menu(wrapper, 'mentioned')
+        .findAll('button')
+        .find((b) => b.text() === 'Done')!;
+      await done.trigger('click');
+      expect(trigger(wrapper, 'mentioned').attributes('aria-expanded')).toBe('false');
     });
 
-    it('author select sends author=', async () => {
+    it('the search field narrows the people', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const { wrapper } = await open();
+
+      await openMenu(wrapper, 'mentioned');
+      await menu(wrapper, 'mentioned').get('input[aria-label="Search people"]').setValue('bia');
+      expect(labels(wrapper, 'mentioned')).toEqual(['Bob Bianchi']);
+
+      await menu(wrapper, 'mentioned').get('input').setValue('zzz');
+      expect(labels(wrapper, 'mentioned')).toEqual([]);
+      expect(menu(wrapper, 'mentioned').text()).toContain('No matches');
+    });
+
+    it('a chip ✕ clears only its filter', async () => {
+      mockFetch(routes([task('a1', 'active', 'a0')]));
+      const result = await renderAt(
+        `/teams/${TEAM_ID}/tasks?mentioned=${BOB.id}&author=${ALICE.id}`,
+      );
+      mounted.push(result.wrapper);
+
+      await menu(result.wrapper, 'mentioned')
+        .get('button[aria-label="Clear Mentioned filter"]')
+        .trigger('click');
+      await flushPromises();
+
+      expect(result.router.currentRoute.value.query).toEqual({ author: ALICE.id });
+      expect(trigger(result.wrapper, 'mentioned').text()).toBe('Mentioned: anyone');
+    });
+
+    it('author picks one person and sends author=', async () => {
       const { calls } = mockFetch(routes([task('a1', 'active', 'a0')]));
       const { wrapper, router } = await open();
 
-      const select = wrapper.get('select[aria-label="Author"]');
-      expect(select.findAll('option').map((o) => o.text())).toEqual([
-        'anyone',
-        'Alice Rossi',
-        'Bob Bianchi',
-      ]);
-      await select.setValue(BOB.id);
-      await flushPromises();
+      await openMenu(wrapper, 'author');
+      expect(labels(wrapper, 'author')).toEqual(['Anyone', 'Alice Rossi (you)', 'Bob Bianchi']);
+      await pick(wrapper, 'author', 'Bob Bianchi');
 
       expect(router.currentRoute.value.query).toEqual({ author: BOB.id });
       expect(taskCalls(calls).at(-1)).toBe(`${TASKS_PATH}?author=${BOB.id}`);
+      // A single choice closes the list.
+      expect(trigger(wrapper, 'author').attributes('aria-expanded')).toBe('false');
+      expect(trigger(wrapper, 'author').text()).toBe('Author: Bob');
     });
 
     it('reads the filter from the URL on load', async () => {
@@ -280,8 +353,7 @@ describe('Tasks board', () => {
       mounted.push(result.wrapper);
 
       expect(taskCalls(calls)[0]).toBe(`${TASKS_PATH}?author=${BOB.id}`);
-      const select = result.wrapper.get('select[aria-label="Author"]');
-      expect((select.element as HTMLSelectElement).value).toBe(BOB.id);
+      expect(trigger(result.wrapper, 'author').text()).toBe('Author: Bob');
     });
 
     it('survives a filter value that is no longer a member', async () => {
@@ -289,12 +361,15 @@ describe('Tasks board', () => {
       const result = await renderAt(`/teams/${TEAM_ID}/tasks?author=gone`);
       mounted.push(result.wrapper);
 
-      const select = result.wrapper.get('select[aria-label="Author"]');
-      expect((select.element as HTMLSelectElement).value).toBe('gone');
+      expect(trigger(result.wrapper, 'author').text()).toBe('Author: Unknown member');
+      await openMenu(result.wrapper, 'author');
+      expect(option(result.wrapper, 'author', 'Unknown member').attributes('aria-selected')).toBe(
+        'true',
+      );
       expect(result.wrapper.text()).toContain('Clear filters');
     });
 
-    it('keeps the select on the URL value, with a neutral label, when members fail to load', async () => {
+    it('keeps the URL value, with a neutral label, when members fail to load', async () => {
       mockFetch({
         ...routes([task('a1', 'active', 'a0')]),
         [`GET /api/v1/teams/${TEAM_ID}/members`]: { status: 500 },
@@ -302,14 +377,11 @@ describe('Tasks board', () => {
       const result = await renderAt(`/teams/${TEAM_ID}/tasks?author=gone`);
       mounted.push(result.wrapper);
 
-      const select = result.wrapper.get('select[aria-label="Author"]');
-      expect((select.element as HTMLSelectElement).value).toBe('gone');
-      const selected = select.findAll('option').find((o) => o.element.selected);
-      expect(selected?.text()).toBe('Selected member');
+      expect(trigger(result.wrapper, 'author').text()).toBe('Author: Selected member');
       expect(result.wrapper.text()).not.toContain('Unknown member');
     });
 
-    it('keeps the select on the URL value while members are loading', async () => {
+    it('keeps the URL value while members are loading', async () => {
       let release: () => void = () => {};
       const gate = new Promise<void>((resolve) => (release = resolve));
       const { fetchMock } = mockFetch(routes([task('a1', 'active', 'a0')]));
@@ -321,23 +393,11 @@ describe('Tasks board', () => {
       const result = await renderAt(`/teams/${TEAM_ID}/tasks?author=${BOB.id}`);
       mounted.push(result.wrapper);
 
-      const select = result.wrapper.get('select[aria-label="Author"]');
-      expect((select.element as HTMLSelectElement).value).toBe(BOB.id);
-      expect(
-        select
-          .findAll('option')
-          .find((o) => o.element.selected)
-          ?.text(),
-      ).toBe('Selected member');
+      expect(trigger(result.wrapper, 'author').text()).toBe('Author: Selected member');
 
       release();
       await flushPromises();
-      expect(
-        select
-          .findAll('option')
-          .find((o) => o.element.selected)
-          ?.text(),
-      ).toBe('Bob Bianchi');
+      expect(trigger(result.wrapper, 'author').text()).toBe('Author: Bob');
     });
 
     it('disables My tasks without a current user', () => {
@@ -359,8 +419,7 @@ describe('Tasks board', () => {
       const gets = () => calls.filter((c) => /\/tasks(\?|$)/.test(c.path)).length;
       expect(gets()).toBe(1);
 
-      await wrapper.get('select[aria-label="Author"]').setValue(BOB.id);
-      await flushPromises();
+      await pick(wrapper, 'author', 'Bob Bianchi');
       expect(gets()).toBe(2);
 
       // A navigation that leaves the filter values alone (here an unrelated param) must not reload.
@@ -382,8 +441,7 @@ describe('Tasks board', () => {
       const { wrapper, router } = await open();
       expect(wrapper.text()).not.toContain('Clear filters');
 
-      await wrapper.get('select[aria-label="Author"]').setValue(BOB.id);
-      await flushPromises();
+      await pick(wrapper, 'author', 'Bob Bianchi');
       // A filter that matches nothing is not the "no tasks yet" state.
       expect(wrapper.text()).not.toContain('No tasks yet');
       const clear = wrapper.findAll('button').find((b) => b.text() === 'Clear filters');
@@ -398,11 +456,37 @@ describe('Tasks board', () => {
       expect(wrapper.text()).toContain('No tasks yet');
     });
 
+    it('a meeting keeps its number while the filter hides the others', async () => {
+      const all = [
+        task('a1', 'active', 'a0', { meetingId: 'm1' }),
+        task('a2', 'active', 'a1', { meetingId: 'm2' }),
+      ];
+      const { fetchMock } = mockFetch(routes(all));
+      const inner = fetchMock.getMockImplementation()!;
+      fetchMock.mockImplementation(async (input: Request) => {
+        const url = new URL(input.url);
+        if (url.pathname === TASKS_PATH && url.searchParams.get('meeting') === 'm2') {
+          return new Response(JSON.stringify([all[1]]), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return inner(input);
+      });
+      const { wrapper } = await open();
+
+      await pick(wrapper, 'meeting', 'Meeting 2');
+      expect(column(wrapper, 'Active').findAll('article')).toHaveLength(1);
+      expect(trigger(wrapper, 'meeting').text()).toBe('Meeting: Meeting 2');
+      await openMenu(wrapper, 'meeting');
+      expect(labels(wrapper, 'meeting')).toEqual(['All meetings', 'Meeting 1', 'Meeting 2']);
+    });
+
     it('meeting filter hidden without meetings', async () => {
       mockFetch(routes([task('a1', 'active', 'a0')]));
       const { wrapper } = await open();
 
-      expect(wrapper.find('select[aria-label="Meeting"]').exists()).toBe(false);
+      expect(wrapper.find('[data-testid="filter-meeting"]').exists()).toBe(false);
     });
 
     it('meeting filter lists the loaded tasks meetings and sends meeting=', async () => {
@@ -415,17 +499,15 @@ describe('Tasks board', () => {
       );
       const { wrapper, router } = await open();
 
-      const select = wrapper.get('select[aria-label="Meeting"]');
-      expect(select.findAll('option').map((o) => o.text())).toEqual([
-        'all',
-        'Meeting 1',
-        'Meeting 2',
-      ]);
-      await select.setValue('m2');
-      await flushPromises();
+      expect(trigger(wrapper, 'meeting').text()).toBe('Meeting: all');
+      await openMenu(wrapper, 'meeting');
+      expect(labels(wrapper, 'meeting')).toEqual(['All meetings', 'Meeting 1', 'Meeting 2']);
+      expect(option(wrapper, 'meeting', 'All meetings').attributes('aria-selected')).toBe('true');
+      await pick(wrapper, 'meeting', 'Meeting 2');
 
       expect(router.currentRoute.value.query).toEqual({ meeting: 'm2' });
       expect(taskCalls(calls).at(-1)).toBe(`${TASKS_PATH}?meeting=m2`);
+      expect(trigger(wrapper, 'meeting').text()).toBe('Meeting: Meeting 2');
     });
   });
 

@@ -56,9 +56,22 @@ const filter = computed<TaskFilter>(() => {
   }
   return result;
 });
-const meetingIds = computed(() => [
-  ...new Set(store.tasks.map((task) => task.meetingId).filter((id): id is string => !!id)),
-]);
+/**
+ * The meetings seen on this team's board, in order of first appearance. They
+ * accumulate across loads so a meeting keeps its number ("Meeting 2") while a
+ * filter hides the others.
+ */
+const meetingIds = ref<string[]>([]);
+watch(
+  () => store.tasks,
+  (tasks) => {
+    const seen = new Set(meetingIds.value);
+    const added = tasks
+      .map((task) => task.meetingId)
+      .filter((id): id is string => !!id && !seen.has(id));
+    if (added.length) meetingIds.value = [...meetingIds.value, ...new Set(added)];
+  },
+);
 
 const filterActive = computed(() => Object.values(filter.value).some(Boolean));
 const isEmpty = computed(
@@ -149,6 +162,7 @@ onBeforeUnmount(() => window.removeEventListener('focus', load));
 // Switching team keeps this view alive: show the new team's board.
 watch(teamId, () => {
   loaded.value = false;
+  meetingIds.value = [];
   members.value = [];
   membersLoaded.value = false;
   store.reset();

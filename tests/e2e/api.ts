@@ -97,7 +97,13 @@ export async function userIdOf(login: string): Promise<string> {
 export async function seedTask(
   login: string,
   teamId: string,
-  task: { status: 'future' | 'stuck' | 'active' | 'done'; content: string; authorId?: string },
+  task: {
+    status: 'future' | 'stuck' | 'active' | 'done';
+    content: string;
+    authorId?: string;
+    /** A source meeting id (a plain id until meetings exist). */
+    meetingId?: string;
+  },
 ): Promise<{ id: string }> {
   const { api } = await signedIn(login);
   try {

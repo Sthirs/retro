@@ -160,6 +160,7 @@ Authentication is performed by the **backend**, which issues Retro's own session
   - the user joins the meeting as a participant and lands directly in the meeting room.
 - The link stops working when the meeting ends. The facilitator can regenerate it, which invalidates the previous one.
 - The meeting invite link works even if the team join link (§6.2) is disabled. It is scoped to the running meeting.
+- When a member leaves or is removed, the invite links of the team's active meetings are regenerated, so a former member cannot rejoin the team with a meeting link they knew. Links already shared stop working; participants copy the new one from the **Invite** button.
 
 ---
 
@@ -321,8 +322,8 @@ The individual meeting phases cannot be replayed.
 - One WebSocket per client at `/api/v1/ws`. Clients **subscribe** to channels:
   - `meeting:{id}` — everything in a meeting;
   - `team:{id}` — team-level changes (meeting started/ended, task board updates, membership changes).
-- The server checks team membership before accepting any subscription.
-- Messages are JSON: `{ "type": string, "channel": string, "seq": number, "payload": object }`.
+- The server checks team membership before accepting any subscription. When a member leaves or is removed, or the team is deleted, the server ends that user's subscriptions to the team's channels (the team channel and its meetings' channels) at once, with an `error` message on each; a former member receives nothing more.
+- Messages are JSON: `{ "type": string, "channel": string, "seq": number, "payload": object }`. Errors have the same shape: `{ "type": "error", "channel", "seq": null, "payload": { "code" } }`.
 - Every message carries a per-channel `seq`. After a reconnect, the client either resyncs by fetching the full state (`GET /meetings/{id}/state`) or requests the messages after the last `seq` it saw.
 - Client → server **ephemeral** messages (typing, drag in progress, cursor) go over the WebSocket and are **not persisted**. **State-changing** actions go through the REST API (or WS commands), are validated, persisted, then broadcast.
 - Protocol details (ticket, subscribe messages, `seq`, presence across replicas): [ADR-0011](adr/0011-realtime-hub.md).
@@ -333,7 +334,7 @@ The individual meeting phases cannot be replayed.
 | Event | Payload highlights | Visible to |
 | --- | --- | --- |
 | `participant.joined` / `participant.left` | user | all |
-| `presence.changed` | user, online | all |
+| `presence.changed` | user, online (on the team channel also the meeting) | meeting + team channel |
 | `facilitator.changed` | new facilitator | all |
 | `phase.changed` | phase | all |
 | `timer.updated` | state, ends_at, server_now | all |
@@ -350,10 +351,12 @@ The individual meeting phases cannot be replayed.
 | `vote.totals_revealed` | totals per group | all (Discuss start) |
 | `discuss.group_changed` | group id | all |
 | `reaction.changed` | reflection, emoji, count | all |
-| `task.created` / `task.updated` / `task.moved` / `task.deleted` | task | meeting + team channel |
+| `task.created` / `task.updated` / `task.moved` / `task.deleted` | task, `clientId` of the tab that made the change (from its `X-Client-Id` header, else `null`), so that tab skips its own echo | meeting + team channel |
 | `meeting.renamed` | title | meeting + team channel |
 | `meeting.started` / `meeting.ended` | meeting | team channel (`meeting.ended` also on the meeting channel) |
-| `meeting.updated` | meeting id (phase, facilitator, participants or presence changed) | team channel |
+| `meeting.updated` | meeting id (phase, facilitator or participants changed) | team channel |
+| `member.removed` | user | team channel |
+| `team.deleted` | — | team channel |
 
 ### 11.3 Real-time backbone: PostgreSQL vs Valkey
 

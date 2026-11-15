@@ -28,8 +28,17 @@ We will build the hub as follows:
 - **Protocol.** After the handshake the client sends `{"type":"subscribe","channel":"…"}` or
   `{"type":"unsubscribe","channel":"…"}`. The server checks team membership for each
   subscription (a meeting channel resolves to its team) and answers
-  `{"type":"subscribed","channel":"…"}` or `{"type":"error","channel":"…","code":"…"}`.
+  `{"type":"subscribed","channel":"…"}` or
+  `{"type":"error","channel":"…","seq":null,"payload":{"code":"…"}}`.
   Events are `{"type","channel","seq","payload"}`. The server pings every 25 seconds.
+- **Revocation.** Membership is checked at subscribe time, so it must also be withdrawn live.
+  Removing a member publishes `member.removed` and deleting a team publishes `team.deleted` on
+  the team channel, in the same transaction. Every replica's hub turns these into a revocation
+  `(team, user | all)` on an in-process broadcast that every socket listens to from the moment
+  it opens (so a subscription authorised concurrently is still revoked). A socket ends its
+  subscriptions to that team's channels, including its meetings', leaves their presence, and
+  sends an `error` on each (`team_not_found` / `meeting_not_found`). A socket that lags on the
+  revocation broadcast re-checks every subscription against the database.
 - **Fan-out.** State-changing requests call `pg_notify('retro_events', …)` inside the same
   transaction as the write, so an event exists only if the write committed. Each replica keeps
   one dedicated `sqlx::PgListener` connection (reconnecting with backoff) and forwards each
@@ -39,14 +48,23 @@ We will build the hub as follows:
   incremented in the writing transaction, under the row lock that already serialises writes to
   that meeting or team. A client that sees a gap, or reconnects, re-reads the full state
   (`GET /meetings/{id}/state`, or the list it shows) instead of replaying events. No event log
-  is kept.
+  is kept. A write that touches a meeting locks the team row first and the meeting row second
+  (the order of every team mutation, including the cascade of a team delete), so meeting
+  writes, task writes and team deletion cannot deadlock.
 - **Payloads.** Notifications carry ids and the changed fields only, well below the
   8000-byte `NOTIFY` limit. Clients fetch bulky data over REST.
 - **Presence.** Each replica counts its own sockets per `(meeting, user)` and publishes
   ephemeral `presence.changed` notifications (no `seq`, never persisted) when a user's first
   socket subscribes or last socket leaves. Every replica folds these into a cluster-wide map
   keyed by replica id. A starting replica publishes `presence.sync`, to which every replica
-  answers by re-announcing its local sockets.
+  answers by re-announcing its local sockets. A replica holds one async lock from a socket
+  count transition until its notification is sent, so its online/offline announcements commit
+  (and reach every replica) in the order of the transitions. Presence changes go to the
+  meeting channel and, as `presence.changed` with the meeting id, to the team channel, where
+  clients patch the meeting card instead of reloading the list.
+- **Echo suppression.** Each tab sends a random `X-Client-Id` header with its REST requests;
+  task events carry it as `clientId`, so the tab that made a change does not refetch for its
+  own echo while its other tabs still do.
 - **Abstraction.** Business code only calls `ws::publish*(txn, …)`, and sockets only call
   `Hub::subscribe`; both live in `backend/src/ws/`, so a different broker can replace PostgreSQL
   there without touching business code (spec §11.3). A `PubSub` trait is extracted when a

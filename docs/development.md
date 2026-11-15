@@ -48,8 +48,10 @@ In dev mode the backend seeds `alice` and `bob` at startup, and dex has the same
 people, so each can sign in **with a password or through single sign-on**. `carol`
 exists only in dex: she can sign in **only through single sign-on**, and her Retro
 account is created on her first sign-in (`OIDC_AUTO_REGISTER`). The backend also
-seeds `dana`, `erin` and `finn` (password only, not in dex); the end-to-end suite
-owns them, `dana` for the account spec, `erin` and `finn` only for the tasks spec.
+seeds `dana`, `erin`, `finn`, `gina` and `hugo` (password only, not in dex); the
+end-to-end suite owns them: `dana` for the account spec, `erin` and `finn` for the
+tasks spec, `gina` and `hugo` for the teams spec. The suite never changes `alice`,
+`bob` or `carol`, so they are yours to use by hand.
 
 | Username | Email | Name | Password | Sign-in methods |
 | --- | --- | --- | --- | --- |
@@ -58,12 +60,29 @@ owns them, `dana` for the account spec, `erin` and `finn` only for the tasks spe
 | `dana` | `dana@retro.local` | Dana Neri | `password` | password only (not in dex) |
 | `erin` | `erin@retro.local` | Erin Gallo | `password` | password only (not in dex) |
 | `finn` | `finn@retro.local` | Finn Moretti | `password` | password only (not in dex) |
+| `gina` | `gina@retro.local` | Gina Ferri | `password` | password only (not in dex) |
+| `hugo` | `hugo@retro.local` | Hugo Conti | `password` | password only (not in dex) |
 | — | `carol@retro.local` | Carol Verdi | `password` (in dex) | SSO only |
 
 On the first SSO sign-in, the backend links the dex identity to the existing account
 with the same verified email ([ADR-0005](adr/0005-authentication.md)). The seed runs
 on every backend start and resets names and passwords; it is refused when
 `APP_ENV=production`.
+
+### Demo data
+
+After the users, the seed creates two demo teams with tasks in every column of
+the board, some mentioning the other person:
+
+| Team | Admin | Member |
+| --- | --- | --- |
+| Platform | `alice` | `bob` |
+| Mobile | `bob` | `alice` |
+
+A demo team is created only when its admin has no team with that name, so your
+changes survive restarts, and deleting or renaming a team brings a fresh copy on
+the next start. `scripts/db-reset.sh` restores the whole demo. The data is in
+`DEMO_TEAMS` in `backend/src/seed.rs`.
 
 ## Daily development
 
@@ -96,8 +115,10 @@ Run both intercepts, then `npm run dev` (backend and frontend side by side). Sto
 
 ### Putting tasks on a local board
 
-Tasks are created in meetings, which do not exist yet. Until the Discuss phase
-creates them, a **development-only** route adds tasks to a board:
+Tasks are created in meetings, which do not exist yet, so the product has no API
+that creates a task. Until the Discuss phase does, a **development-only** route
+adds tasks to a board. The end-to-end tests use it to build each test's board, and
+you can use it to add tasks beyond the demo data:
 
 ```bash
 curl -X POST "https://$(scripts/dev-host.sh)/api/v1/dev/teams/$TEAM_ID/tasks" \

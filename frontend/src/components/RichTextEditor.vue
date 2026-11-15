@@ -592,7 +592,14 @@ onBeforeUnmount(() => {
 .rte--reflection .rte-btn {
   width: 36px;
   height: 36px;
+  position: relative;
   border-radius: var(--radius-control);
+}
+.rte--reflection .rte-btn::before {
+  /* 44 px touch target around the 36 px control. */
+  content: '';
+  position: absolute;
+  inset: -4px;
 }
 
 .rte--reflection .rte-link {

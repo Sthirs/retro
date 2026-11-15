@@ -114,6 +114,7 @@ async function submit(): Promise<void> {
   justify-content: center;
   width: 36px;
   height: 36px;
+  position: relative;
   padding: 0;
   border: none;
   border-radius: var(--radius-control);
@@ -121,13 +122,19 @@ async function submit(): Promise<void> {
   color: var(--muted);
   cursor: pointer;
 }
+.pop__close::before {
+  /* 44 px touch target around the 36 px control. */
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
 .pop__presets {
   display: flex;
   gap: 6px;
 }
 .pop__preset {
   flex: 1 1 0;
-  height: 40px;
+  height: 44px;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);
   background: transparent;

@@ -62,12 +62,19 @@ const drafts = useReflectDraftsStore();
   justify-content: center;
   min-width: 36px;
   min-height: 36px;
+  position: relative;
   padding: 0 8px;
   border: 1px solid transparent;
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+}
+.card__edit::before {
+  /* 44 px touch target around the 36 px control. */
+  content: '';
+  position: absolute;
+  inset: -4px;
 }
 .card__edit:hover {
   color: var(--text);

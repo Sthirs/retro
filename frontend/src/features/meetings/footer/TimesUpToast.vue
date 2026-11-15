@@ -95,10 +95,17 @@ function dismiss(): void {
   justify-content: center;
   min-width: 36px;
   min-height: 36px;
+  position: relative;
   padding: 4px;
   border: none;
   background: transparent;
   color: var(--bg);
   cursor: pointer;
+}
+.times-up__close::before {
+  /* 44 px touch target around the 36 px control. */
+  content: '';
+  position: absolute;
+  inset: -4px;
 }
 </style>

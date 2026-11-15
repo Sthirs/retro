@@ -124,6 +124,7 @@ async function run(action: TimerAction): Promise<boolean> {
   justify-content: center;
   min-width: 36px;
   height: 36px;
+  position: relative;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -132,6 +133,12 @@ async function run(action: TimerAction): Promise<boolean> {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+}
+.timer__btn::before {
+  /* 44 px touch target around the 36 px control. */
+  content: '';
+  position: absolute;
+  inset: -4px;
 }
 .timer__btn:hover {
   background: var(--well);

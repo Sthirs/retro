@@ -1,14 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
 import path from 'node:path';
 
-import { resetAccount } from '../api';
+import { createTeam, resetAccount } from '../api';
 import { PASSWORD, USERS } from '../fixtures';
 import { AccountPage } from '../pages/AccountPage';
 import { AppShell } from '../pages/AppShell';
-import { OnboardingPage } from '../pages/OnboardingPage';
 import { SignInPage } from '../pages/SignInPage';
 
-const TEAM = 'Account E2E';
+// Unique per run, so a team left behind by an aborted run never matches.
+const TEAM = `Account E2E ${Date.now().toString(36)}`;
 const AVATAR = path.join(__dirname, '..', 'assets', 'avatar.png');
 
 async function signInAsDana(page: Page): Promise<AppShell> {
@@ -24,17 +24,16 @@ test.describe('your account', () => {
   let shell: AppShell;
   let account: AccountPage;
 
+  // The account page lists your teams: give dana one to show and to leave.
   test.beforeEach(async ({ page }) => {
-    await resetAccount(USERS.dana.username);
+    await createTeam(USERS.dana.username, TEAM);
     shell = await signInAsDana(page);
-    // Dana has no team after the reset: create the first one from onboarding.
-    await new OnboardingPage(page).createTeamNamed(TEAM);
-    await expect(shell.teamSelector).toContainText(TEAM);
     account = new AccountPage(page);
     await account.goto();
   });
 
-  // Other specs expect dana under her seeded name.
+  // dana belongs to this spec: drop the teams and put back the seeded name and
+  // picture, which other specs expect.
   test.afterEach(async () => {
     await resetAccount(USERS.dana.username);
   });

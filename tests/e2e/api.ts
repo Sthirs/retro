@@ -29,10 +29,10 @@ async function signedIn(login: string): Promise<{ api: APIRequestContext; userId
 /**
  * Brings a dev account back to "no team, no invitation": deletes the teams it
  * administers, leaves the others, declines open invitations and restores the
- * display name and picture. The e2e suite
- * owns the alice, bob, dana, erin and finn accounts of the dev cluster (dana,
- * erin and finn are backend-seeded only; dana is used by the account spec, erin
- * and finn only by the tasks spec).
+ * display name and picture. Only for accounts the suite owns (see fixtures.ts),
+ * and only where the test needs that empty state (onboarding) or restores what
+ * it changed; never for alice or bob, who own the demo data. Tests that only
+ * need a team create their own with `createTeam` and delete it with `deleteTeam`.
  */
 export async function resetAccount(login: string): Promise<void> {
   const { api, userId } = await signedIn(login);
@@ -52,6 +52,31 @@ export async function resetAccount(login: string): Promise<void> {
     const known = Object.values(USERS).find((user) => user.username === login);
     if (known) await api.patch('/api/v1/me', { data: { displayName: known.name } });
     await api.delete('/api/v1/me/picture'); // 200 with or without a picture
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Creates a team with `login` as its admin, and returns its id. */
+export async function createTeam(login: string, name: string): Promise<string> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post('/api/v1/teams', { data: { name } });
+    if (!res.ok()) throw new Error(`create team: ${res.status()} ${await res.text()}`);
+    return ((await res.json()) as { id: string }).id;
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Deletes a team that `login` administers; a team already gone is fine. */
+export async function deleteTeam(login: string, teamId: string): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.delete(`/api/v1/teams/${teamId}`);
+    if (!res.ok() && res.status() !== 404) {
+      throw new Error(`delete team: ${res.status()} ${await res.text()}`);
+    }
   } finally {
     await api.dispose();
   }

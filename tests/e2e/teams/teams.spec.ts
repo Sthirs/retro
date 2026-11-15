@@ -8,7 +8,8 @@ import { OnboardingPage } from '../pages/OnboardingPage';
 import { SignInPage } from '../pages/SignInPage';
 import { TeamSettingsPage } from '../pages/TeamSettingsPage';
 
-// These tests change alice's and bob's teams, so they run one at a time.
+// These tests need people without a team (onboarding), so they own gina and hugo
+// and wipe their teams; they run one at a time.
 test.describe.configure({ mode: 'serial' });
 
 async function signIn(page: Page, user: keyof typeof USERS): Promise<void> {
@@ -28,14 +29,14 @@ async function otherUser(browser: Browser, user: keyof typeof USERS): Promise<Pa
 
 test.describe('teams', () => {
   test.beforeEach(async () => {
-    await resetAccount(USERS.alice.username);
-    await resetAccount(USERS.bob.username);
+    await resetAccount(USERS.gina.username);
+    await resetAccount(USERS.hugo.username);
   });
 
   test('onboarding: a user without teams creates one, then another', async ({ page }) => {
-    await signIn(page, 'alice');
+    await signIn(page, 'gina');
     const onboarding = new OnboardingPage(page);
-    await expect(onboarding.heading).toHaveText('Welcome to Retro, Alice');
+    await expect(onboarding.heading).toHaveText('Welcome to Retro, Gina');
     await expect(
       page.getByText("You're not in a team yet. Create one, or accept an invitation"),
     ).toBeVisible();
@@ -60,43 +61,43 @@ test.describe('teams', () => {
     await expect(shell.teamSelector).toContainText('E2E Platform');
   });
 
-  test('invitation: alice invites bob by email, bob accepts', async ({ page, browser }) => {
-    await signIn(page, 'alice');
+  test('invitation: gina invites hugo by email, hugo accepts', async ({ page, browser }) => {
+    await signIn(page, 'gina');
     const teamId = await new OnboardingPage(page).createTeamNamed('E2E Invite');
     await new AppShell(page).openSection('Team settings');
     const settings = new TeamSettingsPage(page);
     await expect(settings.heading).toBeVisible();
-    const link = await settings.invite(USERS.bob.email);
+    const link = await settings.invite(USERS.hugo.email);
     expect(link).toMatch(/\/invite\/[\w-]+$/);
-    await expect(settings.pendingInvitations.filter({ hasText: USERS.bob.email })).toContainText(
+    await expect(settings.pendingInvitations.filter({ hasText: USERS.hugo.email })).toContainText(
       'Invited by you',
     );
 
-    // Bob sees it on his onboarding screen and in the user menu…
-    const bob = await otherUser(browser, 'bob');
-    const onboarding = new OnboardingPage(bob);
+    // Hugo sees it on his onboarding screen and in the user menu…
+    const hugo = await otherUser(browser, 'hugo');
+    const onboarding = new OnboardingPage(hugo);
     await expect(onboarding.invitation('E2E Invite')).toContainText(
-      `Invited by ${USERS.alice.name}`,
+      `Invited by ${USERS.gina.name}`,
     );
-    await expect(bob.getByRole('button', { name: 'Pending invitations, 1 new' })).toBeVisible();
+    await expect(hugo.getByRole('button', { name: 'Pending invitations, 1 new' })).toBeVisible();
 
     // …and accepts through the personal link.
-    await bob.goto(new URL(link).pathname);
-    const invitation = new InvitationPage(bob);
+    await hugo.goto(new URL(link).pathname);
+    const invitation = new InvitationPage(hugo);
     await expect(invitation.heading).toHaveText('Join E2E Invite');
-    await expect(bob.getByText(`${USERS.alice.name} invited you to join their team`)).toBeVisible();
+    await expect(hugo.getByText(`${USERS.gina.name} invited you to join their team`)).toBeVisible();
     await invitation.accept.click();
-    await expect(bob).toHaveURL(new RegExp(`/teams/${teamId}/meetings$`));
-    await expect(new AppShell(bob).teamSelector).toContainText('E2E Invite');
+    await expect(hugo).toHaveURL(new RegExp(`/teams/${teamId}/meetings$`));
+    await expect(new AppShell(hugo).teamSelector).toContainText('E2E Invite');
 
     await page.reload();
-    await expect(settings.member(USERS.bob.name)).toContainText('Member');
+    await expect(settings.member(USERS.hugo.name)).toContainText('Member');
     await expect(settings.pendingInvitations).toHaveCount(0);
-    await bob.context().close();
+    await hugo.context().close();
   });
 
   test('settings: rename, join link, roles, removal and deletion', async ({ page, browser }) => {
-    await signIn(page, 'alice');
+    await signIn(page, 'gina');
     const teamId = await new OnboardingPage(page).createTeamNamed('E2E Settings');
     const settings = new TeamSettingsPage(page);
     await settings.goto(teamId);
@@ -108,44 +109,44 @@ test.describe('teams', () => {
     await expect(settings.subtitle).toHaveText("E2E Renamed · you're an admin");
     await expect(new AppShell(page).teamSelector).toContainText('E2E Renamed');
 
-    // Bob joins through the join link.
+    // Hugo joins through the join link.
     await expect(settings.joinSwitch).toHaveAttribute('aria-checked', 'true');
     const joinLink = await settings.joinLink.inputValue();
-    const bob = await otherUser(browser, 'bob');
-    await bob.goto(new URL(joinLink).pathname);
-    await expect(bob.getByRole('heading', { level: 1 })).toHaveText("You've joined E2E Renamed");
-    await bob.getByRole('link', { name: 'Go to meetings' }).click();
-    await expect(bob).toHaveURL(new RegExp(`/teams/${teamId}/meetings$`));
+    const hugo = await otherUser(browser, 'hugo');
+    await hugo.goto(new URL(joinLink).pathname);
+    await expect(hugo.getByRole('heading', { level: 1 })).toHaveText("You've joined E2E Renamed");
+    await hugo.getByRole('link', { name: 'Go to meetings' }).click();
+    await expect(hugo).toHaveURL(new RegExp(`/teams/${teamId}/meetings$`));
 
-    // Promote, demote and remove bob.
+    // Promote, demote and remove hugo.
     await page.reload();
-    const bobRow = settings.member(USERS.bob.name);
-    await expect(bobRow).toContainText('Member');
-    await bobRow.getByRole('button', { name: 'Make admin' }).click();
-    await expect(bobRow).toContainText('Admin');
-    await bobRow.getByRole('button', { name: 'Make member' }).click();
-    await expect(bobRow).toContainText('Member');
-    await bobRow.getByRole('button', { name: `Remove ${USERS.bob.name}` }).click();
+    const hugoRow = settings.member(USERS.hugo.name);
+    await expect(hugoRow).toContainText('Member');
+    await hugoRow.getByRole('button', { name: 'Make admin' }).click();
+    await expect(hugoRow).toContainText('Admin');
+    await hugoRow.getByRole('button', { name: 'Make member' }).click();
+    await expect(hugoRow).toContainText('Member');
+    await hugoRow.getByRole('button', { name: `Remove ${USERS.hugo.name}` }).click();
     const confirm = page.getByRole('dialog', {
-      name: `Remove ${USERS.bob.name}?`,
+      name: `Remove ${USERS.hugo.name}?`,
     });
     await confirm.getByRole('button', { name: 'Remove' }).click();
     await expect(settings.members).toHaveCount(1);
 
-    // Removing bob regenerated the join link: his old link no longer works.
+    // Removing hugo regenerated the join link: their old link no longer works.
     await expect(settings.joinLink).not.toHaveValue(joinLink);
     const afterRemoval = await settings.joinLink.inputValue();
 
     // An admin can also regenerate it by hand.
     await settings.regenerate.click();
     await expect(settings.joinLink).not.toHaveValue(afterRemoval);
-    await bob.goto(new URL(joinLink).pathname);
-    await expect(bob.getByRole('heading', { level: 1 })).toHaveText(
+    await hugo.goto(new URL(joinLink).pathname);
+    await expect(hugo.getByRole('heading', { level: 1 })).toHaveText(
       'This join link no longer works',
     );
-    await bob.context().close();
+    await hugo.context().close();
 
-    // Delete the team: alice is back to onboarding.
+    // Delete the team: gina is back to onboarding.
     await settings.deleteTeam('E2E Renamed');
     await expect(new OnboardingPage(page).heading).toBeVisible();
   });

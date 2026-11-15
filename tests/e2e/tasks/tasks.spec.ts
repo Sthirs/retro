@@ -1,10 +1,9 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
 
-import { resetAccount, seedTask, userIdOf } from '../api';
+import { createTeam, deleteTeam, seedTask, userIdOf } from '../api';
 import { PASSWORD, USERS } from '../fixtures';
 import { AccountPage } from '../pages/AccountPage';
 import { AppShell } from '../pages/AppShell';
-import { OnboardingPage } from '../pages/OnboardingPage';
 import { SignInPage } from '../pages/SignInPage';
 import { TasksPage } from '../pages/TasksPage';
 import { TeamSettingsPage } from '../pages/TeamSettingsPage';
@@ -32,17 +31,15 @@ async function signIn(page: Page, user: keyof typeof USERS): Promise<AppShell> {
 test.describe('tasks board', () => {
   let teamId: string;
 
+  // Each test works in a team of its own and deletes only that team, so it
+  // needs no particular starting state for erin and finn.
   test.beforeEach(async ({ page }) => {
-    await resetAccount(ERIN);
-    await resetAccount(FINN);
-    // Erin has no team after the reset: create it from onboarding.
+    teamId = await createTeam(ERIN, TEAM);
     await signIn(page, 'erin');
-    teamId = await new OnboardingPage(page).createTeamNamed(TEAM);
   });
 
   test.afterEach(async () => {
-    await resetAccount(ERIN);
-    await resetAccount(FINN);
+    await deleteTeam(ERIN, teamId);
   });
 
   /** Finn joins through the team's join link, in his own browser session. */

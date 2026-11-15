@@ -66,7 +66,7 @@ export function buildRouter(history: RouterHistory = createWebHistory()): Router
           {
             path: 'meetings',
             name: 'team-meetings',
-            component: () => import('@/features/teams/ComingSoonView.vue'),
+            component: () => import('@/features/meetings/MeetingsView.vue'),
           },
           {
             path: 'tasks',
@@ -79,6 +79,21 @@ export function buildRouter(history: RouterHistory = createWebHistory()): Router
             component: () => import('@/features/teams/TeamSettingsView.vue'),
           },
         ],
+      },
+      {
+        // The meeting room has its own chrome (phase sidebar, bottom bar), so
+        // it sits outside the shell; an ended meeting shows what it was.
+        path: '/teams/:teamId/meetings/:meetingId',
+        name: 'meeting-room',
+        component: () => import('@/features/meetings/MeetingRoomView.vue'),
+        meta: { requiresAuth: true },
+      },
+      {
+        // Opening a meeting invite link joins the team if needed, then the meeting (spec §6.3).
+        path: '/m/:inviteToken',
+        name: 'meeting-invite',
+        component: () => import('@/features/invitations/MeetingInviteView.vue'),
+        meta: { requiresAuth: true },
       },
       {
         // Not tied to a team: the shell falls back to the remembered team.

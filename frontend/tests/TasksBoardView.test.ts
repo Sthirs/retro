@@ -12,14 +12,17 @@ import {
   BOB,
   me,
   mockFetch,
+  mockSocket,
+  openSocket,
   OTHER_TEAM_ID,
   renderAt,
   session,
   team,
   TEAM_ID,
+  wsTicket,
 } from './helpers';
 
-// Mounted views listen to window `focus`: unmount them so tests stay isolated.
+// Mounted views listen to the real-time socket: unmount them so tests stay isolated.
 const mounted: VueWrapper[] = [];
 afterEach(() => {
   for (const w of mounted.splice(0)) w.unmount();
@@ -138,19 +141,30 @@ describe('Tasks board', () => {
     expect(wrapper.findAll('section[aria-label]')).toHaveLength(4);
   });
 
-  it('reloads on window focus and stops listening after unmount', async () => {
-    const { calls } = mockFetch(routes([task('a1', 'active', 'a0')]));
+  it("reloads live when the team channel reports another member's change", async () => {
+    await mockSocket();
+    const { calls } = mockFetch({
+      ...routes([task('a1', 'active', 'a0')]),
+      'POST /api/v1/ws-ticket': wsTicket(),
+    });
     const { wrapper } = await open();
     const loads = () => calls.filter((c) => c.path === TASKS_PATH).length;
+    const socket = await openSocket();
+    expect(socket.url).toContain('/api/v1/ws?ticket=ws-ticket');
+    expect(socket.channels).toContain(`team:${TEAM_ID}`);
     expect(loads()).toBe(1);
 
-    window.dispatchEvent(new Event('focus'));
+    socket.emit({ type: 'task.moved', channel: `team:${TEAM_ID}`, seq: 3, payload: {} });
+    await flushPromises();
+    expect(loads()).toBe(2);
+    // Meeting events on the same channel leave the board alone.
+    socket.emit({ type: 'meeting.started', channel: `team:${TEAM_ID}`, seq: 4, payload: {} });
     await flushPromises();
     expect(loads()).toBe(2);
 
     wrapper.unmount();
     mounted.length = 0;
-    window.dispatchEvent(new Event('focus'));
+    socket.emit({ type: 'task.created', channel: `team:${TEAM_ID}`, seq: 5, payload: {} });
     await flushPromises();
     expect(loads()).toBe(2);
   });

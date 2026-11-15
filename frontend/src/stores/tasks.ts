@@ -100,6 +100,30 @@ export const useTasksStore = defineStore('tasks', () => {
   }
 
   /**
+   * Reloads the board quietly after another member changed it (a real-time
+   * event). While one of our own moves is waiting for its answer, the reload
+   * waits too, so the card does not jump back and forth.
+   */
+  let refreshWanted = false;
+  async function refresh(): Promise<void> {
+    if (!last) return;
+    if (latestMove.size > 0) {
+      refreshWanted = true;
+      return;
+    }
+    refreshWanted = false;
+    const { teamId, filter } = last;
+    const seq = ++loadSeq;
+    try {
+      const res = await api.listTasks(teamId, filter);
+      if (res.status !== 200) throw apiError(res);
+      if (seq === loadSeq && latestMove.size === 0) tasks.value = res.data;
+    } catch {
+      // Keep the current board; the next event or load tries again.
+    }
+  }
+
+  /**
    * After a refused change that means our copy of the board is out of date,
    * reloads it with the last filter. The reload clears the error, but the user
    * still needs to know what happened, so the code is put back.
@@ -175,6 +199,8 @@ export const useTasksStore = defineStore('tasks', () => {
       // Stale neighbours or a task that is gone: another member changed the
       // board meanwhile.
       await refreshAfter(errorCode(e), MOVE_RELOAD_CODES);
+    } finally {
+      if (refreshWanted && latestMove.size === 0) void refresh();
     }
   }
 
@@ -203,5 +229,5 @@ export const useTasksStore = defineStore('tasks', () => {
     }
   }
 
-  return { tasks, loading, error, columns, load, move, moveToEnd, update, remove, reset };
+  return { tasks, loading, error, columns, load, refresh, move, moveToEnd, update, remove, reset };
 });

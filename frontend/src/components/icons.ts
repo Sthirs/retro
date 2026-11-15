@@ -46,6 +46,17 @@ export const ICONS = {
   moreVertical: ['circle:12,5,1.4', 'circle:12,12,1.4', 'circle:12,19,1.4'],
   search: ['circle:11,11,7', 'm20 20-3.5-3.5'],
   list: ['M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01'],
+  grid: ['rect:3,3,7,7,1', 'rect:14,3,7,7,1', 'rect:3,14,7,7,1', 'rect:14,14,7,7,1'],
+  thumbsUp: [
+    'M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.4 21H7V10l4-8a3 3 0 0 1 4 3.9Z',
+  ],
+  message: ['M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'],
+  transfer: ['m16 3 4 4-4 4', 'M20 7H4', 'm8 21-4-4 4-4', 'M4 17h16'],
+  flag: ['M5 22V4h12l-2 4 2 4H5'],
+  skip: ['m5 4 10 8-10 8V4zM19 5v14'],
+  wifiOff: [
+    'M2 2l20 20M8.5 16.5a5 5 0 0 1 7 0M5 13a10 10 0 0 1 5.2-2.8M19 13a10 10 0 0 0-2.3-1.6M12 20h.01',
+  ],
 } as const;
 
 export type IconName = keyof typeof ICONS;

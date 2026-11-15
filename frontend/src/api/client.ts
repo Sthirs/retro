@@ -4,8 +4,12 @@ export type {
   InvitationDto,
   InvitationPreviewDto,
   JoinLinkDto,
+  MeetingInviteAcceptedDto,
+  MeetingStateDto,
+  MeetingSummaryDto,
   MemberDto,
   MoveTaskRequest,
+  ParticipantDto,
   PendingInvitationDto,
   PersonDto,
   Problem,
@@ -17,6 +21,13 @@ export type {
   UpdateTaskRequest,
   UserDto as User,
 } from './generated';
-export { InvitationStatus, Role, SignInMethod, TaskStatus } from './generated';
+export {
+  InvitationStatus,
+  MeetingPhase,
+  MeetingStatus,
+  Role,
+  SignInMethod,
+  TaskStatus,
+} from './generated';
 export { ApiError, apiError, errorCode } from './errors';
 export { setTokenSource, type TokenSource } from './fetcher';

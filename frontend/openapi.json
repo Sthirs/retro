@@ -648,6 +648,693 @@
         ]
       }
     },
+    "/api/v1/meeting-invites/{token}/accept": {
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Follows a meeting invite link: joins the team if needed, then the meeting.",
+        "operationId": "accept_meeting_invite",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Meeting invite token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Joined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingInviteAcceptedDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_invite_invalid`: unknown, replaced, or the meeting ended",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many unknown tokens",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}": {
+      "patch": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Renames a running meeting (facilitator).",
+        "operationId": "rename_meeting",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameMeetingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The renamed meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_title`: blank or longer than 80 characters",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/end": {
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Ends the meeting (facilitator).",
+        "operationId": "end_meeting",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ended meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/facilitator": {
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Transfers the facilitator role (facilitator) or takes it over (team admin).",
+        "operationId": "set_facilitator",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetFacilitatorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`target_not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`: neither the facilitator nor an admin taking over",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/icebreaker/next": {
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Moves the icebreaker to the next person (facilitator).",
+        "operationId": "icebreaker_next",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IcebreakerNextRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, `wrong_phase`, or `icebreaker_done` (the last person is speaking)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/invite-link": {
+      "get": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "The invite link of a running meeting (any team member).",
+        "operationId": "get_invite_link",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingInviteLinkDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Replaces the invite link, invalidating the previous one (facilitator).",
+        "operationId": "regenerate_invite_link",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingInviteLinkDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/join": {
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Joins a running meeting as a participant (idempotent).",
+        "operationId": "join_meeting",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meeting, with the caller as a participant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/phase/next": {
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Advances to the next phase (facilitator).",
+        "operationId": "next_phase",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended` or `last_phase`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/state": {
+      "get": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "The meeting room's full state; used on entry and after a reconnect.",
+        "operationId": "get_meeting_state",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`: no such meeting or not a team member",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/tasks/{task_id}": {
       "delete": {
         "tags": [
@@ -1441,6 +2128,132 @@
         ]
       }
     },
+    "/api/v1/teams/{team_id}/meetings": {
+      "get": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Lists the team's meetings, newest first.",
+        "operationId": "list_meetings",
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "description": "Team id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Only meetings in this state.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MeetingStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meetings, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MeetingSummaryDto"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`team_not_found`: no such team or not a member",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Starts a meeting; the caller becomes its facilitator.",
+        "operationId": "start_meeting",
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "description": "Team id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The new meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`team_not_found`: no such team or not a member",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/teams/{team_id}/members": {
       "get": {
         "tags": [
@@ -1808,6 +2621,42 @@
         ]
       }
     },
+    "/api/v1/ws-ticket": {
+      "post": {
+        "tags": [
+          "realtime"
+        ],
+        "summary": "Issues a short-lived ticket for the WebSocket handshake (spec §3.3).",
+        "operationId": "ws_ticket",
+        "responses": {
+          "200": {
+            "description": "The ticket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WsTicketDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/healthz": {
       "get": {
         "tags": [
@@ -1862,6 +2711,70 @@
           },
           "sso": {
             "$ref": "#/components/schemas/SsoConfig"
+          }
+        }
+      },
+      "GreetingDto": {
+        "type": "object",
+        "description": "\"Hello\" in the meeting's language.",
+        "required": [
+          "text",
+          "language",
+          "langCode"
+        ],
+        "properties": {
+          "langCode": {
+            "type": "string",
+            "description": "BCP 47 tag for the `lang` attribute, e.g. \"it\"."
+          },
+          "language": {
+            "type": "string",
+            "description": "English name of the language, e.g. \"Italian\"."
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "IcebreakerDto": {
+        "type": "object",
+        "description": "Where the icebreaker stands.",
+        "required": [
+          "order",
+          "index",
+          "skipped"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Index into `order` of the person speaking now."
+          },
+          "order": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Speaking order (user ids)."
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "People the facilitator skipped."
+          }
+        }
+      },
+      "IcebreakerNextRequest": {
+        "type": "object",
+        "description": "How to leave the current icebreaker speaker.",
+        "properties": {
+          "skip": {
+            "type": "boolean",
+            "description": "Mark the current person as skipped instead of done."
           }
         }
       },
@@ -2092,6 +3005,217 @@
           }
         }
       },
+      "MeetingInviteAcceptedDto": {
+        "type": "object",
+        "description": "Where a meeting invite link led.",
+        "required": [
+          "teamId",
+          "meetingId",
+          "title",
+          "joinedTeam"
+        ],
+        "properties": {
+          "joinedTeam": {
+            "type": "boolean",
+            "description": "The caller was added to the team by this link."
+          },
+          "meetingId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "teamId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "MeetingInviteLinkDto": {
+        "type": "object",
+        "description": "The meeting invite link.",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Absolute URL (`/m/{token}`)."
+          }
+        }
+      },
+      "MeetingPhase": {
+        "type": "string",
+        "description": "The retrospective phases, in order (spec §9).",
+        "enum": [
+          "icebreaker",
+          "reflect",
+          "group",
+          "vote",
+          "discuss"
+        ]
+      },
+      "MeetingStateDto": {
+        "type": "object",
+        "description": "Everything the meeting room shows (spec §14.3 `GET /meetings/{id}/state`).",
+        "required": [
+          "id",
+          "teamId",
+          "teamName",
+          "title",
+          "status",
+          "phase",
+          "facilitatorId",
+          "participants",
+          "greeting",
+          "question",
+          "icebreaker",
+          "taskCount",
+          "seq",
+          "createdAt",
+          "serverNow"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "facilitatorId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "greeting": {
+            "$ref": "#/components/schemas/GreetingDto"
+          },
+          "icebreaker": {
+            "$ref": "#/components/schemas/IcebreakerDto"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParticipantDto"
+            },
+            "description": "In joining order."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/MeetingPhase"
+          },
+          "question": {
+            "type": "string"
+          },
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last event `seq` included in this snapshot on `meeting:{id}`."
+          },
+          "serverNow": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MeetingStatus"
+          },
+          "taskCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "teamId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "teamName": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "MeetingStatus": {
+        "type": "string",
+        "description": "Whether a meeting is running (spec §8.1).",
+        "enum": [
+          "active",
+          "ended"
+        ]
+      },
+      "MeetingSummaryDto": {
+        "type": "object",
+        "description": "A meeting as the Meetings page lists it.",
+        "required": [
+          "id",
+          "teamId",
+          "title",
+          "status",
+          "phase",
+          "facilitator",
+          "participants",
+          "taskCount",
+          "groupCount",
+          "createdAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "facilitator": {
+            "$ref": "#/components/schemas/PersonDto"
+          },
+          "groupCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Groups formed in the meeting; always 0 until the Group phase exists."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ParticipantDto"
+            },
+            "description": "In joining order."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/MeetingPhase"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MeetingStatus"
+          },
+          "taskCount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "teamId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "MemberDto": {
         "type": "object",
         "required": [
@@ -2138,6 +3262,46 @@
           "status": {
             "$ref": "#/components/schemas/TaskStatus",
             "description": "The column to move the task to."
+          }
+        }
+      },
+      "ParticipantDto": {
+        "type": "object",
+        "description": "A participant of a meeting.",
+        "required": [
+          "id",
+          "displayName",
+          "online"
+        ],
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "online": {
+            "type": "boolean",
+            "description": "Connected to the meeting room right now."
+          },
+          "pictureVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Content hash of the uploaded picture; `null` when there is none."
+          },
+          "role": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Role",
+                "description": "Team role; `null` once they left the team."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -2230,6 +3394,19 @@
           }
         }
       },
+      "RenameMeetingRequest": {
+        "type": "object",
+        "description": "A new title.",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "1–80 characters after trimming."
+          }
+        }
+      },
       "Role": {
         "type": "string",
         "description": "A member's role in a team (spec §5.1).",
@@ -2268,6 +3445,20 @@
           },
           "user": {
             "$ref": "#/components/schemas/UserDto"
+          }
+        }
+      },
+      "SetFacilitatorRequest": {
+        "type": "object",
+        "description": "The new facilitator.",
+        "required": [
+          "userId"
+        ],
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Another participant (transfer), or the caller (team admin take-over)."
           }
         }
       },
@@ -2472,6 +3663,24 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "WsTicketDto": {
+        "type": "object",
+        "description": "A ticket to open the real-time WebSocket.",
+        "required": [
+          "ticket",
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ticket": {
+            "type": "string",
+            "description": "Pass as `?ticket=` to `/api/v1/ws` within 30 seconds."
           }
         }
       }

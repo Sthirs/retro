@@ -4,13 +4,19 @@
  * Pages outside a team (the account page) keep the shell around the user's
  * remembered team.
  */
-import { computed } from 'vue';
+import { computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink, RouterView, useRoute } from 'vue-router';
 
 import AppIcon from '@/components/AppIcon.vue';
 import type { IconName } from '@/components/icons';
 import AppTopBar from '@/components/layout/AppTopBar.vue';
+import AppAlert from '@/components/ui/AppAlert.vue';
+import AppButton from '@/components/ui/AppButton.vue';
+import { useChannel } from '@/composables/useChannel';
+import { useErrorText } from '@/composables/useErrorText';
+import { useStartMeeting } from '@/composables/useStartMeeting';
+import { useMeetingsStore } from '@/stores/meetings';
 import { useTeamsStore } from '@/stores/teams';
 
 const { t } = useI18n();
@@ -27,6 +33,27 @@ const viewKey = computed(() =>
   typeof route.params.teamId === 'string' ? route.params.teamId : String(route.name),
 );
 
+const meetings = useMeetingsStore();
+const starter = useStartMeeting();
+const errorText = useErrorText();
+
+// The team's meetings feed the Meetings badge and page; teammates' changes
+// arrive on the team channel (spec §11.1).
+watch(
+  teamId,
+  (id) => {
+    if (id) void meetings.load(id);
+  },
+  { immediate: true },
+);
+useChannel(
+  () => (teamId.value ? `team:${teamId.value}` : null),
+  (event) => {
+    if (event.type.startsWith('meeting.') || event.type === 'resync') meetings.reloadSoon();
+  },
+);
+const activeCount = computed(() => (meetings.teamId === teamId.value ? meetings.active.length : 0));
+
 const entries: { name: string; label: string; icon: IconName }[] = [
   { name: 'team-meetings', label: 'nav.meetings', icon: 'calendar' },
   { name: 'team-tasks', label: 'nav.tasks', icon: 'tasks' },
@@ -39,6 +66,18 @@ const entries: { name: string; label: string; icon: IconName }[] = [
     <AppTopBar team-selector />
     <div class="shell__body">
       <nav v-if="teamId" class="nav" :aria-label="t('nav.label')">
+        <AppButton
+          class="nav__add"
+          variant="primary"
+          size="touch"
+          block
+          :disabled="starter.busy.value"
+          @click="starter.start(teamId)"
+        >
+          <AppIcon name="plus" :size="16" />
+          {{ t('meetings.add') }}
+        </AppButton>
+        <AppAlert v-if="starter.error.value">{{ errorText(starter.error.value) }}</AppAlert>
         <RouterLink
           v-for="entry in entries"
           :key="entry.name"
@@ -48,6 +87,12 @@ const entries: { name: string; label: string; icon: IconName }[] = [
         >
           <AppIcon :name="entry.icon" />
           {{ t(entry.label) }}
+          <span
+            v-if="entry.name === 'team-meetings' && activeCount > 0"
+            class="nav__badge"
+            :aria-label="t('meetings.activeCount', { count: activeCount }, activeCount)"
+            >{{ activeCount }}</span
+          >
         </RouterLink>
       </nav>
       <main class="shell__main">
@@ -91,6 +136,18 @@ const entries: { name: string; label: string; icon: IconName }[] = [
   font-weight: 600;
   text-decoration: none;
 }
+.nav__add {
+  margin-bottom: 14px;
+}
+.nav__badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  font-weight: 700;
+}
 .nav__link:hover {
   background: var(--well);
   color: var(--text);
@@ -108,6 +165,10 @@ const entries: { name: string; label: string; icon: IconName }[] = [
   padding: 28px 32px;
 }
 @media (max-width: 800px) {
+  .nav__add {
+    width: auto;
+    margin-bottom: 0;
+  }
   .nav {
     flex-direction: row;
     flex-wrap: wrap;

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 
 import { api, setTokenSource, type SessionResponse, type User } from '@/api/client';
+import { realtime } from '@/api/realtime';
 import { clearImageCache } from '@/lib/images';
 
 /** Error codes the sign-in page knows how to explain. */
@@ -40,6 +41,7 @@ export const useSessionStore = defineStore('session', () => {
     accessToken.value = null;
     user.value = null;
     clearImageCache();
+    realtime.disconnect();
   }
 
   async function login(login: string, password: string, remember: boolean): Promise<void> {

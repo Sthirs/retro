@@ -302,7 +302,7 @@ The individual meeting phases cannot be replayed.
   - author at the bottom (avatar + name).
 - Cards can be **dragged and dropped** between columns and reordered within a column. Any team member can move cards.
 - Changes are broadcast in real time to anyone viewing the board. Until the real-time hub (§11) exists, the board refreshes when the window regains focus.
-- The task author and team admins can edit or delete a task.
+- Any team member can edit or delete any task.
 - Filters: mentioned user, author, meeting.
 
 ### 10.2 Ordering
@@ -404,7 +404,7 @@ Constraints and mitigations:
 | Group cards, rename groups | ✗ | ✓ | ✓ | ✓ |
 | Vote, react, create tasks | ✗ | ✓ | ✓ | ✓ |
 | Move tasks on board | ✗ | ✓ | ✓ | ✓ |
-| Edit/delete task | ✗ | author | ✓ | — |
+| Edit/delete task | ✗ | ✓ | ✓ | ✓ |
 
 \* Team admins cannot perform facilitator actions directly. They first **take over the facilitator role**, which they can do at any time, and then act as the facilitator.
 
@@ -576,9 +576,9 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | --- | --- | --- |
 | GET | `/teams/{teamId}/tasks` | Board, with filters |
 | POST | `/meetings/{id}/tasks` | Create a task (Discuss phase) |
-| PATCH | `/tasks/{tid}` | Edit content (author/admin) |
+| PATCH | `/tasks/{tid}` | Edit content |
 | PUT | `/tasks/{tid}/position` | `{ status, beforeId?, afterId? }`: the moved task ends up directly after `afterId`, or directly before `beforeId` when only that is given; with neither, at the end of the column. A stale pair (`afterId` not before `beforeId`) answers 409 `stale_position` |
-| DELETE | `/tasks/{tid}` | Delete (author/admin) |
+| DELETE | `/tasks/{tid}` | Delete |
 
 ### 14.6 Operational
 

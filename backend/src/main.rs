@@ -64,6 +64,7 @@ async fn serve(db: sea_orm::DatabaseConnection, config: Config) -> anyhow::Resul
     }
     if config.seed_dev_users {
         seed::seed_dev_users(&db).await?;
+        seed::seed_dev_data(&db).await?;
     }
 
     metrics_exporter_prometheus::PrometheusBuilder::new()

@@ -2,7 +2,7 @@ mod common;
 
 use common::TestApp;
 use retro_backend::seed;
-use sea_orm::{EntityTrait, PaginatorTrait};
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 
 #[tokio::test]
 async fn auth_config_reflects_settings() {
@@ -200,4 +200,39 @@ async fn dev_seed_is_idempotent() {
         app.login("alice", seed::DEV_PASSWORD, false).await.status,
         200
     );
+}
+
+#[tokio::test]
+async fn dev_demo_data_is_idempotent() {
+    use retro_backend::entities::{task, task_mention, team, team_member};
+
+    let app = TestApp::new().await;
+    seed::seed_dev_data(&app.db).await.unwrap();
+    seed::seed_dev_data(&app.db).await.unwrap();
+
+    let teams = team::Entity::find().all(&app.db).await.unwrap();
+    assert_eq!(teams.len(), seed::DEMO_TEAMS.len());
+    for demo in seed::DEMO_TEAMS {
+        let t = teams.iter().find(|t| t.name == demo.name).unwrap();
+        let members = team_member::Entity::find()
+            .filter(team_member::Column::TeamId.eq(t.id))
+            .count(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(members, 1 + demo.members.len() as u64, "{}", demo.name);
+        let tasks = task::Entity::find()
+            .filter(task::Column::TeamId.eq(t.id))
+            .count(&app.db)
+            .await
+            .unwrap();
+        assert_eq!(tasks, demo.tasks.len() as u64, "{}", demo.name);
+    }
+    // `@username` in the demo text became real mentions.
+    assert!(task_mention::Entity::find().count(&app.db).await.unwrap() > 0);
+
+    // Alice sees both demo boards.
+    let token = app.token_for("alice").await;
+    let res = app.get_with_token("/api/v1/teams", &token).await;
+    assert_eq!(res.status, 200);
+    assert_eq!(res.json().as_array().unwrap().len(), seed::DEMO_TEAMS.len());
 }

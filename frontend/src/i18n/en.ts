@@ -14,6 +14,7 @@ export default {
     admin: 'Admin',
     member: 'Member',
     loading: 'Loading…',
+    noMatches: 'No matches',
   },
   errors: {
     invalid_team_name: 'Enter a team name of up to 60 characters.',

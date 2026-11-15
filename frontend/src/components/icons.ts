@@ -44,6 +44,8 @@ export const ICONS = {
   move: ['M5 9 2 12l3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20'],
   chevronRight: ['m9 6 6 6-6 6'],
   moreVertical: ['circle:12,5,1.4', 'circle:12,12,1.4', 'circle:12,19,1.4'],
+  search: ['circle:11,11,7', 'm20 20-3.5-3.5'],
+  list: ['M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01'],
 } as const;
 
 export type IconName = keyof typeof ICONS;

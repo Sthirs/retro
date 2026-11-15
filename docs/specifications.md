@@ -170,6 +170,7 @@ Authentication is performed by the **backend**, which issues Retro's own session
 - **Team selector** (dropdown) listing the user's teams. Its last entry is **"+ Add team"**, which opens a dialog to create a team.
 - The selected team is the **context of the whole UI**: meetings, tasks and settings all refer to it. Changing team re-routes to the same section of the new team.
 - The selected team is part of the URL (`/teams/:teamId/...`) and the last used team is remembered per user (stored in the browser).
+- **Default team**: in *Your account* the user picks the team Retro opens after sign-in (and at `/`). Either a specific team, or **Last used** (the default), which opens the last used team. The choice is stored per user in the browser; a pinned team the user has left falls back to the last used one.
 - User menu on the right: avatar, name, pending invitations, theme, **Your account**, logout.
 
 ### 7.2 Left menu
@@ -304,7 +305,7 @@ The individual meeting phases cannot be replayed.
 - Cards can be **dragged and dropped** between columns and reordered within a column. Any team member can move cards.
 - Changes are broadcast in real time to anyone viewing the board. Until the real-time hub (§11) exists, the board refreshes when the window regains focus.
 - Any team member can edit or delete any task.
-- Filters: mentioned user, author, meeting.
+- Filters: mentioned users (several can be picked; a task matches if it mentions any of them), author, meeting. Filters combine with AND.
 
 ### 10.2 Ordering
 

@@ -210,6 +210,24 @@ describe('RealtimeClient', () => {
     expect(again.sent.at(-1)).toEqual({ type: 'writing', channel: 'meeting:1', column: null });
   });
 
+  it('holds writing changes past the rate limit, then sends the latest', async () => {
+    const rt = client();
+    rt.subscribe('meeting:1', () => undefined);
+    await flushPromises();
+    const socket = MockWebSocket.last!;
+    socket.open();
+    socket.emit({ type: 'subscribed', channel: 'meeting:1' });
+    // Twelve quick toggles that end with the editor closed.
+    for (let i = 0; i < 12; i++) {
+      rt.setWriting('meeting:1', i % 2 === 0 ? { column: 'plus', mode: 'new' } : null);
+    }
+    const writes = () => socket.sent.filter((m) => m.type === 'writing');
+    expect(writes()).toHaveLength(8);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(writes()).toHaveLength(9);
+    expect(writes().at(-1)).toEqual({ type: 'writing', channel: 'meeting:1', column: null });
+  });
+
   it('keeps a refused writing message away from the channel listeners', async () => {
     const rt = client();
     const seen: RealtimeEvent[] = [];

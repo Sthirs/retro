@@ -43,6 +43,13 @@ const MAX_BACKOFF_MS = 30_000;
 const WRITING_ERRORS = new Set(['not_subscribed', 'not_writable']);
 /** How long the socket stays open without subscriptions (page changes resubscribe quickly). */
 const IDLE_CLOSE_MS = 10_000;
+/**
+ * Writing messages sent per rolling second. The server drops ephemeral
+ * messages past 10 per second and socket (ADR-0012); this stays below it,
+ * with room for network jitter.
+ */
+const WRITING_PER_SECOND = 8;
+const WRITING_WINDOW_MS = 1000;
 
 export class RealtimeClient {
   readonly status: Ref<RealtimeStatus> = ref('idle');
@@ -59,6 +66,11 @@ export class RealtimeClient {
   private ticketFor: number | null = null;
   /** Writing state per meeting channel, re-sent after each acknowledgement. */
   private readonly writing = new Map<string, WritingState>();
+  /** When the socket's recent writing messages were sent. */
+  private writingSentAt: number[] = [];
+  /** Channels whose latest writing state waits for the rate budget. */
+  private readonly writingHeld = new Set<string>();
+  private writingTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly ticket: () => Promise<string | null> = fetchTicket,
@@ -94,8 +106,44 @@ export class RealtimeClient {
     }
   }
 
+  /**
+   * Sends the channel's writing state if the rate budget allows; otherwise
+   * holds it, and sends the latest state once the budget frees up.
+   */
   private sendWriting(channel: string, state: WritingState | null): void {
+    const now = Date.now();
+    this.writingSentAt = this.writingSentAt.filter((t) => now - t < WRITING_WINDOW_MS);
+    if (this.writingSentAt.length >= WRITING_PER_SECOND) {
+      this.writingHeld.add(channel);
+      if (!this.writingTimer) {
+        const wait = this.writingSentAt[0]! + WRITING_WINDOW_MS - now;
+        this.writingTimer = setTimeout(() => this.flushWriting(), wait);
+      }
+      return;
+    }
+    this.writingHeld.delete(channel);
+    this.writingSentAt.push(now);
     this.send({ type: 'writing', channel, column: state?.column ?? null, mode: state?.mode });
+  }
+
+  /** Sends the held writing states, as they are now. */
+  private flushWriting(): void {
+    this.writingTimer = null;
+    for (const channel of [...this.writingHeld]) {
+      this.writingHeld.delete(channel);
+      // A channel waiting for its ack gets its state with the ack.
+      if (this.handlers.has(channel) && !this.awaitingAck.has(channel)) {
+        this.sendWriting(channel, this.writing.get(channel) ?? null);
+      }
+    }
+  }
+
+  /** Forgets the held writing states and the rate budget (a new socket). */
+  private resetWriting(): void {
+    if (this.writingTimer) clearTimeout(this.writingTimer);
+    this.writingTimer = null;
+    this.writingHeld.clear();
+    this.writingSentAt = [];
   }
 
   /** Closes the socket and forgets every subscription (sign-out). */
@@ -111,6 +159,7 @@ export class RealtimeClient {
     this.handlers.delete(channel);
     this.awaitingAck.delete(channel);
     this.writing.delete(channel);
+    this.writingHeld.delete(channel);
     this.send({ type: 'unsubscribe', channel });
     if (this.handlers.size === 0) {
       this.idleTimer = setTimeout(() => this.close(), IDLE_CLOSE_MS);
@@ -121,6 +170,7 @@ export class RealtimeClient {
     this.generation++;
     this.clearIdle();
     this.awaitingAck.clear();
+    this.resetWriting();
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.socket?.close();
@@ -161,6 +211,8 @@ export class RealtimeClient {
       this.attempts = 0;
       this.wasOpen = true;
       this.status.value = 'open';
+      // A new socket: a fresh rate budget, and every state goes with its ack.
+      this.resetWriting();
       for (const channel of this.handlers.keys()) this.requestSubscription(channel);
     };
     socket.onmessage = (message) => {

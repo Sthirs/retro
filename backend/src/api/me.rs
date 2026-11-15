@@ -3,7 +3,7 @@
 use axum::{
     Json,
     body::{Body, Bytes},
-    extract::{Path, State, rejection::BytesRejection},
+    extract::{Path, Query, State, rejection::BytesRejection},
     http::{HeaderValue, StatusCode, header},
     response::Response,
 };
@@ -164,17 +164,28 @@ pub async fn delete_picture(
     Ok(Json(user.into()))
 }
 
+/// Query of [`get_picture`].
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct PictureQuery {
+    /// The `pictureVersion` the caller knows.
+    pub v: Option<String>,
+}
+
 /// A user's picture. Visible to the user and to people sharing a team with them.
 ///
-/// The URL changes with `pictureVersion`, so the bytes are cached as immutable.
+/// The bytes are cached as immutable under their version (spec §20), so they
+/// are only sent when `v` is the current `pictureVersion`. Any other `v`, or
+/// none, is redirected to the current version's URL.
 #[utoipa::path(
     get,
     path = "/api/v1/users/{user_id}/picture",
     tag = "users",
     security(("bearer" = [])),
-    params(("user_id" = Uuid, Path, description = "The picture's owner")),
+    params(("user_id" = Uuid, Path, description = "The picture's owner"), PictureQuery),
     responses(
-        (status = 200, body = Vec<u8>, content_type = "image/*", description = "The image bytes"),
+        (status = 200, body = Vec<u8>, content_type = "image/*", description = "The image bytes, when `v` is the current version"),
+        (status = 302, description = "`v` is missing or not the current version: `Location` is the current version's URL"),
         (status = 401, body = Problem, content_type = "application/problem+json", description = "Missing or invalid access token"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "`picture_not_found`"),
     )
@@ -183,8 +194,20 @@ pub async fn get_picture(
     State(state): State<AppState>,
     CurrentUser(viewer): CurrentUser,
     Path(user_id): Path<Uuid>,
+    Query(query): Query<PictureQuery>,
 ) -> AppResult<Response> {
     let picture = pictures::picture_for(&state.db, viewer.id, user_id).await?;
+    let version = pictures::version_of(&picture.sha256);
+    if query.v.as_deref() != Some(version) {
+        // No `Cache-Control` here: the router answers it with `no-store`.
+        let location =
+            HeaderValue::from_str(&format!("/api/v1/users/{user_id}/picture?v={version}"))
+                .map_err(|e| anyhow::anyhow!("picture location: {e}"))?;
+        let mut response = Response::new(Body::empty());
+        *response.status_mut() = StatusCode::FOUND;
+        response.headers_mut().insert(header::LOCATION, location);
+        return Ok(response);
+    }
     let content_type = HeaderValue::from_str(&picture.content_type)
         .map_err(|e| anyhow::anyhow!("stored picture content type: {e}"))?;
     let etag = HeaderValue::from_str(&format!("\"{}\"", picture.sha256))

@@ -181,7 +181,10 @@ async fn uploads_and_serves_a_picture() {
     assert_eq!(res.json()["pictureVersion"], sha[..16]);
 
     let res = app
-        .get_with_token(&format!("/api/v1/users/{id}/picture"), &alice)
+        .get_with_token(
+            &format!("/api/v1/users/{id}/picture?v={}", &sha[..16]),
+            &alice,
+        )
         .await;
     assert_eq!(res.status, 200, "{}", res.text());
     assert_eq!(res.headers["content-type"], "image/png");
@@ -191,6 +194,19 @@ async fn uploads_and_serves_a_picture() {
     assert!(cache.contains("private"), "{cache}");
     assert!(cache.contains("immutable"), "{cache}");
     assert_eq!(res.headers["x-content-type-options"], "nosniff");
+
+    // Any other version, or none, redirects to the current one, uncached.
+    let current = format!("/api/v1/users/{id}/picture?v={}", &sha[..16]);
+    for path in [
+        format!("/api/v1/users/{id}/picture"),
+        format!("/api/v1/users/{id}/picture?v=garbage"),
+    ] {
+        let res = app.get_with_token(&path, &alice).await;
+        assert_eq!(res.status, 302, "{path}");
+        assert_eq!(res.headers["location"], current.as_str(), "{path}");
+        assert_eq!(res.headers["cache-control"], "no-store", "{path}");
+        assert!(res.body.is_empty(), "{path}");
+    }
 
     // Error responses are never cached.
     let res = app
@@ -237,12 +253,23 @@ async fn replacing_the_picture_serves_the_new_bytes() {
     assert_eq!(second.json()["pictureVersion"], sha[..16]);
 
     let res = app
-        .get_with_token(&format!("/api/v1/users/{id}/picture"), &alice)
+        .get_with_token(
+            &format!("/api/v1/users/{id}/picture?v={}", &sha[..16]),
+            &alice,
+        )
         .await;
     assert_eq!(res.status, 200, "{}", res.text());
     assert_eq!(res.headers["content-type"], "image/gif");
     assert_eq!(res.headers["etag"], format!("\"{sha}\"").as_str());
     assert_eq!(res.body, GIF);
+
+    // The old version's URL never gets the new bytes cached under it.
+    let old = first.json()["pictureVersion"].as_str().unwrap().to_owned();
+    let res = app
+        .get_with_token(&format!("/api/v1/users/{id}/picture?v={old}"), &alice)
+        .await;
+    assert_eq!(res.status, 302);
+    assert_eq!(res.headers["cache-control"], "no-store");
 }
 
 #[tokio::test]
@@ -264,7 +291,7 @@ async fn teammates_see_the_picture_strangers_do_not() {
     let team = create_team(&app, &alice, "Squad").await;
     join(&app, &alice, &team, &bob).await;
 
-    let path = format!("/api/v1/users/{id}/picture");
+    let path = format!("/api/v1/users/{id}/picture?v={}", &sha_hex(PNG)[..16]);
     let res = app.get_with_token(&path, &bob).await;
     assert_eq!(res.status, 200, "{}", res.text());
 

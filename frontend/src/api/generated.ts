@@ -326,6 +326,11 @@ export type ListTasksParams = {
   meeting?: string;
 };
 
+export type GetPictureParams = {
+  /** The `pictureVersion` the caller knows. */
+  v?: string;
+};
+
 export type configResponse200 = {
   data: AuthConfig;
   status: 200;
@@ -1846,6 +1851,11 @@ export type getPictureResponse200 = {
   status: 200;
 };
 
+export type getPictureResponse302 = {
+  data: void;
+  status: 302;
+};
+
 export type getPictureResponse401 = {
   data: Problem;
   status: 401;
@@ -1859,25 +1869,42 @@ export type getPictureResponse404 = {
 export type getPictureResponseSuccess = getPictureResponse200 & {
   headers: Headers;
 };
-export type getPictureResponseError = (getPictureResponse401 | getPictureResponse404) & {
+export type getPictureResponseError = (
+  getPictureResponse302 | getPictureResponse401 | getPictureResponse404
+) & {
   headers: Headers;
 };
 
 export type getPictureResponse = getPictureResponseSuccess | getPictureResponseError;
 
-export const getGetPictureUrl = (userId: string) => {
-  return `/api/v1/users/${userId}/picture`;
+export const getGetPictureUrl = (userId: string, params?: GetPictureParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/users/${userId}/picture?${stringifiedParams}`
+    : `/api/v1/users/${userId}/picture`;
 };
 
 /**
- * The URL changes with `pictureVersion`, so the bytes are cached as immutable.
+ * The bytes are cached as immutable under their version (spec §20), so they
+ * are only sent when `v` is the current `pictureVersion`. Any other `v`, or
+ * none, is redirected to the current version's URL.
  * @summary A user's picture. Visible to the user and to people sharing a team with them.
  */
 export const getPicture = async (
   userId: string,
+  params?: GetPictureParams,
   options?: Parameters<typeof apiFetch>[1],
 ): Promise<getPictureResponse> => {
-  return apiFetch<getPictureResponse>(getGetPictureUrl(userId), {
+  return apiFetch<getPictureResponse>(getGetPictureUrl(userId, params), {
     ...options,
     method: 'GET',
   });

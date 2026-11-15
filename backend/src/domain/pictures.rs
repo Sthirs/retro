@@ -17,7 +17,7 @@ use crate::{
 pub const PICTURE_MAX_BYTES: usize = 5 * 1024 * 1024;
 
 /// Length of `users.picture_version`: a prefix of the picture's SHA-256 hex.
-const VERSION_LEN: usize = 16;
+pub const VERSION_LEN: usize = 16;
 
 /// The image type of `bytes` judged by its magic bytes, if supported.
 pub fn sniff_image_type(bytes: &[u8]) -> Option<&'static str> {
@@ -32,6 +32,11 @@ pub fn sniff_image_type(bytes: &[u8]) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// The `picture_version` of a picture with this SHA-256 hex digest.
+pub fn version_of(sha256: &str) -> &str {
+    &sha256[..VERSION_LEN.min(sha256.len())]
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -51,7 +56,7 @@ pub async fn set_picture(
     }
     let content_type = sniff_image_type(&bytes).ok_or(AppError::UnsupportedMediaType)?;
     let sha256 = hex(&Sha256::digest(&bytes));
-    let version = sha256[..VERSION_LEN].to_owned();
+    let version = version_of(&sha256).to_owned();
     let size = i32::try_from(bytes.len()).map_err(|_| AppError::PayloadTooLarge)?;
 
     let txn = db.begin().await?;

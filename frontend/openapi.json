@@ -1739,7 +1739,7 @@
           "users"
         ],
         "summary": "A user's picture. Visible to the user and to people sharing a team with them.",
-        "description": "The URL changes with `pictureVersion`, so the bytes are cached as immutable.",
+        "description": "The bytes are cached as immutable under their version (spec §20), so they\nare only sent when `v` is the current `pictureVersion`. Any other `v`, or\nnone, is redirected to the current version's URL.",
         "operationId": "get_picture",
         "parameters": [
           {
@@ -1751,11 +1751,20 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "description": "The `pictureVersion` the caller knows.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "The image bytes",
+            "description": "The image bytes, when `v` is the current version",
             "content": {
               "image/*": {
                 "schema": {
@@ -1768,6 +1777,9 @@
                 }
               }
             }
+          },
+          "302": {
+            "description": "`v` is missing or not the current version: `Location` is the current version's URL"
           },
           "401": {
             "description": "Missing or invalid access token",

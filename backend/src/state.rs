@@ -9,6 +9,7 @@ use sea_orm::DatabaseConnection;
 use crate::{
     auth::{oidc::OidcProvider, rate_limit::RateLimiter},
     config::Config,
+    ws::Hub,
 };
 
 /// Unknown invitation or join tokens a user may try in 10 minutes.
@@ -28,11 +29,17 @@ pub struct AppState {
     pub invite_limiter: Arc<RateLimiter>,
     /// Encrypts short-lived cookies (OIDC login state).
     pub cookie_key: Key,
+    /// Real-time fan-out and presence (spec §11, ADR-0011).
+    pub hub: Arc<Hub>,
 }
 
 impl AppState {
+    /// Builds the state and starts the real-time listener, so it must run
+    /// inside the Tokio runtime.
     pub fn new(db: DatabaseConnection, config: Config) -> Self {
         let config = Arc::new(config);
+        let hub = Hub::new(db.clone());
+        hub.start(config.database_url.clone());
         let oidc = config.oidc.clone().map(|oidc| {
             Arc::new(OidcProvider::new(
                 oidc,
@@ -57,6 +64,7 @@ impl AppState {
             )),
             cookie_key,
             config,
+            hub,
         }
     }
 }

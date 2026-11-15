@@ -21,8 +21,9 @@ replicas behind one ingress (spec §2, §17).
 We will build the hub as follows:
 
 - **Authentication.** `POST /api/v1/ws-ticket` (Bearer-authenticated) returns a ticket valid
-  for 30 seconds. The ticket is a stateless HMAC-SHA256 token over `ws|user id|expiry`,
-  signed with the JWT secret, so any replica can verify it. The client opens
+  for 30 seconds. The ticket is a stateless HS256 JWT (user id, expiry) signed with the JWT
+  secret, so any replica can verify it; its issuer differs from access tokens', so neither is
+  accepted in place of the other. The client opens
   `/api/v1/ws?ticket=…`; the ticket is short-lived, so leaking it in an access log is harmless.
 - **Protocol.** After the handshake the client sends `{"type":"subscribe","channel":"…"}` or
   `{"type":"unsubscribe","channel":"…"}`. The server checks team membership for each
@@ -46,8 +47,10 @@ We will build the hub as follows:
   socket subscribes or last socket leaves. Every replica folds these into a cluster-wide map
   keyed by replica id. A starting replica publishes `presence.sync`, to which every replica
   answers by re-announcing its local sockets.
-- **Abstraction.** Business code depends on a `PubSub` trait (`publish`, `subscribe`), so a
-  different broker can replace PostgreSQL without touching it (spec §11.3).
+- **Abstraction.** Business code only calls `ws::publish*(txn, …)`, and sockets only call
+  `Hub::subscribe`; both live in `backend/src/ws/`, so a different broker can replace PostgreSQL
+  there without touching business code (spec §11.3). A `PubSub` trait is extracted when a
+  second implementation exists.
 
 ## Alternatives considered
 

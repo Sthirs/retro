@@ -86,6 +86,48 @@ pub fn router(state: AppState) -> Router {
             post(api::invitations::decline_invitation),
         )
         .route("/join/{token}", post(api::join::join_team))
+        .route(
+            "/teams/{team_id}/meetings",
+            get(api::meetings::list_meetings).post(api::meetings::start_meeting),
+        )
+        .route(
+            "/meetings/{meeting_id}",
+            patch(api::meetings::rename_meeting),
+        )
+        .route(
+            "/meetings/{meeting_id}/state",
+            get(api::meetings::get_meeting_state),
+        )
+        .route(
+            "/meetings/{meeting_id}/join",
+            post(api::meetings::join_meeting),
+        )
+        .route(
+            "/meetings/{meeting_id}/icebreaker/next",
+            post(api::meetings::icebreaker_next),
+        )
+        .route(
+            "/meetings/{meeting_id}/phase/next",
+            post(api::meetings::next_phase),
+        )
+        .route(
+            "/meetings/{meeting_id}/facilitator",
+            post(api::meetings::set_facilitator),
+        )
+        .route(
+            "/meetings/{meeting_id}/end",
+            post(api::meetings::end_meeting),
+        )
+        .route(
+            "/meetings/{meeting_id}/invite-link",
+            get(api::meetings::get_invite_link).post(api::meetings::regenerate_invite_link),
+        )
+        .route(
+            "/meeting-invites/{token}/accept",
+            post(api::meetings::accept_meeting_invite),
+        )
+        .route("/ws-ticket", post(api::meetings::ws_ticket))
+        .route("/ws", get(crate::ws::ws_handler))
         .route("/openapi.json", get(openapi_json));
     // Development-only: refused in production by the configuration.
     if state.config.seed_dev_users {

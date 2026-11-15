@@ -24,6 +24,19 @@ async fn create_team(app: &TestApp, token: &str, name: &str) -> Uuid {
     res.json()["id"].as_str().unwrap().parse().unwrap()
 }
 
+async fn start_meeting(app: &TestApp, token: &str, team: Uuid) -> Uuid {
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/teams/{team}/meetings"),
+            token,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    res.json()["id"].as_str().unwrap().parse().unwrap()
+}
+
 async fn user_id(app: &TestApp, token: &str) -> Uuid {
     app.get_with_token("/api/v1/me", token).await.json()["user"]["id"]
         .as_str()
@@ -154,8 +167,7 @@ async fn filters_by_mention_author_and_meeting() {
     .await
     .unwrap();
 
-    // A meeting id is a plain column until meetings exist.
-    let meeting = Uuid::now_v7();
+    let meeting = start_meeting(&app, &alice, team).await;
     let mut active: task::ActiveModel = plain.clone().into();
     active.meeting_id = Set(Some(meeting));
     active.update(&app.db).await.unwrap();
@@ -982,7 +994,7 @@ async fn dev_route_seeds_tasks_when_enabled() {
     assert_eq!(second["author"]["id"], bob_id.to_string());
     assert!(second["position"].as_str() > first["position"].as_str());
 
-    let meeting = Uuid::now_v7();
+    let meeting = start_meeting(&app, &alice, team).await;
     let res = seed(
         &app,
         &alice,
@@ -1023,6 +1035,20 @@ async fn dev_route_rejects_non_member_caller_and_author() {
     .await;
     assert_eq!(res.status, 400, "{}", res.text());
     assert_eq!(res.json()["code"], "invalid_author");
+
+    let other_team = create_team(&app, &alice, "Other").await;
+    let elsewhere = start_meeting(&app, &alice, other_team).await;
+    for meeting in [Uuid::now_v7(), elsewhere] {
+        let res = seed(
+            &app,
+            &alice,
+            team,
+            json!({ "status": "future", "content": "<p>x</p>", "meetingId": meeting }),
+        )
+        .await;
+        assert_eq!(res.status, 400, "{}", res.text());
+        assert_eq!(res.json()["code"], "invalid_meeting");
+    }
     assert_eq!(list(&app, &alice, team, "").await, json!([]));
 }
 

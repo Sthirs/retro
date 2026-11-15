@@ -6,6 +6,7 @@ pub mod health;
 pub mod invitations;
 pub mod join;
 pub mod me;
+pub mod meetings;
 pub mod tasks;
 pub mod teams;
 

@@ -7,6 +7,7 @@ mod m20261113_000001_teams;
 mod m20261113_000002_open_invitation_unique;
 mod m20261114_000001_account;
 mod m20261114_000002_tasks;
+mod m20261115_000001_meetings;
 
 pub struct Migrator;
 
@@ -19,6 +20,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261113_000002_open_invitation_unique::Migration),
             Box::new(m20261114_000001_account::Migration),
             Box::new(m20261114_000002_tasks::Migration),
+            Box::new(m20261115_000001_meetings::Migration),
         ]
     }
 }

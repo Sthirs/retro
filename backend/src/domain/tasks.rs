@@ -18,6 +18,7 @@ use crate::{
         team_member, user,
     },
     error::AppError,
+    ws,
 };
 
 /// Narrows the board; every field set must match (AND).
@@ -179,9 +180,26 @@ pub async fn insert(
     .await?;
 
     insert_mentions(&txn, team_id, task.id, content.mention_ids).await?;
+    publish(&txn, &task, "task.created").await?;
 
     txn.commit().await?;
     Ok(task)
+}
+
+/// Tells the team's boards that a task changed (spec §10.1, §11.2).
+async fn publish(
+    db: &impl ConnectionTrait,
+    task: &task::Model,
+    kind: &str,
+) -> Result<(), AppError> {
+    ws::publish_team(
+        db,
+        task.team_id,
+        kind,
+        serde_json::json!({ "taskId": task.id, "status": task.status }),
+    )
+    .await?;
+    Ok(())
 }
 
 /// Records the mentions of `task_id`, keeping only team members.
@@ -335,6 +353,7 @@ pub async fn move_task(
         Some(SqlErr::UniqueConstraintViolation(_)) => AppError::Conflict("stale_position"),
         _ => AppError::Database(e),
     })?;
+    publish(&txn, &moved, "task.moved").await?;
     txn.commit().await?;
 
     views(db, vec![moved])
@@ -391,6 +410,7 @@ pub async fn edit(
         .exec(&txn)
         .await?;
     insert_mentions(&txn, task.team_id, task.id, content.mention_ids).await?;
+    publish(&txn, &edited, "task.updated").await?;
     txn.commit().await?;
 
     view(db, edited).await
@@ -407,6 +427,7 @@ pub async fn delete(
     let task = lock_task(&txn, task_id, actor).await?;
     // The mentions go with the task (ON DELETE CASCADE).
     task::Entity::delete_by_id(task.id).exec(&txn).await?;
+    publish(&txn, &task, "task.deleted").await?;
     txn.commit().await?;
     Ok(())
 }

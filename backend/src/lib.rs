@@ -1,4 +1,4 @@
-//! Retro backend: REST API (and, later, WebSocket hub) for team retrospectives.
+//! Retro backend: REST API and WebSocket hub for team retrospectives.
 
 pub mod api;
 pub mod app;

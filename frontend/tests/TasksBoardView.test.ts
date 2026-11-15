@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VueDraggable } from 'vue-draggable-plus';
 
 import type { TaskDto } from '@/api/client';
+import { CLIENT_ID } from '@/api/clientId';
 import RichTextEditor from '@/components/RichTextEditor.vue';
 import TaskFilters from '@/features/tasks/TaskFilters.vue';
 import { buildI18n } from '@/i18n';
@@ -167,6 +168,48 @@ describe('Tasks board', () => {
     socket.emit({ type: 'task.created', channel: `team:${TEAM_ID}`, seq: 5, payload: {} });
     await flushPromises();
     expect(loads()).toBe(2);
+  });
+
+  it("skips the echo of this tab's own changes, not of the user's other tabs", async () => {
+    await mockSocket();
+    const { calls } = mockFetch({
+      ...routes([task('a1', 'active', 'a0'), task('d1', 'done', 'a0')]),
+      'POST /api/v1/ws-ticket': wsTicket(),
+      'PUT /api/v1/tasks/a1/position': { status: 200, body: task('a1', 'done', 'a1') },
+    });
+    const { wrapper } = await open();
+    const loads = () => calls.filter((c) => c.path === TASKS_PATH).length;
+    const socket = await openSocket();
+
+    // Every request names this tab.
+    wrapper
+      .findAllComponents(VueDraggable)[3]!
+      .vm.$emit('add', { newIndex: 1, item: { dataset: { id: 'a1' } } });
+    await flushPromises();
+    const put = calls.find((c) => c.method === 'PUT')!;
+    expect(put.headers.get('X-Client-Id')).toBe(CLIENT_ID);
+    expect(loads()).toBe(1);
+
+    const moved = (clientId: unknown) =>
+      socket.emit({
+        type: 'task.moved',
+        channel: `team:${TEAM_ID}`,
+        payload: { taskId: 'a1', status: 'done', clientId },
+      });
+    moved(CLIENT_ID);
+    await flushPromises();
+    expect(loads()).toBe(1);
+    // Another tab, or a change without a tab id (another client), reloads.
+    moved('0190a4e0-0000-7000-8000-0000000000ff');
+    await flushPromises();
+    expect(loads()).toBe(2);
+    moved(null);
+    await flushPromises();
+    expect(loads()).toBe(3);
+    // A reconnect always reloads.
+    socket.emit({ type: 'resync', channel: `team:${TEAM_ID}` });
+    await flushPromises();
+    expect(loads()).toBe(4);
   });
 
   it('dropping a card calls PUT position', async () => {

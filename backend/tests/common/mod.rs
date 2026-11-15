@@ -119,10 +119,25 @@ impl TestApp {
         token: &str,
         body: Option<Value>,
     ) -> TestResponse {
-        let builder = Request::builder()
+        self.call_with(method, path, token, body, &[]).await
+    }
+
+    /// [`Self::call`] with extra request headers.
+    pub async fn call_with(
+        &self,
+        method: &str,
+        path: &str,
+        token: &str,
+        body: Option<Value>,
+        headers: &[(&str, &str)],
+    ) -> TestResponse {
+        let mut builder = Request::builder()
             .method(method)
             .uri(path)
             .header(header::AUTHORIZATION, format!("Bearer {token}"));
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
         let request = match body {
             Some(json) => builder
                 .header(header::CONTENT_TYPE, "application/json")

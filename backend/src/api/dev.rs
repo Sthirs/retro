@@ -13,6 +13,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
+    api::client_id::ClientId,
     api::tasks::TaskDto,
     auth::CurrentUser,
     domain::{tasks, teams},
@@ -42,6 +43,7 @@ pub struct SeedTaskRequest {
 pub async fn seed_task(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
+    ClientId(client): ClientId,
     Path(team_id): Path<Uuid>,
     Json(body): Json<SeedTaskRequest>,
 ) -> AppResult<(StatusCode, Json<TaskDto>)> {
@@ -62,7 +64,15 @@ pub async fn seed_task(
             return Err(AppError::Invalid("invalid_meeting"));
         }
     }
-    let mut task = tasks::insert(&state.db, team_id, author_id, body.status, &body.content).await?;
+    let mut task = tasks::insert_from(
+        &state.db,
+        team_id,
+        author_id,
+        body.status,
+        &body.content,
+        client,
+    )
+    .await?;
     if let Some(meeting_id) = body.meeting_id {
         let mut active: task::ActiveModel = task.into();
         active.meeting_id = Set(Some(meeting_id));

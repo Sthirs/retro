@@ -142,6 +142,18 @@ pub async fn insert(
     status: TaskStatus,
     raw_content: &str,
 ) -> Result<task::Model, AppError> {
+    insert_from(db, team_id, author_id, status, raw_content, None).await
+}
+
+/// [`insert`] for a request from the tab `client` (see [`publish`]).
+pub async fn insert_from(
+    db: &(impl TransactionTrait + ConnectionTrait),
+    team_id: Uuid,
+    author_id: Uuid,
+    status: TaskStatus,
+    raw_content: &str,
+    client: Option<Uuid>,
+) -> Result<task::Model, AppError> {
     let content = rich_text::sanitize(raw_content)?;
     let txn = db.begin().await?;
 
@@ -180,23 +192,25 @@ pub async fn insert(
     .await?;
 
     insert_mentions(&txn, team_id, task.id, content.mention_ids).await?;
-    publish(&txn, &task, "task.created").await?;
+    publish(&txn, &task, "task.created", client).await?;
 
     txn.commit().await?;
     Ok(task)
 }
 
-/// Tells the team's boards that a task changed (spec §10.1, §11.2).
+/// Tells the team's boards that a task changed (spec §10.1, §11.2). `client`
+/// is the tab that made the change, which skips its own echo.
 async fn publish(
     db: &impl ConnectionTrait,
     task: &task::Model,
     kind: &str,
+    client: Option<Uuid>,
 ) -> Result<(), AppError> {
     ws::publish_team(
         db,
         task.team_id,
         kind,
-        serde_json::json!({ "taskId": task.id, "status": task.status }),
+        serde_json::json!({ "taskId": task.id, "status": task.status, "clientId": client }),
     )
     .await?;
     Ok(())
@@ -285,6 +299,7 @@ pub async fn move_task(
     status: TaskStatus,
     after: Option<Uuid>,
     before: Option<Uuid>,
+    client: Option<Uuid>,
 ) -> Result<TaskView, AppError> {
     let txn = db.begin().await?;
 
@@ -353,7 +368,7 @@ pub async fn move_task(
         Some(SqlErr::UniqueConstraintViolation(_)) => AppError::Conflict("stale_position"),
         _ => AppError::Database(e),
     })?;
-    publish(&txn, &moved, "task.moved").await?;
+    publish(&txn, &moved, "task.moved", client).await?;
     txn.commit().await?;
 
     views(db, vec![moved])
@@ -392,6 +407,7 @@ pub async fn edit(
     task_id: Uuid,
     actor: Uuid,
     raw_content: &str,
+    client: Option<Uuid>,
 ) -> Result<TaskView, AppError> {
     let txn = db.begin().await?;
     let task = lock_task(&txn, task_id, actor).await?;
@@ -410,7 +426,7 @@ pub async fn edit(
         .exec(&txn)
         .await?;
     insert_mentions(&txn, task.team_id, task.id, content.mention_ids).await?;
-    publish(&txn, &edited, "task.updated").await?;
+    publish(&txn, &edited, "task.updated", client).await?;
     txn.commit().await?;
 
     view(db, edited).await
@@ -422,12 +438,13 @@ pub async fn delete(
     db: &(impl TransactionTrait + ConnectionTrait),
     task_id: Uuid,
     actor: Uuid,
+    client: Option<Uuid>,
 ) -> Result<(), AppError> {
     let txn = db.begin().await?;
     let task = lock_task(&txn, task_id, actor).await?;
     // The mentions go with the task (ON DELETE CASCADE).
     task::Entity::delete_by_id(task.id).exec(&txn).await?;
-    publish(&txn, &task, "task.deleted").await?;
+    publish(&txn, &task, "task.deleted", client).await?;
     txn.commit().await?;
     Ok(())
 }

@@ -12,6 +12,7 @@ import {
   type PersonDto,
   type TaskDto,
 } from '@/api/client';
+import { isOwnEvent } from '@/api/clientId';
 import AppIcon from '@/components/AppIcon.vue';
 import AppAlert from '@/components/ui/AppAlert.vue';
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
@@ -158,10 +159,12 @@ onMounted(() => {
 });
 
 // Other members' changes arrive live (spec §10.1); a reconnect may have missed some.
+// This tab's own changes come back too: their answer already updated the board.
 useChannel(
   () => `team:${teamId.value}`,
   (event) => {
-    if (event.type.startsWith('task.') || event.type === 'resync') void store.refresh();
+    if (event.type === 'resync') void store.refresh();
+    else if (event.type.startsWith('task.') && !isOwnEvent(event.payload)) void store.refresh();
   },
 );
 

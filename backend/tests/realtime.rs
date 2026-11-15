@@ -768,3 +768,104 @@ async fn presence_survives_two_tabs_coming_and_going_at_once() {
     );
     assert!(!online_ids(&app, &alice, &m).await.contains(&json!(bob_id)));
 }
+
+// --- Echo suppression --------------------------------------------------------
+
+#[tokio::test]
+async fn task_events_name_the_tab_that_made_the_change() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let alice = app.token_for("alice").await;
+    let team = create_team(&app, &alice, "Platform").await;
+    let mut socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut socket, &format!("team:{team}")).await;
+    let tab = Uuid::now_v7().to_string();
+    let from_tab = [("X-Client-Id", tab.as_str())];
+
+    let res = app
+        .call_with(
+            "POST",
+            &format!("/api/v1/dev/teams/{team}/tasks"),
+            &alice,
+            Some(json!({ "status": "future", "content": "<p>Echo</p>" })),
+            &from_tab,
+        )
+        .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    let task = res.json()["id"].as_str().unwrap().to_owned();
+    let created = next_of(&mut socket, "task.created").await;
+    assert_eq!(created["payload"]["clientId"], tab);
+
+    let res = app
+        .call_with(
+            "PUT",
+            &format!("/api/v1/tasks/{task}/position"),
+            &alice,
+            Some(json!({ "status": "done" })),
+            &from_tab,
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(
+        next_of(&mut socket, "task.moved").await["payload"]["clientId"],
+        tab
+    );
+
+    let res = app
+        .call_with(
+            "PATCH",
+            &format!("/api/v1/tasks/{task}"),
+            &alice,
+            Some(json!({ "content": "<p>Edited</p>" })),
+            &from_tab,
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(
+        next_of(&mut socket, "task.updated").await["payload"]["clientId"],
+        tab
+    );
+
+    // Without the header, or with garbage in it, no tab is named.
+    let res = app
+        .call(
+            "PATCH",
+            &format!("/api/v1/tasks/{task}"),
+            &alice,
+            Some(json!({ "content": "<p>Plain</p>" })),
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(
+        next_of(&mut socket, "task.updated").await["payload"]["clientId"],
+        Value::Null
+    );
+    let res = app
+        .call_with(
+            "PATCH",
+            &format!("/api/v1/tasks/{task}"),
+            &alice,
+            Some(json!({ "content": "<p>Odd</p>" })),
+            &[("X-Client-Id", "not-a-uuid")],
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(
+        next_of(&mut socket, "task.updated").await["payload"]["clientId"],
+        Value::Null
+    );
+
+    let res = app
+        .call_with(
+            "DELETE",
+            &format!("/api/v1/tasks/{task}"),
+            &alice,
+            None,
+            &from_tab,
+        )
+        .await;
+    assert_eq!(res.status, 204, "{}", res.text());
+    let deleted = next_of(&mut socket, "task.deleted").await;
+    assert_eq!(deleted["payload"]["clientId"], tab);
+    assert_eq!(deleted["payload"]["taskId"], task);
+}

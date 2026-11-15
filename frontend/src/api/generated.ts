@@ -318,7 +318,7 @@ export type OidcCallbackParams = {
 };
 
 export type ListTasksParams = {
-  /** Only tasks mentioning this user. */
+  /** Comma-separated user ids: only tasks mentioning any of them. */
   mentioned?: string;
   /** Only tasks written by this user. */
   author?: string;

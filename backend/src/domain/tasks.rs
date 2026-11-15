@@ -21,10 +21,10 @@ use crate::{
 };
 
 /// Narrows the board; every field set must match (AND).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct BoardFilter {
-    /// Only tasks that mention this user.
-    pub mentioned: Option<Uuid>,
+    /// Only tasks that mention any of these users (none: no constraint).
+    pub mentioned: Vec<Uuid>,
     /// Only tasks written by this user.
     pub author: Option<Uuid>,
     /// Only tasks attached to this meeting.
@@ -56,13 +56,13 @@ pub async fn list(
     if let Some(meeting) = filter.meeting {
         query = query.filter(task::Column::MeetingId.eq(meeting));
     }
-    if let Some(user_id) = filter.mentioned {
+    if !filter.mentioned.is_empty() {
         query = query.filter(
             task::Column::Id.in_subquery(
                 Query::select()
                     .column(task_mention::Column::TaskId)
                     .from(task_mention::Entity)
-                    .and_where(task_mention::Column::UserId.eq(user_id))
+                    .and_where(task_mention::Column::UserId.is_in(filter.mentioned))
                     .to_owned(),
             ),
         );

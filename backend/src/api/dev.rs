@@ -8,6 +8,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
+use sea_orm::{ActiveModelTrait, Set};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -15,7 +16,7 @@ use crate::{
     api::tasks::TaskDto,
     auth::CurrentUser,
     domain::{tasks, teams},
-    entities::task::TaskStatus,
+    entities::task::{self, TaskStatus},
     error::{AppError, AppResult},
     state::AppState,
 };
@@ -28,6 +29,8 @@ pub struct SeedTaskRequest {
     pub content: String,
     /// The task's author; defaults to the caller. Must be a team member.
     pub author_id: Option<Uuid>,
+    /// The source meeting; a plain id until meetings exist.
+    pub meeting_id: Option<Uuid>,
 }
 
 /// Adds a task at the end of a column, optionally on behalf of another member.
@@ -48,7 +51,12 @@ pub async fn seed_task(
     {
         return Err(AppError::Invalid("invalid_author"));
     }
-    let task = tasks::insert(&state.db, team_id, author_id, body.status, &body.content).await?;
+    let mut task = tasks::insert(&state.db, team_id, author_id, body.status, &body.content).await?;
+    if let Some(meeting_id) = body.meeting_id {
+        let mut active: task::ActiveModel = task.into();
+        active.meeting_id = Set(Some(meeting_id));
+        task = active.update(&state.db).await?;
+    }
     let view = tasks::view(&state.db, task).await?;
     Ok((StatusCode::CREATED, Json(view.into())))
 }

@@ -1663,11 +1663,10 @@
           {
             "name": "mentioned",
             "in": "query",
-            "description": "Only tasks mentioning this user.",
+            "description": "Comma-separated user ids: only tasks mentioning any of them.",
             "required": false,
             "schema": {
-              "type": "string",
-              "format": "uuid"
+              "type": "string"
             }
           },
           {

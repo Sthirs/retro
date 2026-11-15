@@ -55,12 +55,27 @@ impl From<TaskView> for TaskDto {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct BoardQuery {
-    /// Only tasks mentioning this user.
-    pub mentioned: Option<Uuid>,
+    /// Comma-separated user ids: only tasks mentioning any of them.
+    #[serde(default, deserialize_with = "uuid_list")]
+    #[param(value_type = Option<String>)]
+    pub mentioned: Vec<Uuid>,
     /// Only tasks written by this user.
     pub author: Option<Uuid>,
     /// Only tasks attached to this meeting.
     pub meeting: Option<Uuid>,
+}
+
+/// Parses a comma-separated list of UUIDs; empty items are skipped.
+fn uuid_list<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Vec<Uuid>, D::Error> {
+    let raw = Option::<String>::deserialize(de)?.unwrap_or_default();
+    let mut ids = Vec::new();
+    for item in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let id = Uuid::parse_str(item).map_err(serde::de::Error::custom)?;
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
 }
 
 /// Lists the team's tasks, ordered by status column and position.
@@ -193,4 +208,41 @@ pub async fn delete_task(
 ) -> AppResult<StatusCode> {
     tasks::delete(&state.db, task_id, user.id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(query: &str) -> Result<BoardQuery, serde_json::Error> {
+        serde_json::from_str(query)
+    }
+
+    #[test]
+    fn mentioned_is_empty_when_absent() {
+        assert!(parse("{}").unwrap().mentioned.is_empty());
+    }
+
+    #[test]
+    fn mentioned_accepts_one_or_several_ids() {
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        assert_eq!(
+            parse(&format!(r#"{{"mentioned":"{a}"}}"#))
+                .unwrap()
+                .mentioned,
+            vec![a]
+        );
+        assert_eq!(
+            parse(&format!(r#"{{"mentioned":"{a}, {b},,{a}"}}"#))
+                .unwrap()
+                .mentioned,
+            vec![a, b]
+        );
+    }
+
+    #[test]
+    fn mentioned_rejects_an_invalid_id() {
+        assert!(parse(r#"{"mentioned":"nope"}"#).is_err());
+    }
 }

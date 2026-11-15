@@ -208,6 +208,84 @@ async fn filters_by_mention_author_and_meeting() {
 }
 
 #[tokio::test]
+async fn mentioned_filter_matches_any_of_several_users() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let (alice_id, bob_id) = (user_id(&app, &alice).await, user_id(&app, &bob).await);
+    let team = create_team(&app, &alice, "Platform").await;
+    join(&app, &alice, team, &bob).await;
+
+    tasks::insert(&app.db, team, alice_id, TaskStatus::Future, "<p>plain</p>")
+        .await
+        .unwrap();
+    let mentions_bob = tasks::insert(
+        &app.db,
+        team,
+        alice_id,
+        TaskStatus::Active,
+        &mention(bob_id, "Bob"),
+    )
+    .await
+    .unwrap();
+    let mentions_alice = tasks::insert(
+        &app.db,
+        team,
+        bob_id,
+        TaskStatus::Stuck,
+        &mention(alice_id, "Alice"),
+    )
+    .await
+    .unwrap();
+    let mentions_both = tasks::insert(
+        &app.db,
+        team,
+        bob_id,
+        TaskStatus::Done,
+        &format!(
+            r#"<p><span data-type="mention" data-id="{alice_id}" data-label="Alice">@Alice</span> <span data-type="mention" data-id="{bob_id}" data-label="Bob">@Bob</span></p>"#
+        ),
+    )
+    .await
+    .unwrap();
+
+    // Any of the users matches, and a task mentioning both appears once.
+    let either = list(
+        &app,
+        &alice,
+        team,
+        &format!("?mentioned={alice_id},{bob_id}"),
+    )
+    .await;
+    let mut got = ids(&either);
+    got.sort();
+    let mut want = [mentions_bob.id, mentions_alice.id, mentions_both.id].map(|i| i.to_string());
+    want.sort();
+    assert_eq!(got, want);
+
+    // Still combined with the other filters by AND.
+    let by_alice = list(
+        &app,
+        &alice,
+        team,
+        &format!("?mentioned={alice_id},{bob_id}&author={alice_id}"),
+    )
+    .await;
+    assert_eq!(ids(&by_alice), [mentions_bob.id.to_string()]);
+
+    // An invalid id is refused.
+    let res = app
+        .call(
+            "GET",
+            &format!("/api/v1/teams/{team}/tasks?mentioned={alice_id},nope"),
+            &alice,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 400, "{}", res.text());
+}
+
+#[tokio::test]
 async fn insert_ignores_mentions_of_non_members() {
     let app = TestApp::new().await;
     let alice = app.token_for("alice").await;
@@ -904,10 +982,22 @@ async fn dev_route_seeds_tasks_when_enabled() {
     assert_eq!(second["author"]["id"], bob_id.to_string());
     assert!(second["position"].as_str() > first["position"].as_str());
 
+    let meeting = Uuid::now_v7();
+    let res = seed(
+        &app,
+        &alice,
+        team,
+        json!({ "status": "done", "content": "<p>third</p>", "meetingId": meeting }),
+    )
+    .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    let third = res.json();
+    assert_eq!(third["meetingId"], meeting.to_string());
+
     let board = list(&app, &alice, team, "").await;
     assert_eq!(
         ids(&board),
-        [&first, &second].map(|t| t["id"].as_str().unwrap().to_owned())
+        [&first, &second, &third].map(|t| t["id"].as_str().unwrap().to_owned())
     );
 }
 

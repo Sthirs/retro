@@ -21,7 +21,10 @@ export interface RealtimeEvent {
 
 export type RealtimeHandler = (event: RealtimeEvent) => void;
 
-/** `idle`: no subscriptions; `reconnecting`: the socket dropped and is coming back. */
+/**
+ * `idle`: no subscriptions; `connecting`: the first attempt is under way;
+ * `reconnecting`: the socket dropped, or an attempt failed, and it is coming back.
+ */
 export type RealtimeStatus = 'idle' | 'connecting' | 'open' | 'reconnecting';
 
 const MAX_BACKOFF_MS = 30_000;
@@ -98,10 +101,11 @@ export class RealtimeClient {
 
   private async connect(): Promise<void> {
     const generation = ++this.generation;
-    this.status.value = this.wasOpen ? 'reconnecting' : 'connecting';
+    this.status.value = this.wasOpen || this.attempts > 0 ? 'reconnecting' : 'connecting';
     const ticket = await this.ticket().catch(() => null);
     if (generation !== this.generation) return;
     if (!ticket) {
+      this.status.value = 'reconnecting';
       this.scheduleRetry();
       return;
     }
@@ -138,7 +142,7 @@ export class RealtimeClient {
         this.status.value = 'idle';
         return;
       }
-      if (this.wasOpen) this.status.value = 'reconnecting';
+      this.status.value = 'reconnecting';
       this.scheduleRetry();
     };
   }

@@ -104,4 +104,35 @@ describe('RealtimeClient', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(MockWebSocket.instances).toHaveLength(1);
   });
+
+  it('is connecting during the first attempt, reconnecting once an attempt failed', async () => {
+    const ticket = vi.fn(async () => null as string | null);
+    ticket.mockResolvedValueOnce(null).mockResolvedValueOnce('t2');
+    const rt = client(ticket as never);
+    rt.subscribe('team:1', () => undefined);
+    // The first attempt: nothing was lost yet.
+    expect(rt.status.value).toBe('connecting');
+    await flushPromises();
+    // No ticket: the attempt failed, the client keeps trying.
+    expect(rt.status.value).toBe('reconnecting');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(rt.status.value).toBe('reconnecting');
+    MockWebSocket.last!.open();
+    expect(rt.status.value).toBe('open');
+  });
+
+  it('is reconnecting when the first socket closes before it opened', async () => {
+    const rt = client();
+    const seen: RealtimeEvent[] = [];
+    rt.subscribe('team:1', (e) => seen.push(e));
+    await flushPromises();
+    expect(rt.status.value).toBe('connecting');
+    MockWebSocket.last!.close();
+    expect(rt.status.value).toBe('reconnecting');
+    await vi.advanceTimersByTimeAsync(1000);
+    MockWebSocket.last!.open();
+    expect(rt.status.value).toBe('open');
+    // Nothing was ever received, so there is nothing to resync.
+    expect(seen).toEqual([]);
+  });
 });

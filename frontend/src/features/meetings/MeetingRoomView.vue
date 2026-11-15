@@ -43,9 +43,8 @@ const meeting = computed(() =>
 );
 const transferOpen = ref(false);
 const endOpen = ref(false);
-const offline = computed(
-  () => realtime.status.value === 'reconnecting' || realtime.status.value === 'connecting',
-);
+// Only once a connection was lost or failed: not while the room first connects.
+const offline = computed(() => realtime.status.value === 'reconnecting');
 
 // Subscribe first, then load: events that arrive before the snapshot are queued.
 useChannel(

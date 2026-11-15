@@ -8,6 +8,7 @@ import {
   MEETING_ID,
   meetingState,
   mockFetch,
+  MockWebSocket,
   mockSocket,
   openSocket,
   participant,
@@ -317,6 +318,25 @@ describe('Meeting room', () => {
     expect(writeText).toHaveBeenCalledWith('https://retro.test/m/tok');
     expect(wrapper.text()).toContain('Meeting invite link copied.');
     vi.unstubAllGlobals();
+  });
+
+  it('shows no reconnecting banner while the room first connects', async () => {
+    mockFetch(routes());
+    const { wrapper } = await open();
+    await flushPromises();
+    // The socket exists but has not opened yet.
+    expect(MockWebSocket.last?.readyState).toBe(MockWebSocket.CONNECTING);
+    expect(wrapper.get('h1').text()).toBe('Icebreaker');
+    expect(wrapper.text()).not.toContain('Reconnecting…');
+    await openSocket();
+    expect(wrapper.text()).not.toContain('Reconnecting…');
+  });
+
+  it('shows the banner when the first connection fails', async () => {
+    mockFetch(routes(meetingState(), { 'POST /api/v1/ws-ticket': problem(503, 'unavailable') }));
+    const { wrapper } = await open();
+    await flushPromises();
+    expect(wrapper.get('[role="status"]').text()).toContain('Reconnecting…');
   });
 
   it('shows the reconnecting banner while the socket is down', async () => {

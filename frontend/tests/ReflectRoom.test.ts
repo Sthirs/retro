@@ -181,6 +181,62 @@ describe('Reflect phase', () => {
     expect(wrapper.find('[data-testid="unsent-drafts"]').exists()).toBe(false);
   });
 
+  it('keeps text typed while a reflection is on its way', async () => {
+    let answer!: () => void;
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    mockFetch(
+      routes(reflect(), {
+        [`POST ${BASE}/reflections`]: async () => {
+          await answered;
+          return { status: 201, body: reflect({ seq: 3 }) };
+        },
+      }),
+    );
+    const { wrapper } = await open();
+    await wrapper.get('button[aria-label="Write a reflection in Plus"]').trigger('click');
+    await flushPromises();
+    const editor = wrapper.findComponent(RichTextEditor);
+    editor.vm.$emit('update:modelValue', '<p>First</p>');
+    await flushPromises();
+    await button(wrapper, 'Send')!.trigger('click');
+    editor.vm.$emit('update:modelValue', '<p>Second</p>');
+    await flushPromises();
+    answer();
+    await flushPromises();
+    expect(wrapper.findComponent(RichTextEditor).props('modelValue')).toBe('<p>Second</p>');
+    expect(wrapper.get('[data-testid="unsent-drafts"]').text()).toBe('1 unsent draft');
+  });
+
+  it('leaves an editor opened while an earlier one was sending alone', async () => {
+    let answer!: () => void;
+    const answered = new Promise<void>((resolve) => (answer = resolve));
+    mockFetch(
+      routes(reflect(), {
+        [`POST ${BASE}/reflections`]: async () => {
+          await answered;
+          return { status: 201, body: reflect({ seq: 3 }) };
+        },
+      }),
+    );
+    const { wrapper } = await open();
+    await wrapper.get('button[aria-label="Write a reflection in Plus"]').trigger('click');
+    await flushPromises();
+    let editor = wrapper.findComponent(RichTextEditor);
+    editor.vm.$emit('update:modelValue', '<p>First</p>');
+    await flushPromises();
+    await button(wrapper, 'Send')!.trigger('click');
+    editor.vm.$emit('cancel');
+    await flushPromises();
+    await wrapper.get('button[aria-label="Write a reflection in Plus"]').trigger('click');
+    await flushPromises();
+    editor = wrapper.findComponent(RichTextEditor);
+    editor.vm.$emit('update:modelValue', '<p>Replacement</p>');
+    await flushPromises();
+    answer();
+    await flushPromises();
+    expect(wrapper.findComponent(RichTextEditor).props('modelValue')).toBe('<p>Replacement</p>');
+  });
+
   it("does not count this tab's own editor as someone else writing", async () => {
     mockFetch(routes());
     const { wrapper } = await open();

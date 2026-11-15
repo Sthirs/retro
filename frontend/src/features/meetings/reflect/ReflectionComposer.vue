@@ -13,7 +13,7 @@ import RichTextEditor from '@/components/RichTextEditor.vue';
 import AppButton from '@/components/ui/AppButton.vue';
 import { COLUMNS } from '@/features/meetings/reflect/columns';
 import { useMeetingStore } from '@/stores/meeting';
-import { hasText, useReflectDraftsStore } from '@/stores/reflectDrafts';
+import { hasText, type OpenEditor, useReflectDraftsStore } from '@/stores/reflectDrafts';
 
 const props = defineProps<{ column: ReflectionColumn; reflection?: ReflectionDto }>();
 const { t } = useI18n();
@@ -36,8 +36,17 @@ const content = computed({
 });
 const canSend = computed(() => hasText(content.value) && !busy.value);
 
+/**
+ * After a request, closes the editor that started it, if it is still the
+ * open one: it may have been cancelled and another opened meanwhile.
+ */
+function closeIfStill(session: OpenEditor | null): void {
+  if (drafts.open === session) drafts.close();
+}
+
 async function submit(): Promise<void> {
   if (!canSend.value) return;
+  const session = drafts.open;
   busy.value = true;
   try {
     if (props.reflection) {
@@ -48,11 +57,18 @@ async function submit(): Promise<void> {
         Object.keys(change).length === 0 ||
         (await store.updateReflection(props.reflection.id, change))
       ) {
-        drafts.close();
+        closeIfStill(session);
       }
-    } else if (await store.createReflection(props.column, content.value)) {
-      drafts.clearDraft(props.column);
-      drafts.close();
+    } else {
+      const column = props.column;
+      const sent = content.value;
+      if (await store.createReflection(column, sent)) {
+        // Text typed while the request was on its way stays a draft.
+        if (drafts.draft(column) === sent) {
+          drafts.clearDraft(column);
+          closeIfStill(session);
+        }
+      }
     }
   } finally {
     busy.value = false;
@@ -61,9 +77,10 @@ async function submit(): Promise<void> {
 
 async function remove(): Promise<void> {
   if (!props.reflection || busy.value) return;
+  const session = drafts.open;
   busy.value = true;
   try {
-    if (await store.deleteReflection(props.reflection.id)) drafts.close();
+    if (await store.deleteReflection(props.reflection.id)) closeIfStill(session);
   } finally {
     busy.value = false;
   }
@@ -137,7 +154,7 @@ function cancel(): void {
 .composer__select {
   flex: 1 1 100px;
   min-width: 0;
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-control);

@@ -39,6 +39,24 @@ describe('reflect drafts', () => {
     expect(hasText('<p>Hi</p>')).toBe(true);
     expect(hasText('<p></p>')).toBe(false);
     expect(hasText('<p>&nbsp; </p>')).toBe(false);
+    expect(hasText('<p><img src="x"></p>')).toBe(false);
+    expect(hasText('<<b>p>a')).toBe(true);
+  });
+
+  it('keeps a draft another tab saved in another column', async () => {
+    const { drafts } = await setup();
+    drafts.setDraft('plus', '<p>Plus</p>');
+    // Another tab, loaded before the Plus draft was saved, saves Delta.
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ ...JSON.parse(localStorage.getItem(KEY)!), delta: '<p>Delta</p>' }),
+    );
+    drafts.setDraft('ideas', '<p>Idea</p>');
+    drafts.clearDraft('ideas');
+    expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({
+      plus: '<p>Plus</p>',
+      delta: '<p>Delta</p>',
+    });
   });
 
   it('keeps drafts in this browser, per meeting and user', async () => {

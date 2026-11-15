@@ -15,12 +15,8 @@ const KEY = 'retro.reflectDrafts';
 
 /** Whether markup holds any text a reader would see. */
 export function hasText(html: string): boolean {
-  return (
-    html
-      .replace(/<[^>]*>/g, '')
-      .replace(/&nbsp;/g, ' ')
-      .trim() !== ''
-  );
+  const text = new DOMParser().parseFromString(html, 'text/html').body.textContent ?? '';
+  return text.replace(/\u00a0/g, ' ').trim() !== '';
 }
 
 /**
@@ -52,12 +48,23 @@ export const useReflectDraftsStore = defineStore('reflectDrafts', () => {
     }
   }
 
-  function persist(): void {
+  /**
+   * Saves one column (`null`: every column), against what is stored now:
+   * another tab of the same meeting may have saved a different column.
+   */
+  function persist(column: ReflectionColumn | null): void {
     if (!owner) return;
     try {
-      const kept = Object.fromEntries(Object.entries(drafts.value).filter(([, v]) => hasText(v)));
-      if (Object.keys(kept).length === 0) localStorage.removeItem(owner);
-      else localStorage.setItem(owner, JSON.stringify(kept));
+      let stored: Partial<Record<ReflectionColumn, string>> = {};
+      if (column) {
+        const raw = localStorage.getItem(owner);
+        stored = raw ? (JSON.parse(raw) as Partial<Record<ReflectionColumn, string>>) : {};
+        const html = drafts.value[column];
+        if (html && hasText(html)) stored[column] = html;
+        else delete stored[column];
+      }
+      if (Object.keys(stored).length === 0) localStorage.removeItem(owner);
+      else localStorage.setItem(owner, JSON.stringify(stored));
     } catch {
       // Storage unavailable (private mode): drafts live as long as the tab.
     }
@@ -74,14 +81,14 @@ export const useReflectDraftsStore = defineStore('reflectDrafts', () => {
 
   function setDraft(column: ReflectionColumn, html: string): void {
     drafts.value = { ...drafts.value, [column]: html };
-    persist();
+    persist(column);
   }
 
   function clearDraft(column: ReflectionColumn): void {
     const next = { ...drafts.value };
     delete next[column];
     drafts.value = next;
-    persist();
+    persist(column);
   }
 
   function startNew(column: ReflectionColumn): void {
@@ -134,7 +141,7 @@ export const useReflectDraftsStore = defineStore('reflectDrafts', () => {
       open.value = null;
       const count = unsent.value;
       drafts.value = {};
-      persist();
+      persist(null);
       if (count > 0) meetingStore.notice = { kind: 'draftsDiscarded', count };
     },
   );

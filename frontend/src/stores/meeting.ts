@@ -20,6 +20,9 @@ import { useSessionStore } from '@/stores/session';
 
 export const PHASES = Object.values(MeetingPhase);
 
+/** Reloads after a phase change, while snapshots come back stale. */
+const PHASE_RESYNC_RETRIES = 3;
+
 /** A notice in the room: a new facilitator, or this tab's drafts discarded. */
 export type MeetingNotice =
   | { kind: 'facilitator'; userId: string; name: string }
@@ -54,6 +57,8 @@ export const useMeetingStore = defineStore('meeting', () => {
   let loadSeq = 0;
   /** A resync asked for while `open()` was loading: run once it is done. */
   let resyncWanted = false;
+  /** Optimistic actions waiting for the server's answer. */
+  let optimisticInFlight = 0;
   /**
    * Server time minus local time, in ms, from the last `serverNow` seen: the
    * timer counts down on server time, whatever the local clock says.
@@ -135,14 +140,18 @@ export const useMeetingStore = defineStore('meeting', () => {
     () => reset(),
   );
 
-  /** Takes a snapshot from the server unless ours is newer. */
-  function accept(state: MeetingStateDto): void {
-    if (state.id !== meetingId.value) return;
-    if (meeting.value && meeting.value.seq > state.seq) return;
+  /**
+   * Takes a snapshot from the server unless ours is newer. False when the
+   * snapshot was older than what events had already brought.
+   */
+  function accept(state: MeetingStateDto): boolean {
+    if (state.id !== meetingId.value) return true;
+    if (meeting.value && meeting.value.seq > state.seq) return false;
     meeting.value = state;
     online = new Set(state.onlineIds);
     markOnline();
     syncClock(state.serverNow);
+    return true;
   }
 
   /** Opens a meeting: joins it while it runs, then loads its state. */
@@ -181,8 +190,12 @@ export const useMeetingStore = defineStore('meeting', () => {
   /**
    * Reloads the snapshot (after a gap, a subscription or a reconnect). While
    * `open()` is loading it waits for it, so the open still completes.
+   *
+   * `retries`: how many times to fetch again when the snapshot comes back
+   * older than events applied meanwhile, for a reload whose data no event
+   * carries (e.g. the reflections of a new phase).
    */
-  async function resync(): Promise<void> {
+  async function resync(retries = 0): Promise<void> {
     const id = meetingId.value;
     if (!id) return;
     if (loading.value) {
@@ -195,7 +208,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       if (res.status !== 200) throw apiError(res);
       if (seq !== loadSeq) return;
       // Not older than the events applied while it was on its way.
-      accept(res.data);
+      if (!accept(res.data) && retries > 0) void resync(retries - 1);
     } catch (e) {
       if (seq === loadSeq) loadError.value = errorCode(e);
     }
@@ -260,7 +273,7 @@ export const useMeetingStore = defineStore('meeting', () => {
         // Ready flags reset with every phase; the snapshot of the new phase
         // (e.g. every reflection, from Group on) comes from the server.
         for (const participant of m.participants) participant.ready = false;
-        void resync();
+        void resync(PHASE_RESYNC_RETRIES);
         break;
       case 'timer.updated':
         syncClock(p.serverNow);
@@ -301,7 +314,10 @@ export const useMeetingStore = defineStore('meeting', () => {
   ): Promise<boolean> {
     const before = meeting.value ? structuredClone(toRaw(meeting.value)) : null;
     actionError.value = null;
-    optimistic?.();
+    if (optimistic) {
+      optimisticInFlight++;
+      optimistic();
+    }
     try {
       const res = await call();
       if (res.status !== 200 && res.status !== 201) throw apiError(res);
@@ -311,16 +327,20 @@ export const useMeetingStore = defineStore('meeting', () => {
       if (optimistic && before) undo(before);
       actionError.value = errorCode(e);
       return false;
+    } finally {
+      if (optimistic) optimisticInFlight--;
     }
   }
 
   /**
    * Takes back a refused optimistic change. If events moved the meeting on
    * meanwhile (or another one is open), `before` is out of date: reload.
+   * So it is while another optimistic action is pending: `before` may hold,
+   * or lack, that action's change.
    */
   function undo(before: MeetingStateDto): void {
     const now = meeting.value;
-    if (now && now.id === before.id && now.seq === before.seq) {
+    if (now && now.id === before.id && now.seq === before.seq && optimisticInFlight === 1) {
       meeting.value = before;
       // Presence carries no seq: keep the current one.
       markOnline();

@@ -1,3 +1,4 @@
+import { flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
@@ -191,6 +192,75 @@ describe('meeting store in Reflect', () => {
     expect(store.actionError).toBe('wrong_phase');
     expect(store.myReflections).toHaveLength(1);
     expect(store.meeting?.reflectionCounts.plus).toBe(1);
+  });
+
+  it('reloads, rather than restores, when two optimistic actions both fail', async () => {
+    const mine = {
+      id: 'r1',
+      column: 'plus',
+      content: '<p>x</p>',
+      mine: true,
+      createdAt: '2026-11-10T17:03:00Z',
+      updatedAt: '2026-11-10T17:03:00Z',
+    };
+    const state = meetingState({
+      phase: 'reflect',
+      reflections: [mine],
+      reflectionCounts: { plus: 1, delta: 0, ideas: 0, thanks: 0 },
+    });
+    const refused = { status: 409, body: { status: 409, code: 'wrong_phase' } };
+    const { store, calls } = await opened(state, {
+      'DELETE /api/v1/reflections/r1': refused,
+      [`PUT ${BASE}/ready`]: refused,
+    });
+    const deleting = store.deleteReflection('r1');
+    const readying = store.setReady(true);
+    expect(await deleting).toBe(false);
+    expect(await readying).toBe(false);
+    await flushPromises();
+    // The Ready rollback must not take the deletion's change back in.
+    expect(store.myReflections).toHaveLength(1);
+    expect(calls.filter((c) => c.path === `${BASE}/state`).length).toBeGreaterThan(0);
+  });
+
+  it('fetches the new phase again when its snapshot is older than a later event', async () => {
+    let fetches = 0;
+    const stale = meetingState({ phase: 'group', seq: 3 });
+    const fresh = meetingState({
+      phase: 'group',
+      seq: 4,
+      reflections: [
+        {
+          id: 'r9',
+          column: 'plus',
+          content: '<p>All of them</p>',
+          mine: false,
+          createdAt: '2026-11-10T17:03:00Z',
+          updatedAt: '2026-11-10T17:03:00Z',
+        },
+      ],
+    });
+    const { store } = await opened(meetingState({ phase: 'reflect', seq: 2 }));
+    mockFetch({
+      [`GET ${BASE}/state`]: () => {
+        fetches++;
+        if (fetches === 1) {
+          // A Ready event overtakes the snapshot.
+          store.apply({
+            type: 'ready.changed',
+            channel,
+            seq: 4,
+            payload: { userId: BOB.id, ready: true },
+          });
+          return { status: 200, body: stale };
+        }
+        return { status: 200, body: fresh };
+      },
+    });
+    store.apply({ type: 'phase.changed', channel, seq: 3, payload: { phase: 'group' } });
+    await flushPromises();
+    expect(fetches).toBe(2);
+    expect(store.meeting?.reflections).toHaveLength(1);
   });
 
   it('sets the timer and ready through the API', async () => {

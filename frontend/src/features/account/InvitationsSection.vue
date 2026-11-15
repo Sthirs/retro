@@ -10,8 +10,10 @@ import { usePendingInvitations } from '@/composables/usePendingInvitations';
 import AccountPanel from '@/features/account/AccountPanel.vue';
 import { relativeFromNow } from '@/lib/time';
 import { useSessionStore } from '@/stores/session';
+import { useErrorText } from '@/composables/useErrorText';
 
 const { t, locale } = useI18n();
+const errorText = useErrorText();
 const session = useSessionStore();
 const { invitations, busy, error, accept, decline } = usePendingInvitations();
 </script>
@@ -23,7 +25,7 @@ const { invitations, busy, error, accept, decline } = usePendingInvitations();
     :title="t('account.invitations.title', { count: invitations.length })"
     :description="t('account.invitations.sentTo', { email: session.user?.email ?? '' })"
   >
-    <AppAlert v-if="error" class="error">{{ t(`errors.${error}`) }}</AppAlert>
+    <AppAlert v-if="error" class="error">{{ errorText(error) }}</AppAlert>
     <ul class="list">
       <li v-for="invite in invitations" :key="invite.token" class="row" data-testid="invite-row">
         <TeamTile :name="invite.team.name" :size="40" />

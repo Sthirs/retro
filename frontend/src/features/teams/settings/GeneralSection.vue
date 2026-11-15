@@ -8,9 +8,11 @@ import AppButton from '@/components/ui/AppButton.vue';
 import TextField from '@/components/ui/TextField.vue';
 import SettingsPanel from '@/features/teams/settings/SettingsPanel.vue';
 import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 const props = defineProps<{ team: TeamDto; isAdmin: boolean }>();
 const { t } = useI18n();
+const errorText = useErrorText();
 const teams = useTeamsStore();
 
 const name = ref(props.team.name);
@@ -56,7 +58,7 @@ async function save(): Promise<void> {
           maxlength="60"
           autocomplete="off"
           :label="t('settings.teamName')"
-          :error="error ? t(`errors.${error}`) : undefined"
+          :error="error ? errorText(error) : undefined"
           @input="saved = false"
         />
       </div>

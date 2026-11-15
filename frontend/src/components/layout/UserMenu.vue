@@ -17,8 +17,10 @@ import { usePopover } from '@/composables/usePopover';
 import { useThemePreference, type ThemePreference } from '@/lib/theme';
 import { useSessionStore } from '@/stores/session';
 import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 const { t } = useI18n();
+const errorText = useErrorText();
 const router = useRouter();
 const session = useSessionStore();
 const teams = useTeamsStore();
@@ -139,7 +141,7 @@ defineExpose({ toggle });
           </li>
         </ul>
         <div v-if="error" class="panel__error">
-          <AppAlert>{{ t(`errors.${error}`) }}</AppAlert>
+          <AppAlert>{{ errorText(error) }}</AppAlert>
         </div>
       </template>
 

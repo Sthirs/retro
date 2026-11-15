@@ -17,6 +17,7 @@ import LinkLayout from '@/features/invitations/LinkLayout.vue';
 import LinkStateCard from '@/features/invitations/LinkStateCard.vue';
 import { relativeFromNow } from '@/lib/time';
 import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 type State =
   | { kind: 'loading' }
@@ -26,6 +27,7 @@ type State =
   | { kind: 'error'; code: string };
 
 const { t, locale } = useI18n();
+const errorText = useErrorText();
 const route = useRoute();
 const router = useRouter();
 const teams = useTeamsStore();
@@ -172,7 +174,7 @@ const closedText = computed(() => {
         </div>
       </dl>
 
-      <AppAlert v-if="actionError">{{ t(`errors.${actionError}`) }}</AppAlert>
+      <AppAlert v-if="actionError">{{ errorText(actionError) }}</AppAlert>
 
       <div class="actions">
         <AppButton size="page" class="actions__decline" :disabled="busy" @click="decline">
@@ -204,7 +206,7 @@ const closedText = computed(() => {
       v-else
       icon="alert"
       :title="t('linkStates.notFoundTitle')"
-      :text="state.kind === 'error' ? t(`errors.${state.code}`) : t('linkStates.notFoundText')"
+      :text="state.kind === 'error' ? errorText(state.code) : t('linkStates.notFoundText')"
     >
       <AppButton to="/">{{ t('common.backToRetro') }}</AppButton>
     </LinkStateCard>

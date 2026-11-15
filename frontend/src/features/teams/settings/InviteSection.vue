@@ -17,6 +17,7 @@ import InviteDialog from '@/features/teams/settings/InviteDialog.vue';
 import SettingsPanel from '@/features/teams/settings/SettingsPanel.vue';
 import { copyText } from '@/lib/clipboard';
 import { relativeFromNow } from '@/lib/time';
+import { useErrorText } from '@/composables/useErrorText';
 
 const props = defineProps<{
   teamId: string;
@@ -27,6 +28,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ changed: []; joinLink: [JoinLinkDto] }>();
 const { t, locale } = useI18n();
+const errorText = useErrorText();
 
 const email = ref('');
 const creating = ref(false);
@@ -126,7 +128,7 @@ function meta(invitation: InvitationDto): string {
           :label="t('settings.invite.email')"
           :placeholder="t('settings.invite.emailPlaceholder')"
           :hint="t('settings.invite.emailHint')"
-          :error="emailError ? t(`errors.${emailError}`) : undefined"
+          :error="emailError ? errorText(emailError) : undefined"
         />
       </div>
       <AppButton
@@ -171,7 +173,7 @@ function meta(invitation: InvitationDto): string {
       </template>
     </div>
 
-    <AppAlert v-if="error" class="error">{{ t(`errors.${error}`) }}</AppAlert>
+    <AppAlert v-if="error" class="error">{{ errorText(error) }}</AppAlert>
 
     <template v-if="invitations.length">
       <div class="subhead">

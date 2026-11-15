@@ -13,10 +13,12 @@ import AppDialog from '@/components/ui/AppDialog.vue';
 import CopyField from '@/components/ui/CopyField.vue';
 import TextField from '@/components/ui/TextField.vue';
 import { relativeFromNow } from '@/lib/time';
+import { useErrorText } from '@/composables/useErrorText';
 
 const props = defineProps<{ open: boolean; teamId: string; created: InvitationDto | null }>();
 const emit = defineEmits<{ close: []; created: [InvitationDto] }>();
 const { t, locale } = useI18n();
+const errorText = useErrorText();
 
 const invitation = ref<InvitationDto | null>(props.created);
 const email = ref('');
@@ -69,7 +71,7 @@ async function create(): Promise<void> {
         :autofocus="!invitation"
         :label="t('settings.inviteDialog.email')"
         :hint="t('settings.inviteDialog.hint')"
-        :error="error ? t(`errors.${error}`) : undefined"
+        :error="error ? errorText(error) : undefined"
       />
     </form>
     <div v-if="invitation" class="created" data-testid="invitation-created">

@@ -20,10 +20,12 @@ import TaskColumn from '@/features/tasks/TaskColumn.vue';
 import TaskFilters from '@/features/tasks/TaskFilters.vue';
 import { useSessionStore } from '@/stores/session';
 import { useTasksStore, type TaskFilter } from '@/stores/tasks';
+import { useErrorText } from '@/composables/useErrorText';
 
 const COLUMNS = [TaskStatus.future, TaskStatus.stuck, TaskStatus.active, TaskStatus.done] as const;
 
-const { t, te } = useI18n();
+const { t } = useI18n();
+const translateError = useErrorText();
 const route = useRoute();
 const router = useRouter();
 const session = useSessionStore();
@@ -65,7 +67,7 @@ const isEmpty = computed(
 const errorText = computed(() => {
   const code = store.error;
   if (!code) return '';
-  return te(`errors.${code}`) ? t(`errors.${code}`) : t('errors.unknown');
+  return translateError(code);
 });
 
 async function load(): Promise<void> {
@@ -112,7 +114,7 @@ async function confirmDelete(): Promise<void> {
     await focusColumn(task.status);
   } catch (e) {
     const code = errorCode(e);
-    deleteError.value = te(`errors.${code}`) ? t(`errors.${code}`) : t('errors.unknown');
+    deleteError.value = translateError(code);
     // The dialog shows it: keep the board's own alert quiet.
     store.error = null;
   } finally {

@@ -15,6 +15,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
 import { useLeaveTeam } from '@/composables/useLeaveTeam';
 import SettingsPanel from '@/features/teams/settings/SettingsPanel.vue';
+import { useErrorText } from '@/composables/useErrorText';
 
 const props = defineProps<{
   team: TeamDto;
@@ -24,6 +25,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ changed: [] }>();
 const { t } = useI18n();
+const errorText = useErrorText();
 const router = useRouter();
 const leave = useLeaveTeam();
 
@@ -78,7 +80,7 @@ async function confirmRemove(): Promise<void> {
     removing.value = null;
     emit('changed');
   } catch (e) {
-    confirmError.value = t(`errors.${errorCode(e)}`);
+    confirmError.value = errorText(errorCode(e));
   } finally {
     busyId.value = null;
   }
@@ -102,7 +104,7 @@ const removeDialog = computed(() => {
     :title="t('settings.members.title', { count: members.length })"
     :description="t('settings.members.hint')"
   >
-    <AppAlert v-if="error" class="error">{{ t(`errors.${error}`) }}</AppAlert>
+    <AppAlert v-if="error" class="error">{{ errorText(error) }}</AppAlert>
     <ul class="list">
       <li v-for="member in ordered" :key="member.user.id" class="item" data-testid="member">
         <UserAvatar

@@ -9,10 +9,12 @@ import AppAlert from '@/components/ui/AppAlert.vue';
 import AppButton from '@/components/ui/AppButton.vue';
 import AppDialog from '@/components/ui/AppDialog.vue';
 import { useTasksStore } from '@/stores/tasks';
+import { useErrorText } from '@/composables/useErrorText';
 
 const props = defineProps<{ open: boolean; task: TaskDto; members: PersonDto[] }>();
 const emit = defineEmits<{ close: [] }>();
-const { t, te } = useI18n();
+const { t } = useI18n();
+const errorText = useErrorText();
 const store = useTasksStore();
 
 const content = ref(props.task.contentHtml);
@@ -38,7 +40,7 @@ async function save(): Promise<void> {
     emit('close');
   } catch (e) {
     const code = errorCode(e);
-    error.value = te(`errors.${code}`) ? t(`errors.${code}`) : t('errors.unknown');
+    error.value = errorText(code);
     // The dialog shows it: keep the board's own alert quiet.
     store.error = null;
   } finally {

@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n';
 
 import { api, apiError, errorCode, type TeamRefDto } from '@/api/client';
 import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 /**
  * Leaving a team (spec §5.1): confirmation dialog state and the request. A sole
@@ -11,6 +12,7 @@ import { useTeamsStore } from '@/stores/teams';
  */
 export function useLeaveTeam() {
   const { t } = useI18n();
+  const errorText = useErrorText();
   const teams = useTeamsStore();
 
   const pending = ref<(TeamRefDto & { soleMember: boolean }) | null>(null);
@@ -56,7 +58,7 @@ export function useLeaveTeam() {
       await teams.load();
       return true;
     } catch (e) {
-      error.value = t(`errors.${errorCode(e)}`);
+      error.value = errorText(errorCode(e));
       return false;
     } finally {
       busy.value = false;

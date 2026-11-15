@@ -12,12 +12,14 @@ import UserAvatar from '@/components/UserAvatar.vue';
 import AccountPanel from '@/features/account/AccountPanel.vue';
 import { formatDate } from '@/lib/time';
 import { useSessionStore } from '@/stores/session';
+import { useErrorText } from '@/composables/useErrorText';
 
 const props = defineProps<{ memberSince: string; signInMethod: SignInMethod }>();
 
 const MAX_PICTURE_BYTES = 5 * 1024 * 1024;
 
-const { t, te } = useI18n();
+const { t } = useI18n();
+const errorText = useErrorText();
 const session = useSessionStore();
 
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -42,7 +44,7 @@ watch(
 );
 
 function fail(code: string): void {
-  error.value = te(`errors.${code}`) ? t(`errors.${code}`) : t('errors.unknown');
+  error.value = errorText(code);
 }
 
 function reset(): void {

@@ -65,6 +65,18 @@ describe('InvitationView', () => {
     expect(calls.some((c) => c.path === '/api/v1/invitations/tok/decline')).toBe(true);
   });
 
+  it('shows a generic message for an error code without its own text', async () => {
+    mockFetch({
+      'POST /api/v1/auth/refresh': session(),
+      'GET /api/v1/invitations/tok': preview(),
+      'POST /api/v1/invitations/tok/accept': problem(500, 'internal'),
+    });
+    const { wrapper } = await renderAt('/invite/tok');
+    await wrapper.find('button.actions__accept').trigger('click');
+    await vi.waitFor(() => expect(wrapper.text()).toContain('Something went wrong. Try again.'));
+    expect(wrapper.text()).not.toContain('errors.internal');
+  });
+
   it('explains an expired invitation, naming the inviter and team', async () => {
     mockFetch({
       'POST /api/v1/auth/refresh': session(),

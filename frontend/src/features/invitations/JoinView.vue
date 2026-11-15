@@ -10,6 +10,7 @@ import AppButton from '@/components/ui/AppButton.vue';
 import LinkLayout from '@/features/invitations/LinkLayout.vue';
 import LinkStateCard from '@/features/invitations/LinkStateCard.vue';
 import { useTeamsStore } from '@/stores/teams';
+import { useErrorText } from '@/composables/useErrorText';
 
 type State =
   | { kind: 'joining' }
@@ -18,6 +19,7 @@ type State =
   | { kind: 'error'; code: string };
 
 const { t } = useI18n();
+const errorText = useErrorText();
 const route = useRoute();
 const teams = useTeamsStore();
 const state = ref<State>({ kind: 'joining' });
@@ -71,7 +73,7 @@ onMounted(async () => {
       v-else
       icon="alert"
       :title="t('linkStates.joinInvalidTitle')"
-      :text="t(`errors.${state.code}`)"
+      :text="errorText(state.code)"
     >
       <AppButton to="/">{{ t('common.backToRetro') }}</AppButton>
     </LinkStateCard>

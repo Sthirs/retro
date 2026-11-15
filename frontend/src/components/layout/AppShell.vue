@@ -18,7 +18,7 @@ const route = useRoute();
 const teams = useTeamsStore();
 const teamId = computed(() => {
   const param = route.params.teamId;
-  return typeof param === 'string' ? param : teams.defaultTeam()?.id;
+  return typeof param === 'string' ? param : teams.currentTeam()?.id;
 });
 // Team pages remount when the team changes. Other pages (the account page)
 // must stay mounted when the remembered or default team changes, so they key

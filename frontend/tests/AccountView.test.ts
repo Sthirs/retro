@@ -1,4 +1,4 @@
-import { flushPromises } from '@vue/test-utils';
+import { flushPromises, type VueWrapper } from '@vue/test-utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useThemePreference } from '@/lib/theme';
@@ -347,66 +347,95 @@ describe('account page: preferences and log out', () => {
     expect(menuDark?.attributes('aria-pressed')).toBe('true');
   });
 
-  it('changing the default team remembers it', async () => {
-    mockFetch(
-      base({
-        'GET /api/v1/me': me([team(), team({ id: OTHER_TEAM_ID, name: 'Mobile Squad' })]),
-      }),
-    );
+  const twoTeams = () =>
+    base({
+      'GET /api/v1/me': me([
+        team(),
+        team({ id: OTHER_TEAM_ID, name: 'Mobile Squad', role: 'member', memberCount: 4 }),
+      ]),
+    });
+  const field = (wrapper: VueWrapper) => wrapper.get('[data-testid="default-team"]');
+  const fieldTrigger = (wrapper: VueWrapper) =>
+    field(wrapper).get('button[aria-haspopup="listbox"]');
+  const teamOption = (wrapper: VueWrapper, label: string) =>
+    field(wrapper)
+      .findAll('[role="option"]')
+      .find((o) => o.get('.option__label').text() === label)!;
+
+  it('pins a default team, and Last used unpins it', async () => {
+    mockFetch(twoTeams());
     const { wrapper } = await renderAt('/account');
-    const select = wrapper.find('#default-team');
-    expect((select.element as HTMLSelectElement).value).toBe(TEAM_ID);
-    await select.setValue(OTHER_TEAM_ID);
-    expect(localStorage.getItem(`retro.lastTeam.${ALICE.id}`)).toBe(OTHER_TEAM_ID);
+    expect(wrapper.text()).toContain('The team Retro opens after you sign in.');
+    expect(fieldTrigger(wrapper).text()).toBe('Last used');
+
+    await fieldTrigger(wrapper).trigger('click');
+    const rows = field(wrapper).findAll('[role="option"]');
+    expect(rows.map((r) => r.get('.option__label').text())).toEqual([
+      'Last used',
+      'Platform Team',
+      'Mobile Squad',
+    ]);
+    expect(rows.map((r) => r.find('.option__hint').text())).toEqual([
+      'Opens whichever team you used last',
+      'Admin · 2 members',
+      'Member · 4 members',
+    ]);
+    expect(teamOption(wrapper, 'Last used').attributes('aria-selected')).toBe('true');
+
+    await teamOption(wrapper, 'Mobile Squad').trigger('click');
+    expect(localStorage.getItem(`retro.defaultTeam.${ALICE.id}`)).toBe(OTHER_TEAM_ID);
+    expect(fieldTrigger(wrapper).text()).toContain('Mobile Squad');
+    expect(fieldTrigger(wrapper).attributes('aria-expanded')).toBe('false');
+
+    await fieldTrigger(wrapper).trigger('click');
+    await teamOption(wrapper, 'Last used').trigger('click');
+    expect(localStorage.getItem(`retro.defaultTeam.${ALICE.id}`)).toBeNull();
+    expect(fieldTrigger(wrapper).text()).toBe('Last used');
   });
 
-  it('moves the Current tag to the newly chosen default team', async () => {
-    mockFetch(
-      base({
-        'GET /api/v1/me': me([team(), team({ id: OTHER_TEAM_ID, name: 'Mobile Squad' })]),
-      }),
-    );
+  it('keeps the Current tag on the last used team when pinning another', async () => {
+    mockFetch(twoTeams());
     const { wrapper } = await renderAt('/account');
     const currentRow = () =>
       wrapper.findAll('[data-testid="team-row"]').find((r) => r.text().includes('Current'));
     expect(currentRow()?.text()).toContain('Platform Team');
-    await wrapper.find('#default-team').setValue(OTHER_TEAM_ID);
-    expect(currentRow()?.text()).toContain('Mobile Squad');
+    await fieldTrigger(wrapper).trigger('click');
+    await teamOption(wrapper, 'Mobile Squad').trigger('click');
+    expect(currentRow()?.text()).toContain('Platform Team');
     expect(wrapper.findAll('.tag--current')).toHaveLength(1);
   });
 
   it('stays mounted when the default team changes', async () => {
-    const { calls } = mockFetch(
-      base({
-        'GET /api/v1/me': me([team(), team({ id: OTHER_TEAM_ID, name: 'Mobile Squad' })]),
-      }),
-    );
+    const { calls } = mockFetch(twoTeams());
     const { wrapper } = await renderAt('/account');
     const meCalls = () => calls.filter((c) => c.method === 'GET' && c.path === '/api/v1/me');
     // One from the teams store (route guard), one from the page itself.
     const before = meCalls().length;
     expect(before).toBe(2);
     await wrapper.find('#display-name').setValue('Ali');
-    const select = wrapper.find('#default-team');
-    (select.element as HTMLSelectElement).focus();
-    await select.setValue(OTHER_TEAM_ID);
+    const trigger = fieldTrigger(wrapper);
+    await trigger.trigger('click');
+    await teamOption(wrapper, 'Mobile Squad').trigger('click');
     await flushPromises();
     expect((wrapper.find('#display-name').element as HTMLInputElement).value).toBe('Ali');
-    expect(wrapper.find('#default-team').element).toBe(select.element);
+    expect(fieldTrigger(wrapper).element).toBe(trigger.element);
     expect(meCalls()).toHaveLength(before);
   });
 
-  it('the language select offers English only', async () => {
+  it('the language field offers English only', async () => {
     mockFetch(base());
     const { wrapper } = await renderAt('/account');
-    const options = wrapper.findAll('#language option');
+    const language = wrapper.get('button[aria-labelledby="language-label language-value"]');
+    expect(language.text()).toBe('English');
+    await language.trigger('click');
+    const options = wrapper.findAll('[role="listbox"][aria-label="Language"] [role="option"]');
     expect(options.map((o) => o.text())).toEqual(['English']);
   });
 
   it('hides the default team control without teams', async () => {
     mockFetch(base({ 'GET /api/v1/me': me([]) }));
     const { wrapper } = await renderAt('/account');
-    expect(wrapper.find('#default-team').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="default-team"]').exists()).toBe(false);
   });
 
   it('logs out', async () => {

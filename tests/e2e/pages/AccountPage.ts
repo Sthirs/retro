@@ -40,6 +40,19 @@ export class AccountPage {
       .click();
   }
 
+  /** The Default team field's button. */
+  get defaultTeam(): Locator {
+    return this.page.getByTestId('default-team').locator('button[aria-haspopup="listbox"]');
+  }
+
+  /** Picks the team opened by default, or 'Last used'. */
+  async chooseDefaultTeam(label: string): Promise<void> {
+    await this.defaultTeam.click();
+    const list = this.page.getByRole('listbox', { name: 'Default team' });
+    await list.getByRole('option', { name: label }).click();
+    await expect(list).toBeHidden();
+  }
+
   /** Opens the leave confirmation of `team`; the caller answers the dialog. */
   async leave(team: string): Promise<void> {
     await this.page.getByRole('button', { name: `Leave ${team}` }).click();

@@ -187,7 +187,10 @@ export default {
       languageHint: 'More languages are coming.',
       english: 'English',
       defaultTeam: 'Default team',
-      defaultTeamHint: 'Retro opens the team you used last on this browser.',
+      defaultTeamHint: 'The team Retro opens after you sign in.',
+      lastUsed: 'Last used',
+      lastUsedHint: 'Opens whichever team you used last',
+      teamHint: '{role} · {count} member | {role} · {count} members',
     },
     session: {
       label: 'Session',

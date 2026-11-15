@@ -68,6 +68,26 @@ describe('router guards', () => {
     expect(router.currentRoute.value.fullPath).toBe(`/teams/${OTHER_TEAM_ID}/meetings`);
   });
 
+  it('opens the pinned default team, and the last used one once the pin is gone', async () => {
+    const second = team({ id: OTHER_TEAM_ID, name: 'Mobile Squad' });
+    localStorage.setItem(`retro.defaultTeam.${ALICE.id}`, OTHER_TEAM_ID);
+    localStorage.setItem(`retro.lastTeam.${ALICE.id}`, TEAM_ID);
+    mockFetch({ 'POST /api/v1/auth/refresh': session(), 'GET /api/v1/me': me([team(), second]) });
+    const { router } = setup();
+    await router.push('/');
+    expect(router.currentRoute.value.fullPath).toBe(`/teams/${OTHER_TEAM_ID}/meetings`);
+  });
+
+  it('falls back to the last used team when the pinned one was left', async () => {
+    localStorage.setItem(`retro.defaultTeam.${ALICE.id}`, 'left-team');
+    localStorage.setItem(`retro.lastTeam.${ALICE.id}`, OTHER_TEAM_ID);
+    const second = team({ id: OTHER_TEAM_ID, name: 'Mobile Squad' });
+    mockFetch({ 'POST /api/v1/auth/refresh': session(), 'GET /api/v1/me': me([team(), second]) });
+    const { router } = setup();
+    await router.push('/');
+    expect(router.currentRoute.value.fullPath).toBe(`/teams/${OTHER_TEAM_ID}/meetings`);
+  });
+
   it('keeps users out of teams they do not belong to', async () => {
     mockFetch({ 'POST /api/v1/auth/refresh': session(), 'GET /api/v1/me': me() });
     const { router } = setup();

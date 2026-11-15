@@ -63,6 +63,25 @@ test.describe('your account', () => {
     ).toHaveAttribute('aria-pressed', 'true');
   });
 
+  test('default team: a pinned team opens after sign-in, Last used unpins it', async ({ page }) => {
+    const other = `${TEAM} pinned`;
+    const otherId = await createTeam(USERS.dana.username, other);
+    await page.reload();
+    await expect(account.defaultTeam).toHaveText('Last used');
+
+    await account.chooseDefaultTeam(other);
+    await expect(account.defaultTeam).toContainText(other);
+    await page.reload();
+    await expect(account.defaultTeam).toContainText(other);
+
+    await page.goto('/');
+    await expect(page).toHaveURL(new RegExp(`/teams/${otherId}/`));
+
+    await account.goto();
+    await account.chooseDefaultTeam('Last used');
+    await expect(account.defaultTeam).toHaveText('Last used');
+  });
+
   test('teams: leaving as the sole member confirms, then removes the team', async ({ page }) => {
     const row = page.getByTestId('team-row').filter({ hasText: TEAM });
     await expect(row).toBeVisible();

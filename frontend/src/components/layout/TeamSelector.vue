@@ -26,7 +26,7 @@ const creating = ref(false);
 
 // Outside a team (the account page) the remembered team stays selected.
 const current = computed(() =>
-  typeof route.params.teamId === 'string' ? teams.byId(route.params.teamId) : teams.defaultTeam(),
+  typeof route.params.teamId === 'string' ? teams.byId(route.params.teamId) : teams.currentTeam(),
 );
 
 function items(): HTMLElement[] {

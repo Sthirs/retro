@@ -1,10 +1,20 @@
 <script setup lang="ts">
 /** Section chrome of the account page: a titled panel with an optional description and actions. */
-defineProps<{ id: string; title: string; description?: string }>();
+defineProps<{
+  id: string;
+  title: string;
+  description?: string;
+  /** Lets popovers (a dropdown list) extend past the panel instead of being clipped. */
+  overflowVisible?: boolean;
+}>();
 </script>
 
 <template>
-  <section class="panel" :aria-labelledby="`${id}-title`">
+  <section
+    class="panel"
+    :class="{ 'panel--overflow-visible': overflowVisible }"
+    :aria-labelledby="`${id}-title`"
+  >
     <div class="panel__header">
       <div class="panel__heading">
         <h2 :id="`${id}-title`" class="panel__title">{{ title }}</h2>
@@ -23,6 +33,9 @@ defineProps<{ id: string; title: string; description?: string }>();
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow-panel);
   overflow: hidden;
+}
+.panel--overflow-visible {
+  overflow: visible;
 }
 .panel__header {
   display: flex;

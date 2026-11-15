@@ -48,7 +48,7 @@ async function confirmLeave(): Promise<void> {
         <div class="row__text">
           <span class="row__name">
             {{ team.name }}
-            <span v-if="team.id === teams.defaultTeam()?.id" class="tag tag--current">
+            <span v-if="team.id === teams.currentTeam()?.id" class="tag tag--current">
               {{ t('account.teams.current') }}
             </span>
           </span>

@@ -286,9 +286,17 @@ async fn presence_follows_the_participants_sockets() {
     };
     assert_eq!(online["payload"]["online"], true);
     assert_eq!(online["seq"], Value::Null);
-    // The Meetings page hears about it too.
-    let updated = next_of(&mut team_socket, "meeting.updated").await;
-    assert_eq!(updated["payload"]["meetingId"], m);
+    // The Meetings page hears about it too, as presence: no reload needed.
+    let presence = next(&mut team_socket).await;
+    assert_eq!(
+        presence,
+        json!({
+            "type": "presence.changed",
+            "channel": format!("team:{team}"),
+            "seq": null,
+            "payload": { "meetingId": m, "userId": bob_id, "online": true },
+        })
+    );
 
     let state = app
         .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
@@ -311,6 +319,31 @@ async fn presence_follows_the_participants_sockets() {
         }
     };
     assert_eq!(offline["payload"]["online"], false);
+    let presence = next(&mut team_socket).await;
+    assert_eq!(presence["type"], "presence.changed");
+    assert_eq!(presence["payload"]["online"], false);
+    // Presence alone never asks Meetings pages to reload the list.
+    assert_silent(&mut team_socket, Duration::from_millis(300)).await;
+}
+
+#[tokio::test]
+async fn joining_still_updates_the_meetings_list() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let team = create_team(&app, &alice, "Platform").await;
+    join_team(&app, &alice, team, &bob).await;
+    let m = start_meeting(&app, &alice, team).await;
+    let mut team_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut team_socket, &format!("team:{team}")).await;
+
+    // A join (no socket in the room) changes the participants.
+    app.call("POST", &format!("/api/v1/meetings/{m}/join"), &bob, None)
+        .await;
+    let updated = next(&mut team_socket).await;
+    assert_eq!(updated["type"], "meeting.updated");
+    assert_eq!(updated["payload"]["meetingId"], m);
 }
 
 #[tokio::test]

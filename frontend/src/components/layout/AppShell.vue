@@ -63,6 +63,11 @@ useChannel(
       void leaveTeam(event.channel.slice('team:'.length));
       return;
     }
+    if (event.type === 'presence.changed') {
+      const { meetingId, userId, online } = event.payload;
+      meetings.applyPresence(meetingId as string, userId as string, online === true);
+      return;
+    }
     if (event.type.startsWith('meeting.') || event.type === 'resync') meetings.reloadSoon();
   },
 );

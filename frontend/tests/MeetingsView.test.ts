@@ -124,6 +124,45 @@ describe('Meetings page', () => {
     expect(wrapper.get('article h3').text()).toBe('Retro #4');
   });
 
+  it('shows people entering and leaving a room without reloading the list', async () => {
+    const list = [
+      meetingSummary({
+        participants: [
+          participant(ALICE, { role: 'admin', online: false }),
+          participant(BOB, { online: true }),
+        ],
+      }),
+    ];
+    const { calls } = mockFetch(routes(() => list));
+    const { wrapper } = await open();
+    const socket = await openSocket();
+    const dots = () =>
+      wrapper.findAll('article .presence__dot').map((d) => d.classes('presence__dot--online'));
+    expect(dots()).toEqual([false, true]);
+    const listCalls = () =>
+      calls.filter((c) => c.path === `/api/v1/teams/${TEAM_ID}/meetings`).length;
+    expect(listCalls()).toBe(1);
+
+    vi.useFakeTimers();
+    const presence = (userId: string, online: boolean, meetingId = MEETING_ID) =>
+      socket.emit({
+        type: 'presence.changed',
+        channel: `team:${TEAM_ID}`,
+        payload: { meetingId, userId, online },
+      });
+    presence(ALICE.id, true);
+    presence(BOB.id, false);
+    // Unknown meetings and people are ignored.
+    presence(BOB.id, true, '0190a4e0-0000-7000-8000-0000000000ff');
+    presence('0190a4e0-0000-7000-8000-0000000000ee', true);
+    await vi.advanceTimersByTimeAsync(500);
+    vi.useRealTimers();
+    await flushPromises();
+
+    expect(dots()).toEqual([true, false]);
+    expect(listCalls()).toBe(1);
+  });
+
   it('Add meeting starts one and opens its room', async () => {
     const { calls } = mockFetch({
       ...routes(() => []),

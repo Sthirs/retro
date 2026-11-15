@@ -340,11 +340,12 @@ impl Hub {
                 seq: None,
                 payload: json!({ "userId": user, "online": online }),
             });
+            // Meetings pages patch the card's presence: no list reload.
             self.send(&Notification {
                 channel: Channel::Team(team).to_string(),
-                kind: "meeting.updated".into(),
+                kind: PRESENCE_CHANGED.into(),
                 seq: None,
-                payload: json!({ "meetingId": meeting }),
+                payload: json!({ "meetingId": meeting, "userId": user, "online": online }),
             });
         }
     }

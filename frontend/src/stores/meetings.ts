@@ -4,7 +4,7 @@ import { computed, ref, watch } from 'vue';
 import { api, apiError, errorCode, MeetingStatus, type MeetingSummaryDto } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
 
-/** Coalesces bursts of team events (join + presence) into one reload. */
+/** Coalesces bursts of team events (e.g. a join and a phase change) into one reload. */
 const RELOAD_DELAY_MS = 150;
 
 /**
@@ -72,5 +72,27 @@ export const useMeetingsStore = defineStore('meetings', () => {
     }, RELOAD_DELAY_MS);
   }
 
-  return { teamId, meetings, active, ended, loaded, error, load, reloadSoon, reset };
+  /**
+   * Someone entered or left a meeting room (a `presence.changed` team event):
+   * patches the card in place. A participant not listed yet is skipped: their
+   * join brings a `meeting.updated`, whose reload carries their presence.
+   */
+  function applyPresence(meetingId: string, userId: string, online: boolean): void {
+    const meeting = meetings.value.find((m) => m.id === meetingId);
+    const participant = meeting?.participants.find((p) => p.id === userId);
+    if (participant) participant.online = online;
+  }
+
+  return {
+    teamId,
+    meetings,
+    active,
+    ended,
+    loaded,
+    error,
+    load,
+    reloadSoon,
+    applyPresence,
+    reset,
+  };
 });

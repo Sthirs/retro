@@ -160,6 +160,41 @@ pub async fn close_for_member(
     Ok(())
 }
 
+/// Gives a new token to the open invitations of a team whose link `user_id`
+/// could see: all of them when they were an admin, else the ones they made.
+/// Called when `user_id` leaves the team, so a former member cannot rejoin
+/// with a link they knew (spec §6.1). The invitations stay open.
+pub async fn rotate_tokens_seen_by(
+    txn: &impl ConnectionTrait,
+    team_id: Uuid,
+    user_id: Uuid,
+    was_admin: bool,
+) -> Result<(), AppError> {
+    let mut open = invitation::Entity::find()
+        .filter(invitation::Column::TeamId.eq(team_id))
+        .filter(invitation::Column::Status.eq(InvitationStatus::Pending));
+    if !was_admin {
+        open = open.filter(invitation::Column::InvitedBy.eq(user_id));
+    }
+    let ids: Vec<Uuid> = open
+        .lock_exclusive()
+        .all(txn)
+        .await?
+        .into_iter()
+        .map(|i| i.id)
+        .collect();
+    for id in ids {
+        // `invitations.token` is unique: each row needs its own token.
+        txn.execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE invitations SET token = $2 WHERE id = $1",
+            [id.into(), random_token().into()],
+        ))
+        .await?;
+    }
+    Ok(())
+}
+
 /// Open invitations of a team with their inviter, newest first (any member),
 /// and the caller's role.
 pub async fn list_pending(

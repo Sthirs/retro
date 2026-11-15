@@ -434,7 +434,7 @@ async fn demotion_racing_a_delete_is_serialized() {
         // Either the delete ran first (and the demotion found no team) or
         // the demotion ran first (and the delete was refused).
         match (demoted.status, deleted.status) {
-            (404, 204) | (204, 403) | (200, 403) => {}
+            (404, 204) | (204, 403) => {}
             other => panic!("round {round}: {other:?}"),
         }
         if deleted.status != 204 {

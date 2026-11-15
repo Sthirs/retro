@@ -19,6 +19,11 @@ export class MeetingsPage {
     await expect(this.heading).toBeVisible();
   }
 
+  /** The participants shown online on a card (the avatars' presence dots). */
+  onlineDots(card: Locator): Locator {
+    return card.locator('.presence__dot--online');
+  }
+
   /** An active meeting's card, by title. */
   card(title: string): Locator {
     return this.active.getByRole('article').filter({

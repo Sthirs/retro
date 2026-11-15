@@ -14,22 +14,31 @@ export class MeetingRoomPage {
   readonly transferDialog: Locator;
   readonly endDialog: Locator;
   readonly ended: Locator;
+  /** The banner shown while the real-time connection is lost. */
+  readonly reconnecting: Locator;
 
   constructor(private readonly page: Page) {
     this.phase = page.getByRole('heading', { level: 1 });
     this.sidebar = page.getByRole('navigation', { name: 'Meeting phases' });
     this.queue = page.getByRole('list', { name: 'Icebreaker progress' });
-    this.facilitatorActions = page.getByRole('toolbar', { name: 'Facilitator actions' });
+    this.facilitatorActions = page.getByRole('toolbar', {
+      name: 'Facilitator actions',
+    });
     this.adminActions = page.getByRole('toolbar', { name: 'Admin actions' });
     this.footer = page.getByRole('contentinfo', { name: 'Meeting navigation' });
     this.nextPerson = this.footer.getByRole('button', { name: 'Next person' });
-    this.previousPerson = this.footer.getByRole('button', { name: 'Previous person' });
+    this.previousPerson = this.footer.getByRole('button', {
+      name: 'Previous person',
+    });
     this.greetingPronunciation = page
       .getByRole('region', { name: 'Icebreaker' })
       .getByText(/^\/.+\/$/);
-    this.transferDialog = page.getByRole('dialog', { name: 'Transfer facilitator role' });
+    this.transferDialog = page.getByRole('dialog', {
+      name: 'Transfer facilitator role',
+    });
     this.endDialog = page.getByRole('dialog', { name: 'End this meeting?' });
     this.ended = page.getByText('This meeting has ended');
+    this.reconnecting = page.getByRole('status').filter({ hasText: 'Reconnecting…' });
   }
 
   /** "Now answering · 2 of 3". */
@@ -49,6 +58,16 @@ export class MeetingRoomPage {
 
   async waitForIcebreaker(): Promise<void> {
     await expect(this.phase).toHaveText('Icebreaker');
+  }
+
+  /** The people the transfer dialog offers (open it first). */
+  transferOptions(): Locator {
+    return this.transferDialog.getByRole('radio');
+  }
+
+  async openTransfer(): Promise<void> {
+    await this.facilitatorActions.getByRole('button', { name: 'Transfer facilitator' }).click();
+    await expect(this.transferDialog).toBeVisible();
   }
 
   async transferTo(name: string): Promise<void> {

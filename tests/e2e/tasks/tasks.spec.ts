@@ -270,6 +270,39 @@ test.describe("tasks board", () => {
     await finn.context().close();
   });
 
+  test("live: the board does not reload for its own changes", async ({ page, browser }) => {
+    const finn = await finnJoins(page, browser);
+    await seedTask(ERIN, teamId, { status: "future", content: "<p>Mine to move</p>" });
+    await seedTask(FINN, teamId, { status: "future", content: "<p>Finn's own</p>" });
+    const tasks = new TasksPage(page);
+    await tasks.goto(teamId);
+    const finnTasks = new TasksPage(finn);
+    await finnTasks.goto(teamId);
+    await expect(tasks.card("Mine to move")).toBeVisible();
+    await expect(finnTasks.card("Mine to move")).toBeVisible();
+
+    let reloads = 0;
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (request.method() === "GET" && /^\/api\/v1\/teams\/[^/]+\/tasks$/.test(path)) {
+        reloads++;
+      }
+    });
+
+    // Erin's move and edit reach Finn, and Erin's board does not reload for them.
+    await tasks.moveWithKeyboard("Mine to move", "Done");
+    await expect(finnTasks.cards("Done")).toHaveCount(1);
+    await tasks.edit("Mine to move", " now");
+    await expect(finnTasks.card("Mine to move now")).toBeVisible();
+    expect(reloads).toBe(0);
+
+    // Finn's change still reloads Erin's board, once.
+    await finnTasks.moveWithKeyboard("Finn's own", "Active");
+    await expect(tasks.cards("Active")).toHaveCount(1);
+    expect(reloads).toBe(1);
+    await finn.context().close();
+  });
+
   test("touch: a quick swipe over a card scrolls and never starts a drag", async ({
     browser,
   }) => {

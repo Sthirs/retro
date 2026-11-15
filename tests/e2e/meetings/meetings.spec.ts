@@ -1,6 +1,14 @@
-import { expect, test, type Browser, type Page } from '@playwright/test';
+import { expect, test, type Browser, type Page, type WebSocketRoute } from '@playwright/test';
 
-import { createTeam, deleteTeam } from '../api';
+import {
+  createTeam,
+  deleteTeam,
+  meetingInvitePath,
+  removeMember,
+  renameMeeting,
+  startMeeting,
+  userIdOf,
+} from '../api';
 import { PASSWORD, USERS } from '../fixtures';
 import { AppShell } from '../pages/AppShell';
 import { MeetingRoomPage } from '../pages/MeetingRoomPage';
@@ -155,5 +163,123 @@ test.describe('meetings', () => {
     await kai.goto(new URL(link).pathname);
     await expect(kai.getByRole('heading', { level: 1 })).toHaveText('This meeting has ended');
     await kai.context().close();
+  });
+
+  test('a removed member is cut off at once and cannot come back with the link', async ({
+    page,
+    browser,
+  }) => {
+    const meetings = new MeetingsPage(page);
+    await meetings.goto(teamId);
+    await meetings.addMeeting.click();
+    await expect(page).toHaveURL(MEETING_ROOM);
+    const room = new MeetingRoomPage(page);
+    await room.waitForIcebreaker();
+    const meetingId = new URL(page.url()).pathname.split('/').pop()!;
+    const invite = await meetingInvitePath(IVAN, meetingId);
+
+    // Kai comes in through the meeting invite link.
+    const kai = await newUser(browser, 'kai');
+    await kai.goto(invite);
+    const kaiRoom = new MeetingRoomPage(kai);
+    await kaiRoom.waitForIcebreaker();
+    await expect(room.queue.getByRole('listitem')).toHaveCount(2);
+
+    // Ivan removes Kai: Kai's room stops live, without a reload.
+    await removeMember(IVAN, teamId, await userIdOf('kai'));
+    await expect(
+      kai.getByText('This team no longer exists or you are no longer a member.'),
+    ).toBeVisible();
+    await expect(kaiRoom.footer).toBeHidden();
+
+    // Later changes reach the team only.
+    await renameMeeting(IVAN, meetingId, 'After Kai');
+    await expect(room.sidebar).toContainText('After Kai');
+    await expect(kai.getByText('After Kai')).toHaveCount(0);
+
+    // Kai is not offered the facilitator role.
+    await room.openTransfer();
+    await expect(room.transferOptions()).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(room.transferDialog).toBeHidden();
+
+    // The link Kai knew no longer works, and the team stays closed to Kai.
+    // (The page shows every refused meeting link as ended.)
+    await kai.goto(invite);
+    await expect(kai.getByRole('heading', { level: 1 })).toHaveText('This meeting has ended');
+    await expect(kai).not.toHaveURL(MEETING_ROOM);
+    await kai.goto(`/teams/${teamId}/meetings`);
+    await expect(kai).not.toHaveURL(new RegExp(teamId));
+    await kai.context().close();
+  });
+
+  test('the Meetings page follows people entering and leaving a room without reloading', async ({
+    page,
+    browser,
+  }) => {
+    const jade = await jadeJoins(page, browser);
+    const meetingId = await startMeeting(IVAN, teamId);
+    const jadeMeetings = new MeetingsPage(jade);
+    await jadeMeetings.goto(teamId);
+    const card = jadeMeetings.card('Retro #1');
+    await expect(card).toBeVisible();
+    await expect(jadeMeetings.onlineDots(card)).toHaveCount(0);
+
+    let reloads = 0;
+    jade.on('request', (request) => {
+      const path = new URL(request.url()).pathname;
+      if (request.method() === 'GET' && /^\/api\/v1\/teams\/[^/]+\/meetings$/.test(path)) {
+        reloads++;
+      }
+    });
+
+    // Ivan enters the room, leaves it, and comes back.
+    const room = new MeetingRoomPage(page);
+    await page.goto(`/teams/${teamId}/meetings/${meetingId}`);
+    await room.waitForIcebreaker();
+    await expect(jadeMeetings.onlineDots(card)).toHaveCount(1);
+    await new MeetingsPage(page).goto(teamId);
+    await expect(jadeMeetings.onlineDots(card)).toHaveCount(0);
+    await page.goto(`/teams/${teamId}/meetings/${meetingId}`);
+    await room.waitForIcebreaker();
+    await expect(jadeMeetings.onlineDots(card)).toHaveCount(1);
+
+    expect(reloads).toBe(0);
+    await jade.context().close();
+  });
+
+  test('the room shows the reconnecting banner only once the connection is lost', async ({
+    page,
+  }) => {
+    const meetingId = await startMeeting(IVAN, teamId);
+    let socket: WebSocketRoute | undefined;
+    await page.routeWebSocket(/\/api\/v1\/ws\?/, (ws) => {
+      socket = ws;
+      ws.connectToServer();
+    });
+    // Hold the socket's ticket: the room loads while the socket still connects.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    await page.route('**/api/v1/ws-ticket', async (route) => {
+      await released;
+      await route.continue();
+    });
+
+    const room = new MeetingRoomPage(page);
+    await page.goto(`/teams/${teamId}/meetings/${meetingId}`);
+    await room.waitForIcebreaker();
+    expect(socket).toBeUndefined();
+    await expect(room.reconnecting).toBeHidden();
+
+    release();
+    await expect.poll(() => socket !== undefined).toBe(true);
+    await expect(room.reconnecting).toBeHidden();
+
+    // The connection drops: the banner shows until the socket is back.
+    const first = socket!;
+    await first.close();
+    await expect(room.reconnecting).toBeVisible();
+    await expect.poll(() => socket !== first, { timeout: 15_000 }).toBe(true);
+    await expect(room.reconnecting).toBeHidden({ timeout: 15_000 });
   });
 });

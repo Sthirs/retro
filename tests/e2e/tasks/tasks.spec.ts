@@ -1,6 +1,6 @@
 import { expect, test, type Browser, type Page } from "@playwright/test";
 
-import { createTeam, deleteTeam, seedTask, userIdOf } from "../api";
+import { createTeam, deleteTeam, seedTask, startMeeting, userIdOf } from "../api";
 import { PASSWORD, USERS } from "../fixtures";
 import { AccountPage } from "../pages/AccountPage";
 import { AppShell } from "../pages/AppShell";
@@ -183,7 +183,8 @@ test.describe("tasks board", () => {
     ]);
     const chip = (id: string, name: string) =>
       `<span data-type="mention" data-id="${id}" data-label="${name}">@${name}</span>`;
-    const [first, second] = [crypto.randomUUID(), crypto.randomUUID()];
+    const first = await startMeeting(ERIN, teamId);
+    const second = await startMeeting(ERIN, teamId);
     await seedTask(ERIN, teamId, {
       status: "future",
       content: `<p>For Finn ${chip(finnId, USERS.finn.name)}</p>`,
@@ -245,6 +246,28 @@ test.describe("tasks board", () => {
         })),
       )
       .toEqual({ scrollX: 0, overflow: 0 });
+  });
+
+  test("live: another member's changes appear without a reload", async ({
+    page,
+    browser,
+  }) => {
+    const finn = await finnJoins(page, browser);
+    const finnTasks = new TasksPage(finn);
+    await finnTasks.goto(teamId);
+    await expect(finn.getByRole("article")).toHaveCount(0);
+
+    // Erin's new task shows up on Finn's open board.
+    await seedTask(ERIN, teamId, { status: "future", content: "<p>Live one</p>" });
+    await expect(finnTasks.card("Live one")).toBeVisible();
+
+    // And Finn's move reaches Erin's board.
+    const tasks = new TasksPage(page);
+    await tasks.goto(teamId);
+    await expect(tasks.card("Live one")).toBeVisible();
+    await finnTasks.moveWithKeyboard("Live one", "Done");
+    await expect(tasks.cards("Done")).toHaveCount(1);
+    await finn.context().close();
   });
 
   test("touch: a quick swipe over a card scrolls and never starts a drag", async ({

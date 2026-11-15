@@ -101,7 +101,7 @@ export async function seedTask(
     status: 'future' | 'stuck' | 'active' | 'done';
     content: string;
     authorId?: string;
-    /** A source meeting id (a plain id until meetings exist). */
+    /** A source meeting of the team (see `startMeeting`). */
     meetingId?: string;
   },
 ): Promise<{ id: string }> {
@@ -110,6 +110,18 @@ export async function seedTask(
     const res = await api.post(`/api/v1/dev/teams/${teamId}/tasks`, { data: task });
     if (!res.ok()) throw new Error(`seed task: ${res.status()} ${await res.text()}`);
     return (await res.json()) as { id: string };
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Starts a meeting in the team, with `login` as its facilitator; returns its id. */
+export async function startMeeting(login: string, teamId: string): Promise<string> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/teams/${teamId}/meetings`);
+    if (!res.ok()) throw new Error(`start meeting: ${res.status()} ${await res.text()}`);
+    return ((await res.json()) as { id: string }).id;
   } finally {
     await api.dispose();
   }

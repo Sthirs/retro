@@ -142,7 +142,8 @@ Authentication is performed by the **backend**, which issues Retro's own session
 - The invitation appears in the invitee's **pending invitations** (user menu and onboarding screen) when they log in with an account whose email matches. They can accept or decline it there. Accepting makes them a member.
 - After creating an invitation, the inviter can copy its personal accept link (`/invite/{token}`) and share it through any channel. Only the inviter and admins can see that link; other members see the pending invitation without it. Opening the link takes the user through login (if needed) and then the acceptance step. The token in the link is the credential: whoever holds the link can accept it, whatever the email of their account. The acceptance step shows the email the invitation was sent to.
 - Invitations can be revoked by the inviter or by an admin. Accepting a revoked or expired invitation fails with a clear message.
-- When a user becomes a member by any route (invitation or join link), the open invitations to that team for their email are closed as accepted. A user who is already a member and opens someone else's invitation link does not use it up.
+- When a user becomes a member by any route (invitation or join link), the open invitations to that team for their email are closed as accepted. A user who is already a member and opens someone else's invitation link does not use it up: accepting or declining it leaves it open.
+- When a member leaves or is removed, the open invitations whose link they could see (all of them for an admin, their own for a member) get a new token, so a former member cannot rejoin with a link they knew. The invitations stay open: the invitee can still accept them from their pending invitations, and the inviter and admins can copy the new link.
 
 ### 6.2 Join link
 

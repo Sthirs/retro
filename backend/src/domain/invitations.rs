@@ -372,10 +372,12 @@ pub async fn accept(
     }
 }
 
-/// Declines an open invitation.
+/// Declines an open invitation. A member of the team who declines someone
+/// else's invitation leaves it open for its invitee (spec §6.1).
 pub async fn decline(
     db: &(impl TransactionTrait + ConnectionTrait),
     token: &str,
+    user_id: Uuid,
 ) -> Result<(), AppError> {
     let txn = db.begin().await?;
     let invitation = invitation::Entity::find()
@@ -384,7 +386,12 @@ pub async fn decline(
         .one(&txn)
         .await?
         .ok_or(AppError::NotFound("invitation_not_found"))?;
+    let is_member = team_member::Entity::find_by_id((invitation.team_id, user_id))
+        .one(&txn)
+        .await?
+        .is_some();
     match invitation.effective_status(OffsetDateTime::now_utc()) {
+        InvitationStatus::Pending if is_member => Ok(()),
         InvitationStatus::Pending => {
             let mut active: invitation::ActiveModel = invitation.into();
             active.status = Set(InvitationStatus::Declined);

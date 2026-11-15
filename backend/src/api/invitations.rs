@@ -295,7 +295,7 @@ pub async fn decline_invitation(
     record_token_failure(
         &state.token_limiter,
         user.id,
-        invitations::decline(&state.db, &token).await,
+        invitations::decline(&state.db, &token, user.id).await,
     )?;
     Ok(StatusCode::NO_CONTENT)
 }

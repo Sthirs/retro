@@ -689,3 +689,23 @@ async fn a_member_leaving_rotates_only_their_own_invitations() {
         }
     }
 }
+
+/// A member who declines someone else's invitation does not use it up.
+#[tokio::test]
+async fn a_member_declining_keeps_someone_elses_invitation_open() {
+    let ctx = setup().await;
+    let inv = ctx.invite(&ctx.alice, "nina@acme.dev").await;
+    let res = ctx
+        .app
+        .call(
+            "POST",
+            &format!("/api/v1/invitations/{}/decline", token_of(&inv)),
+            &ctx.alice,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 204);
+    let pending = ctx.pending().await;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0]["id"], inv["id"]);
+}

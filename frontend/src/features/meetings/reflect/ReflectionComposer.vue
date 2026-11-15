@@ -60,14 +60,13 @@ async function submit(): Promise<void> {
         closeIfStill(session);
       }
     } else {
+      // The editor is read-only while the request is on its way; a draft
+      // other than the text sent was written in an editor opened since.
       const column = props.column;
       const sent = content.value;
-      if (await store.createReflection(column, sent)) {
-        // Text typed while the request was on its way stays a draft.
-        if (drafts.draft(column) === sent) {
-          drafts.clearDraft(column);
-          closeIfStill(session);
-        }
+      if ((await store.createReflection(column, sent)) && drafts.draft(column) === sent) {
+        drafts.clearDraft(column);
+        closeIfStill(session);
       }
     }
   } finally {
@@ -98,6 +97,7 @@ function cancel(): void {
       v-model="content"
       kind="reflection"
       autofocus
+      :readonly="busy"
       :label="t('reflect.editorLabel', { column: name })"
       :placeholder="`${t(`reflect.columns.${column}.hint`)}…`"
       @submit="submit"

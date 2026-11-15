@@ -8,10 +8,11 @@ use std::{
 };
 
 use sea_orm::DatabaseConnection;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::postgres::PgListener;
 use tokio::sync::{broadcast, watch};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::{Channel, Notification, PG_CHANNEL, notify};
@@ -91,20 +92,37 @@ pub type WritingCounts = [[u32; 2]; 4];
 
 const NO_WRITING: WritingCounts = [[0; 2]; 4];
 
-/// The client shape of writing counts: `{ "plus": { "new": 1, "edit": 0 }, … }`.
-pub fn writing_json(counts: &WritingCounts) -> Value {
-    let mut map = serde_json::Map::new();
-    for column in ReflectionColumn::ALL {
-        let [new, edit] = counts[column.index()];
-        let name = match column {
-            ReflectionColumn::Plus => "plus",
-            ReflectionColumn::Delta => "delta",
-            ReflectionColumn::Ideas => "ideas",
-            ReflectionColumn::Thanks => "thanks",
+/// Reflections being written in a column: new ones, and sent ones being
+/// edited.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ColumnWritingDto {
+    pub new: u32,
+    pub edit: u32,
+}
+
+/// Reflections being written, per column, as clients see them (snapshot and
+/// `reflection.writing`; spec §9.2).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct WritingDto {
+    pub plus: ColumnWritingDto,
+    pub delta: ColumnWritingDto,
+    pub ideas: ColumnWritingDto,
+    pub thanks: ColumnWritingDto,
+}
+
+impl From<WritingCounts> for WritingDto {
+    fn from(c: WritingCounts) -> Self {
+        let column = |column: ReflectionColumn| {
+            let [new, edit] = c[column.index()];
+            ColumnWritingDto { new, edit }
         };
-        map.insert(name.to_owned(), json!({ "new": new, "edit": edit }));
+        Self {
+            plus: column(ReflectionColumn::Plus),
+            delta: column(ReflectionColumn::Delta),
+            ideas: column(ReflectionColumn::Ideas),
+            thanks: column(ReflectionColumn::Thanks),
+        }
     }
-    Value::Object(map)
 }
 
 /// A message on its way to a channel's local subscribers: the serialized
@@ -788,7 +806,7 @@ impl Hub {
             channel: Channel::Meeting(meeting).to_string(),
             kind: REFLECTION_WRITING.into(),
             seq: None,
-            payload: json!({ "counts": writing_json(counts) }),
+            payload: json!({ "counts": WritingDto::from(*counts) }),
             user: None,
         });
     }
@@ -1002,8 +1020,13 @@ mod tests {
     }
 
     #[test]
-    fn writing_json_names_every_column() {
-        let json = writing_json(&counts(ReflectionColumn::Delta, WritingMode::Edit, 1));
+    fn writing_serializes_every_column_by_name() {
+        let json = serde_json::to_value(WritingDto::from(counts(
+            ReflectionColumn::Delta,
+            WritingMode::Edit,
+            1,
+        )))
+        .unwrap();
         assert_eq!(json["delta"], json!({ "new": 0, "edit": 1 }));
         assert_eq!(json["plus"], json!({ "new": 0, "edit": 0 }));
         assert_eq!(json.as_object().unwrap().len(), 4);

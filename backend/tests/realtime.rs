@@ -1190,6 +1190,36 @@ async fn writing_needs_a_running_meeting_the_socket_follows() {
 }
 
 #[tokio::test]
+async fn an_ended_meeting_has_no_writers() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, _, m) = team_with_meeting(&app).await;
+    to_reflect(&app, &alice, &m).await;
+    let channel = format!("meeting:{m}");
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+    send_writing(&mut bob_socket, &m, json!("plus"), "new").await;
+    assert_eq!(writing_counts(&mut bob_socket).await, writing("plus", 1, 0));
+
+    let res = app
+        .call("POST", &format!("/api/v1/meetings/{m}/end"), &alice, None)
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    // The snapshot of an ended meeting shows no editors.
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    assert_eq!(state["writing"], writing("plus", 0, 0));
+
+    // Writing in it is refused, and stops what the socket was writing.
+    send_writing(&mut bob_socket, &m, json!("delta"), "new").await;
+    let error = next_of(&mut bob_socket, "error").await;
+    assert_eq!(error["payload"]["code"], "not_writable");
+    assert_eq!(writing_counts(&mut bob_socket).await, writing("plus", 0, 0));
+}
+
+#[tokio::test]
 async fn writing_messages_are_rate_limited() {
     let app = TestApp::new().await;
     let addr = app.spawn_server().await;

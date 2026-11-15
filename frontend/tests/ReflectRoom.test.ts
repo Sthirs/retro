@@ -181,7 +181,7 @@ describe('Reflect phase', () => {
     expect(wrapper.find('[data-testid="unsent-drafts"]').exists()).toBe(false);
   });
 
-  it('keeps text typed while a reflection is on its way', async () => {
+  it('locks the text while a reflection is on its way', async () => {
     let answer!: () => void;
     const answered = new Promise<void>((resolve) => (answer = resolve));
     mockFetch(
@@ -199,12 +199,13 @@ describe('Reflect phase', () => {
     editor.vm.$emit('update:modelValue', '<p>First</p>');
     await flushPromises();
     await button(wrapper, 'Send')!.trigger('click');
-    editor.vm.$emit('update:modelValue', '<p>Second</p>');
     await flushPromises();
+    // Nothing can be added to the text being sent.
+    expect(editor.props('readonly')).toBe(true);
     answer();
     await flushPromises();
-    expect(wrapper.findComponent(RichTextEditor).props('modelValue')).toBe('<p>Second</p>');
-    expect(wrapper.get('[data-testid="unsent-drafts"]').text()).toBe('1 unsent draft');
+    expect(wrapper.findComponent(RichTextEditor).exists()).toBe(false);
+    expect(wrapper.find('[data-testid="unsent-drafts"]').exists()).toBe(false);
   });
 
   it('leaves an editor opened while an earlier one was sending alone', async () => {
@@ -445,6 +446,8 @@ describe('Bottom bar', () => {
     await flushPromises();
     const toast = wrapper.get('[data-testid="times-up"]');
     expect(toast.text()).toBe("Time's up. Alice decides when to move on.");
+    // At zero the countdowns stop ticking.
+    expect(vi.getTimerCount()).toBe(0);
     // It does not move the phase on.
     expect(wrapper.get('h1').text()).toBe('Reflect');
     await toast.get('button[aria-label="Dismiss"]').trigger('click');

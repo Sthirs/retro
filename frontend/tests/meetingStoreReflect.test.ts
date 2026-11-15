@@ -223,12 +223,11 @@ describe('meeting store in Reflect', () => {
     expect(calls.filter((c) => c.path === `${BASE}/state`).length).toBeGreaterThan(0);
   });
 
-  it('fetches the new phase again when its snapshot is older than a later event', async () => {
+  it("takes a new phase's snapshot and applies again the events that overtook it", async () => {
     let fetches = 0;
-    const stale = meetingState({ phase: 'group', seq: 3 });
-    const fresh = meetingState({
+    const snapshot = meetingState({
       phase: 'group',
-      seq: 4,
+      seq: 3,
       reflections: [
         {
           id: 'r9',
@@ -244,23 +243,42 @@ describe('meeting store in Reflect', () => {
     mockFetch({
       [`GET ${BASE}/state`]: () => {
         fetches++;
-        if (fetches === 1) {
-          // A Ready event overtakes the snapshot.
-          store.apply({
-            type: 'ready.changed',
-            channel,
-            seq: 4,
-            payload: { userId: BOB.id, ready: true },
-          });
-          return { status: 200, body: stale };
-        }
-        return { status: 200, body: fresh };
+        // A Ready event overtakes the snapshot.
+        store.apply({
+          type: 'ready.changed',
+          channel,
+          seq: 4,
+          payload: { userId: BOB.id, ready: true },
+        });
+        return { status: 200, body: snapshot };
       },
     });
     store.apply({ type: 'phase.changed', channel, seq: 3, payload: { phase: 'group' } });
     await flushPromises();
-    expect(fetches).toBe(2);
+    expect(fetches).toBe(1);
     expect(store.meeting?.reflections).toHaveLength(1);
+    expect(store.meeting?.seq).toBe(4);
+    expect(store.participantsById.get(BOB.id)?.ready).toBe(true);
+  });
+
+  it('keeps writing counts that arrived while an action was on its way', async () => {
+    const before = meetingState({ phase: 'reflect', seq: 2 });
+    const { store } = await opened(before);
+    const counts = {
+      plus: { new: 1, edit: 0 },
+      delta: { new: 0, edit: 0 },
+      ideas: { new: 0, edit: 0 },
+      thanks: { new: 0, edit: 0 },
+    };
+    mockFetch({
+      [`PUT ${BASE}/ready`]: () => {
+        // The answer was made before someone opened an editor.
+        store.apply({ type: 'reflection.writing', channel, seq: null, payload: { counts } });
+        return { status: 200, body: meetingState({ phase: 'reflect', seq: 2 }) };
+      },
+    });
+    expect(await store.setReady(true)).toBe(true);
+    expect(store.meeting?.writing).toEqual(counts);
   });
 
   it('sets the timer and ready through the API', async () => {

@@ -12,7 +12,7 @@ mod socket;
 pub mod ticket;
 
 pub use channel::Channel;
-pub use hub::{AccessChange, Hub, WritingCounts, WritingMode, writing_json};
+pub use hub::{AccessChange, ColumnWritingDto, Hub, WritingCounts, WritingDto, WritingMode};
 pub use socket::ws_handler;
 
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement};

@@ -9,7 +9,7 @@ const TICK_MS = 250;
 /**
  * The meeting timer's countdown (spec §8.2), on server time: `serverTime`
  * corrects the local clock with the offset of the last `serverNow` seen.
- * It ticks only while the timer runs.
+ * It ticks only while a running timer has time left.
  */
 export function useCountdown(
   timer: MaybeRefOrGetter<Timer | null | undefined>,
@@ -28,8 +28,14 @@ export function useCountdown(
     (t) => {
       stop();
       now.value = serverTime();
-      if (t?.status === TimerStatus.running) {
-        handle = setInterval(() => (now.value = serverTime()), TICK_MS);
+      if (t?.status === TimerStatus.running && t.endsAt) {
+        const endsAt = Date.parse(t.endsAt);
+        if (now.value >= endsAt) return;
+        // Ticks until zero; an expired countdown stays at 00:00 without one.
+        handle = setInterval(() => {
+          now.value = serverTime();
+          if (now.value >= endsAt) stop();
+        }, TICK_MS);
       }
     },
     { immediate: true, deep: true },

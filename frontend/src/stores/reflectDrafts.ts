@@ -26,7 +26,7 @@ export function hasText(html: string): boolean {
  *
  * The open editor is announced on the meeting channel as the tab's writing
  * state (ADR-0012): that is what "being written" means for everyone else.
- * When the meeting leaves Reflect, the drafts are discarded.
+ * When the meeting leaves Reflect or ends, the drafts are discarded.
  */
 export const useReflectDraftsStore = defineStore('reflectDrafts', () => {
   const meetingStore = useMeetingStore();
@@ -110,11 +110,11 @@ export const useReflectDraftsStore = defineStore('reflectDrafts', () => {
   // Tell the meeting what this tab is writing. Leaving the channel (the room
   // closes) or Reflect ends it.
   watch(
-    [open, channel, () => meetingStore.meeting?.phase],
+    [open, channel, () => meetingStore.meeting?.phase, () => meetingStore.isActive],
     ([editor, name, phase], [, oldName]) => {
       if (oldName && oldName !== name) realtime.setWriting(oldName, null);
       if (!name) return;
-      const writing = editor && phase === MeetingPhase.reflect;
+      const writing = editor && phase === MeetingPhase.reflect && meetingStore.isActive;
       realtime.setWriting(name, writing ? { column: editor.column, mode: editor.mode } : null);
     },
   );
@@ -138,13 +138,29 @@ export const useReflectDraftsStore = defineStore('reflectDrafts', () => {
     () => meetingStore.meeting?.phase,
     (phase, before) => {
       if (before !== MeetingPhase.reflect || phase === MeetingPhase.reflect || !phase) return;
-      open.value = null;
-      const count = unsent.value;
-      drafts.value = {};
-      persist(null);
+      const count = discard();
       if (count > 0) meetingStore.notice = { kind: 'draftsDiscarded', count };
     },
   );
+
+  // So does the meeting ending (the room then shows the ended meeting), or
+  // opening one that has ended.
+  watch(
+    () => !!meetingStore.meeting && !meetingStore.isActive,
+    (ended) => {
+      if (ended) discard();
+    },
+    { immediate: true },
+  );
+
+  /** Closes the editor and drops every draft; returns how many had text. */
+  function discard(): number {
+    open.value = null;
+    const count = unsent.value;
+    drafts.value = {};
+    persist(null);
+    return count;
+  }
 
   return {
     drafts,

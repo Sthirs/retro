@@ -20,9 +20,6 @@ import { useSessionStore } from '@/stores/session';
 
 export const PHASES = Object.values(MeetingPhase);
 
-/** Reloads after a phase change, while snapshots come back stale. */
-const PHASE_RESYNC_RETRIES = 3;
-
 /** A notice in the room: a new facilitator, or this tab's drafts discarded. */
 export type MeetingNotice =
   | { kind: 'facilitator'; userId: string; name: string }
@@ -45,6 +42,14 @@ export const useMeetingStore = defineStore('meeting', () => {
   const notice = ref<MeetingNotice | null>(null);
   /** Events that arrived before the snapshot. */
   let queued: RealtimeEvent[] = [];
+  /**
+   * Events applied while a snapshot request (a reload or an action) is on its
+   * way, one log per request: the snapshot may predate them, so they are
+   * applied again on top of it.
+   */
+  const logs = new Set<RealtimeEvent[]>();
+  /** Set while a log is applied again, so other logs do not record it twice. */
+  let replaying = false;
   /**
    * Who is in the room, participant or not yet: presence can arrive before
    * the participant's join, so it is kept apart and applied to participants.
@@ -140,18 +145,38 @@ export const useMeetingStore = defineStore('meeting', () => {
     () => reset(),
   );
 
+  /** Runs a request for a snapshot, logging the events applied meanwhile. */
+  async function logged<T>(call: () => Promise<T>): Promise<{ res: T; log: RealtimeEvent[] }> {
+    const log: RealtimeEvent[] = [];
+    logs.add(log);
+    try {
+      return { res: await call(), log };
+    } finally {
+      logs.delete(log);
+    }
+  }
+
   /**
-   * Takes a snapshot from the server unless ours is newer. False when the
-   * snapshot was older than what events had already brought.
+   * Takes a snapshot from the server, then applies again the events of `log`
+   * (those that arrived while it was on its way) it may predate: sequenced
+   * events past its `seq`, and every unsequenced one (writing, presence),
+   * which is newer than what the snapshot holds.
    */
-  function accept(state: MeetingStateDto): boolean {
-    if (state.id !== meetingId.value) return true;
-    if (meeting.value && meeting.value.seq > state.seq) return false;
+  function accept(state: MeetingStateDto, log: RealtimeEvent[] = []): void {
+    if (state.id !== meetingId.value) return;
+    const seen = meeting.value?.seq ?? 0;
     meeting.value = state;
     online = new Set(state.onlineIds);
     markOnline();
     syncClock(state.serverNow);
-    return true;
+    replaying = true;
+    try {
+      for (const event of log) apply(event);
+    } finally {
+      replaying = false;
+    }
+    // The log should bring it back to every event seen; reload if it did not.
+    if (meeting.value && meeting.value.seq < seen) void resync();
   }
 
   /** Opens a meeting: joins it while it runs, then loads its state. */
@@ -188,14 +213,11 @@ export const useMeetingStore = defineStore('meeting', () => {
   }
 
   /**
-   * Reloads the snapshot (after a gap, a subscription or a reconnect). While
-   * `open()` is loading it waits for it, so the open still completes.
-   *
-   * `retries`: how many times to fetch again when the snapshot comes back
-   * older than events applied meanwhile, for a reload whose data no event
-   * carries (e.g. the reflections of a new phase).
+   * Reloads the snapshot (after a gap, a subscription, a reconnect or a new
+   * phase). While `open()` is loading it waits for it, so the open still
+   * completes.
    */
-  async function resync(retries = 0): Promise<void> {
+  async function resync(): Promise<void> {
     const id = meetingId.value;
     if (!id) return;
     if (loading.value) {
@@ -204,11 +226,10 @@ export const useMeetingStore = defineStore('meeting', () => {
     }
     const seq = ++loadSeq;
     try {
-      const res = await api.getMeetingState(id);
+      const { res, log } = await logged(() => api.getMeetingState(id));
       if (res.status !== 200) throw apiError(res);
       if (seq !== loadSeq) return;
-      // Not older than the events applied while it was on its way.
-      if (!accept(res.data) && retries > 0) void resync(retries - 1);
+      accept(res.data, log);
     } catch (e) {
       if (seq === loadSeq) loadError.value = errorCode(e);
     }
@@ -246,6 +267,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       }
       m.seq = event.seq;
     }
+    if (!replaying) for (const log of logs) log.push(event);
     const p = event.payload;
     switch (event.type) {
       case 'participant.joined': {
@@ -273,7 +295,7 @@ export const useMeetingStore = defineStore('meeting', () => {
         // Ready flags reset with every phase; the snapshot of the new phase
         // (e.g. every reflection, from Group on) comes from the server.
         for (const participant of m.participants) participant.ready = false;
-        void resync(PHASE_RESYNC_RETRIES);
+        void resync();
         break;
       case 'timer.updated':
         syncClock(p.serverNow);
@@ -319,9 +341,9 @@ export const useMeetingStore = defineStore('meeting', () => {
       optimistic();
     }
     try {
-      const res = await call();
+      const { res, log } = await logged(call);
       if (res.status !== 200 && res.status !== 201) throw apiError(res);
-      accept(res.data as MeetingStateDto);
+      accept(res.data as MeetingStateDto, log);
       return true;
     } catch (e) {
       if (optimistic && before) undo(before);

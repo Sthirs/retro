@@ -27,8 +27,10 @@ const props = withDefaults(
     kind?: 'task' | 'reflection';
     placeholder?: string;
     autofocus?: boolean;
+    /** Locks the text, e.g. while it is being sent. */
+    readonly?: boolean;
   }>(),
-  { members: () => [], kind: 'task', placeholder: '', autofocus: false },
+  { members: () => [], kind: 'task', placeholder: '', autofocus: false, readonly: false },
 );
 const emit = defineEmits<{ 'update:modelValue': [html: string]; submit: []; cancel: [] }>();
 const reflection = props.kind === 'reflection';
@@ -109,6 +111,7 @@ const Shortcuts = Extension.create({
 
 const editor = useEditor({
   content: props.modelValue,
+  editable: !props.readonly,
   autofocus: props.autofocus ? 'end' : false,
   // The CSP forbids inline <style>: the base styles come from prosemirror.css.
   injectCSS: false,
@@ -209,6 +212,20 @@ watch(
   (value) => {
     const e = editor.value;
     if (e && value !== e.getHTML()) e.commands.setContent(value, { emitUpdate: false });
+  },
+);
+
+/** The focus when the text was locked, to give it back on unlock. */
+let focusedWhenLocked = false;
+watch(
+  () => props.readonly,
+  (readonly) => {
+    const e = editor.value;
+    if (!e) return;
+    if (readonly) focusedWhenLocked = e.isFocused;
+    e.setEditable(!readonly, false);
+    e.view.dom.setAttribute('aria-readonly', String(readonly));
+    if (!readonly && focusedWhenLocked) e.commands.focus('end');
   },
 );
 

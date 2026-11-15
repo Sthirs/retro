@@ -18,7 +18,7 @@ use crate::{
     auth::CurrentUser,
     domain::{
         meetings::{self, MeetingView, Participant},
-        reflections::{self, ColumnCounts, ReflectionsSnapshot},
+        reflections::{self, ReflectionCountsDto, ReflectionsSnapshot},
         timer::{Timer, TimerAction},
     },
     entities::{
@@ -28,7 +28,7 @@ use crate::{
     },
     error::{AppError, AppResult, Problem},
     state::AppState,
-    ws::{WritingCounts, ticket},
+    ws::{WritingCounts, WritingDto, ticket},
 };
 
 /// A participant of a meeting.
@@ -144,55 +144,6 @@ pub struct ReflectionDto {
     pub updated_at: OffsetDateTime,
 }
 
-/// Sent reflections per column.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct ReflectionCountsDto {
-    pub plus: i64,
-    pub delta: i64,
-    pub ideas: i64,
-    pub thanks: i64,
-}
-
-impl From<ColumnCounts> for ReflectionCountsDto {
-    fn from(c: ColumnCounts) -> Self {
-        Self {
-            plus: c[0],
-            delta: c[1],
-            ideas: c[2],
-            thanks: c[3],
-        }
-    }
-}
-
-/// Reflections being written in a column: new ones, and sent ones being
-/// edited.
-#[derive(Debug, Serialize, ToSchema)]
-pub struct ColumnWritingDto {
-    pub new: u32,
-    pub edit: u32,
-}
-
-/// Reflections being written, per column (spec §9.2).
-#[derive(Debug, Serialize, ToSchema)]
-pub struct WritingDto {
-    pub plus: ColumnWritingDto,
-    pub delta: ColumnWritingDto,
-    pub ideas: ColumnWritingDto,
-    pub thanks: ColumnWritingDto,
-}
-
-impl From<WritingCounts> for WritingDto {
-    fn from(c: WritingCounts) -> Self {
-        let column = |[new, edit]: [u32; 2]| ColumnWritingDto { new, edit };
-        Self {
-            plus: column(c[0]),
-            delta: column(c[1]),
-            ideas: column(c[2]),
-            thanks: column(c[3]),
-        }
-    }
-}
-
 /// Everything the meeting room shows (spec §14.3 `GET /meetings/{id}/state`).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -303,7 +254,12 @@ pub(crate) async fn state_of(
     let view = meetings::view(&state.db, meeting_id, actor).await?;
     let reflections = reflections::snapshot(&state.db, &view.meeting, actor).await?;
     let online = state.hub.online(meeting_id);
-    let writing = state.hub.writing(meeting_id);
+    // An ended meeting has no editors open, whatever sockets still say.
+    let writing = if view.meeting.status == MeetingStatus::Active {
+        state.hub.writing(meeting_id)
+    } else {
+        WritingCounts::default()
+    };
     Ok(MeetingStateDto::new(view, &online, reflections, writing))
 }
 

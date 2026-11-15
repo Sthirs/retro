@@ -105,6 +105,25 @@ describe('reflect drafts', () => {
     expect(setWriting).toHaveBeenLastCalledWith(channel, null);
   });
 
+  it('discards the drafts and stops writing when the meeting ends in Reflect', async () => {
+    const setWriting = vi.spyOn(realtime, 'setWriting');
+    const { store, drafts } = await setup();
+    drafts.setDraft('plus', '<p>Half a thought</p>');
+    drafts.startNew('plus');
+    await nextTick();
+    store.apply({
+      type: 'meeting.ended',
+      channel,
+      seq: 3,
+      payload: { endedAt: '2026-11-15T10:00:00Z' },
+    });
+    await nextTick();
+    expect(drafts.unsent).toBe(0);
+    expect(drafts.open).toBeNull();
+    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(setWriting).toHaveBeenLastCalledWith(channel, null);
+  });
+
   it('says nothing when there was nothing to discard', async () => {
     const { store } = await setup();
     store.apply({ type: 'phase.changed', channel, seq: 3, payload: { phase: 'group' } });

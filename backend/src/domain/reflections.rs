@@ -9,8 +9,10 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, FromQueryResult,
     PaginatorTrait, QueryFilter, QueryOrder, Set, Statement, TransactionSession, TransactionTrait,
 };
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::json;
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
@@ -70,14 +72,25 @@ pub async fn counts(db: &impl ConnectionTrait, meeting_id: Uuid) -> Result<Colum
     Ok(counts)
 }
 
-/// The client shape of column counts: `{ "plus": 2, "delta": 0, … }`.
-pub fn counts_json(counts: &ColumnCounts) -> Value {
-    json!({
-        "plus": counts[ReflectionColumn::Plus.index()],
-        "delta": counts[ReflectionColumn::Delta.index()],
-        "ideas": counts[ReflectionColumn::Ideas.index()],
-        "thanks": counts[ReflectionColumn::Thanks.index()],
-    })
+/// Sent reflections per column, as clients see them (snapshot and
+/// `reflection.count_changed`).
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ReflectionCountsDto {
+    pub plus: i64,
+    pub delta: i64,
+    pub ideas: i64,
+    pub thanks: i64,
+}
+
+impl From<ColumnCounts> for ReflectionCountsDto {
+    fn from(c: ColumnCounts) -> Self {
+        Self {
+            plus: c[ReflectionColumn::Plus.index()],
+            delta: c[ReflectionColumn::Delta.index()],
+            ideas: c[ReflectionColumn::Ideas.index()],
+            thanks: c[ReflectionColumn::Thanks.index()],
+        }
+    }
 }
 
 /// What `viewer` may see of a meeting's reflections: their own during
@@ -157,7 +170,7 @@ async fn publish_change(
             txn,
             meeting_id,
             "reflection.count_changed",
-            json!({ "counts": counts_json(&counts) }),
+            json!({ "counts": ReflectionCountsDto::from(counts) }),
         )
         .await?;
     }
@@ -273,7 +286,7 @@ mod tests {
     fn counts_serialize_by_column_name() {
         let counts = [1, 0, 3, 2];
         assert_eq!(
-            counts_json(&counts),
+            serde_json::to_value(ReflectionCountsDto::from(counts)).unwrap(),
             json!({ "plus": 1, "delta": 0, "ideas": 3, "thanks": 2 })
         );
     }

@@ -294,10 +294,27 @@ async fn writing(
 ) -> Result<(), &'static str> {
     let subscription = subscriptions.get_mut(channel).ok_or("not_subscribed")?;
     let (meeting, _) = subscription.presence.ok_or("not_writable")?;
-    let to = column.map(|c| (c, mode.unwrap_or(WritingMode::New)));
+    let mut to = column.map(|c| (c, mode.unwrap_or(WritingMode::New)));
+    // The meeting may have ended since the subscription: then the socket
+    // stops writing, and is told so. Stopping needs no check.
+    let running = to.is_none() || is_running(state, meeting).await;
+    if !running {
+        to = None;
+    }
     let from = std::mem::replace(&mut subscription.writing, to);
     state.hub.set_writing(meeting, from, to).await;
-    Ok(())
+    if running { Ok(()) } else { Err("not_writable") }
+}
+
+/// Whether the meeting is still running; false when it cannot be read.
+async fn is_running(state: &AppState, meeting_id: Uuid) -> bool {
+    match meeting::Entity::find_by_id(meeting_id).one(&state.db).await {
+        Ok(found) => found.is_some_and(|m| m.status == MeetingStatus::Active),
+        Err(error) => {
+            tracing::warn!(%error, "cannot read the meeting status");
+            false
+        }
+    }
 }
 
 /// Subscribes or unsubscribes, and returns the reply.

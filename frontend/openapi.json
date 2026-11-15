@@ -3962,7 +3962,7 @@
       },
       "ReflectionCountsDto": {
         "type": "object",
-        "description": "Sent reflections per column.",
+        "description": "Sent reflections per column, as clients see them (snapshot and\n`reflection.count_changed`).",
         "required": [
           "plus",
           "delta",
@@ -4465,7 +4465,7 @@
       },
       "WritingDto": {
         "type": "object",
-        "description": "Reflections being written, per column (spec §9.2).",
+        "description": "Reflections being written, per column, as clients see them (snapshot and\n`reflection.writing`; spec §9.2).",
         "required": [
           "plus",
           "delta",

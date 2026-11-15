@@ -316,7 +316,8 @@ export interface ParticipantDto {
 }
 
 /**
- * Sent reflections per column.
+ * Sent reflections per column, as clients see them (snapshot and
+ * `reflection.count_changed`).
  */
 export interface ReflectionCountsDto {
   delta: number;
@@ -379,7 +380,8 @@ export interface Timer {
 }
 
 /**
- * Reflections being written, per column (spec §9.2).
+ * Reflections being written, per column, as clients see them (snapshot and
+ * `reflection.writing`; spec §9.2).
  */
 export interface WritingDto {
   delta: ColumnWritingDto;

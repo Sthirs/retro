@@ -42,7 +42,7 @@ async function confirm(): Promise<void> {
 <template>
   <AppDialog :open="open" :title="t('endMeeting.title')" :width="500" @close="emit('close')">
     <template #icon>
-      <span class="icon" aria-hidden="true"><AppIcon name="flag" :size="20" /></span>
+      <span class="end__badge" aria-hidden="true"><AppIcon name="flag" :size="20" /></span>
     </template>
     <AppAlert v-if="error">{{ errorText(error) }}</AppAlert>
     <ul class="list">
@@ -73,7 +73,7 @@ async function confirm(): Promise<void> {
 </template>
 
 <style scoped>
-.icon {
+.end__badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;

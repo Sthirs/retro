@@ -22,7 +22,8 @@ export default defineConfig({
     allowedHosts: devHost ? [devHost] : undefined,
     hmr: devHost ? { host: devHost, clientPort: hmrClientPort, protocol: 'wss' } : undefined,
     proxy: {
-      '/api': { target: backendUrl, changeOrigin: false },
+      // `ws`: the real-time socket (/api/v1/ws) goes through the proxy too.
+      '/api': { target: backendUrl, changeOrigin: false, ws: true },
     },
   },
   test: {

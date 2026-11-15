@@ -34,3 +34,4 @@ Legend: 🟢 accepted · 🟡 proposed · 🔴 rejected · ⚪ superseded
 | [0008](0008-testing-strategy.md) | Testing strategy | 🟡 proposed |
 | [0009](0009-ci-release-and-versioning.md) | CI, releases and versioning | 🟡 proposed |
 | [0010](0010-rich-text-format.md) | Rich text is stored as server-sanitized HTML | 🟡 proposed |
+| [0011](0011-realtime-hub.md) | Real-time hub over WebSocket with PostgreSQL LISTEN/NOTIFY fan-out | 🟡 proposed |

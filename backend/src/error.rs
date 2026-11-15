@@ -42,6 +42,9 @@ pub enum AppError {
     NotFound(&'static str),
     #[error("forbidden")]
     Forbidden,
+    /// Not allowed, with a stable code such as `not_facilitator`.
+    #[error("forbidden: {0}")]
+    Denied(&'static str),
     /// The request conflicts with the current state, e.g. `last_admin`.
     #[error("conflict: {0}")]
     Conflict(&'static str),
@@ -87,6 +90,7 @@ impl AppError {
             Self::Invalid(code) => (StatusCode::BAD_REQUEST, code, None),
             Self::NotFound(code) => (StatusCode::NOT_FOUND, code, None),
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden", None),
+            Self::Denied(code) => (StatusCode::FORBIDDEN, code, None),
             Self::Conflict(code) => (StatusCode::CONFLICT, code, None),
             Self::Gone(code) => (StatusCode::GONE, code, None),
             Self::PayloadTooLarge => (

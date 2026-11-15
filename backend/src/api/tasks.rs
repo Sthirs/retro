@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::{
     api::PersonDto,
+    api::client_id::ClientId,
     auth::CurrentUser,
     domain::tasks::{self, BoardFilter, TaskView},
     entities::task::TaskStatus,
@@ -140,6 +141,7 @@ pub struct MoveTaskRequest {
 pub async fn move_task(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
+    ClientId(client): ClientId,
     Path(task_id): Path<Uuid>,
     Json(body): Json<MoveTaskRequest>,
 ) -> AppResult<Json<TaskDto>> {
@@ -150,6 +152,7 @@ pub async fn move_task(
         body.status,
         body.after_id,
         body.before_id,
+        client,
     )
     .await?;
     Ok(Json(task.into()))
@@ -181,10 +184,11 @@ pub struct UpdateTaskRequest {
 pub async fn update_task(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
+    ClientId(client): ClientId,
     Path(task_id): Path<Uuid>,
     Json(body): Json<UpdateTaskRequest>,
 ) -> AppResult<Json<TaskDto>> {
-    let task = tasks::edit(&state.db, task_id, user.id, &body.content).await?;
+    let task = tasks::edit(&state.db, task_id, user.id, &body.content, client).await?;
     Ok(Json(task.into()))
 }
 
@@ -204,9 +208,10 @@ pub async fn update_task(
 pub async fn delete_task(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
+    ClientId(client): ClientId,
     Path(task_id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
-    tasks::delete(&state.db, task_id, user.id).await?;
+    tasks::delete(&state.db, task_id, user.id, client).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -12,6 +12,7 @@ import { useI18n } from 'vue-i18n';
 
 import type { PersonDto } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
+import '@/styles/prosemirror.css';
 
 const props = defineProps<{ modelValue: string; members: PersonDto[]; label: string }>();
 const emit = defineEmits<{ 'update:modelValue': [html: string] }>();
@@ -74,6 +75,8 @@ const RetroMention = Mention.extend({
 
 const editor = useEditor({
   content: props.modelValue,
+  // The CSP forbids inline <style>: the base styles come from prosemirror.css.
+  injectCSS: false,
   editorProps: {
     attributes: {
       role: 'textbox',

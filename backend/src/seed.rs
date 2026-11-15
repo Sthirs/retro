@@ -67,6 +67,23 @@ pub const DEV_USERS: &[DevUser] = &[
         email: "hugo@retro.local",
         display_name: "Hugo Conti",
     },
+    // Also password only. The end-to-end meetings spec owns these three: ivan
+    // and jade run meetings together, kai joins through a meeting invite link.
+    DevUser {
+        username: "ivan",
+        email: "ivan@retro.local",
+        display_name: "Ivan Galli",
+    },
+    DevUser {
+        username: "jade",
+        email: "jade@retro.local",
+        display_name: "Jade Marino",
+    },
+    DevUser {
+        username: "kai",
+        email: "kai@retro.local",
+        display_name: "Kai Russo",
+    },
 ];
 
 /// Creates the dev users, or resets their name and password. Idempotent.

@@ -15,6 +15,12 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  build: {
+    // Small assets are inlined as `data:` URIs by default, but the CSP
+    // (nginx.conf) allows fonts from 'self' only: a small font subset would
+    // be blocked. Fonts always ship as files.
+    assetsInlineLimit: (file) => (/\.(woff2?|ttf|otf|eot)$/.test(file) ? false : undefined),
+  },
   server: {
     port: devPort,
     // Behind the Minikube ingress (Telepresence intercept), HMR must go
@@ -22,7 +28,8 @@ export default defineConfig({
     allowedHosts: devHost ? [devHost] : undefined,
     hmr: devHost ? { host: devHost, clientPort: hmrClientPort, protocol: 'wss' } : undefined,
     proxy: {
-      '/api': { target: backendUrl, changeOrigin: false },
+      // `ws`: the real-time socket (/api/v1/ws) goes through the proxy too.
+      '/api': { target: backendUrl, changeOrigin: false, ws: true },
     },
   },
   test: {

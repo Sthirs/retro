@@ -25,6 +25,37 @@ export interface AuthConfig {
 }
 
 /**
+ * "Hello" in the meeting's language.
+ */
+export interface GreetingDto {
+  /** BCP 47 tag for the `lang` attribute, e.g. "it". */
+  langCode: string;
+  /** English name of the language, e.g. "Italian". */
+  language: string;
+  /** IPA, e.g. "/ˈtʃa.o/". */
+  pronunciation: string;
+  text: string;
+}
+
+/**
+ * Where the icebreaker stands.
+ */
+export interface IcebreakerDto {
+  /** Index into `order` of the person speaking now. */
+  index: number;
+  /** Speaking order (user ids). */
+  order: string[];
+}
+
+/**
+ * Who the icebreaker goes back to.
+ */
+export interface IcebreakerGotoRequest {
+  /** Someone who already had their turn. */
+  userId: string;
+}
+
+/**
  * A user reduced to what other team members may see next to their avatar.
  */
 export interface PersonDto {
@@ -202,6 +233,114 @@ export interface MeResponse {
   user: UserDto;
 }
 
+/**
+ * Where a meeting invite link led.
+ */
+export interface MeetingInviteAcceptedDto {
+  /** The caller was added to the team by this link. */
+  joinedTeam: boolean;
+  meetingId: string;
+  teamId: string;
+  title: string;
+}
+
+/**
+ * The meeting invite link.
+ */
+export interface MeetingInviteLinkDto {
+  /** Absolute URL (`/m/{token}`). */
+  url: string;
+}
+
+/**
+ * The retrospective phases, in order (spec §9).
+ */
+export type MeetingPhase = (typeof MeetingPhase)[keyof typeof MeetingPhase];
+
+export const MeetingPhase = {
+  icebreaker: 'icebreaker',
+  reflect: 'reflect',
+  group: 'group',
+  vote: 'vote',
+  discuss: 'discuss',
+} as const;
+
+/**
+ * A participant of a meeting.
+ */
+export interface ParticipantDto {
+  displayName: string;
+  id: string;
+  /** Connected to the meeting room right now. */
+  online: boolean;
+  /**
+   * Content hash of the uploaded picture; `null` when there is none.
+   * @nullable
+   */
+  pictureVersion?: string | null;
+  role?: Role | null;
+}
+
+/**
+ * Whether a meeting is running (spec §8.1).
+ */
+export type MeetingStatus = (typeof MeetingStatus)[keyof typeof MeetingStatus];
+
+export const MeetingStatus = {
+  active: 'active',
+  ended: 'ended',
+} as const;
+
+/**
+ * Everything the meeting room shows (spec §14.3 `GET /meetings/{id}/state`).
+ */
+export interface MeetingStateDto {
+  createdAt: string;
+  /** @nullable */
+  endedAt?: string | null;
+  facilitatorId: string;
+  greeting: GreetingDto;
+  icebreaker: IcebreakerDto;
+  id: string;
+  /**
+   * Everyone in the meeting room right now, including people whose join
+   * is still on its way.
+   */
+  onlineIds: string[];
+  /** In joining order. */
+  participants: ParticipantDto[];
+  phase: MeetingPhase;
+  question: string;
+  /** Last event `seq` included in this snapshot on `meeting:{id}`. */
+  seq: number;
+  serverNow: string;
+  status: MeetingStatus;
+  taskCount: number;
+  teamId: string;
+  teamName: string;
+  title: string;
+}
+
+/**
+ * A meeting as the Meetings page lists it.
+ */
+export interface MeetingSummaryDto {
+  createdAt: string;
+  /** @nullable */
+  endedAt?: string | null;
+  facilitator: PersonDto;
+  /** Groups formed in the meeting; always 0 until the Group phase exists. */
+  groupCount: number;
+  id: string;
+  /** In joining order. */
+  participants: ParticipantDto[];
+  phase: MeetingPhase;
+  status: MeetingStatus;
+  taskCount: number;
+  teamId: string;
+  title: string;
+}
+
 export interface MemberDto {
   joinedAt: string;
   role: Role;
@@ -255,6 +394,14 @@ export interface Problem {
   type: string;
 }
 
+/**
+ * A new title.
+ */
+export interface RenameMeetingRequest {
+  /** 1–80 characters after trimming. */
+  title: string;
+}
+
 export interface RoleRequest {
   role: Role;
 }
@@ -267,6 +414,14 @@ export interface SessionResponse {
   /** Access token lifetime in seconds. */
   expiresIn: number;
   user: UserDto;
+}
+
+/**
+ * The new facilitator.
+ */
+export interface SetFacilitatorRequest {
+  /** Another participant (transfer), or the caller (team admin take-over). */
+  userId: string;
 }
 
 /**
@@ -304,6 +459,15 @@ export interface UpdateTaskRequest {
   content: string;
 }
 
+/**
+ * A ticket to open the real-time WebSocket.
+ */
+export interface WsTicketDto {
+  expiresAt: string;
+  /** Pass as `?ticket=` to `/api/v1/ws` within 30 seconds. */
+  ticket: string;
+}
+
 export type OidcStartParams = {
   /** Local path to open after signing in. */
   redirect?: string;
@@ -315,6 +479,11 @@ export type OidcCallbackParams = {
   code?: string;
   state?: string;
   error?: string;
+};
+
+export type ListMeetingsParams = {
+  /** Only meetings in this state. */
+  status?: MeetingStatus;
 };
 
 export type ListTasksParams = {
@@ -938,6 +1107,597 @@ export const deletePicture = async (
   return apiFetch<deletePictureResponse>(getDeletePictureUrl(), {
     ...options,
     method: 'DELETE',
+  });
+};
+
+export type acceptMeetingInviteResponse200 = {
+  data: MeetingInviteAcceptedDto;
+  status: 200;
+};
+
+export type acceptMeetingInviteResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type acceptMeetingInviteResponse429 = {
+  data: Problem;
+  status: 429;
+};
+
+export type acceptMeetingInviteResponseSuccess = acceptMeetingInviteResponse200 & {
+  headers: Headers;
+};
+export type acceptMeetingInviteResponseError = (
+  acceptMeetingInviteResponse404 | acceptMeetingInviteResponse429
+) & {
+  headers: Headers;
+};
+
+export type acceptMeetingInviteResponse =
+  acceptMeetingInviteResponseSuccess | acceptMeetingInviteResponseError;
+
+export const getAcceptMeetingInviteUrl = (token: string) => {
+  return `/api/v1/meeting-invites/${token}/accept`;
+};
+
+/**
+ * @summary Follows a meeting invite link: joins the team if needed, then the meeting.
+ */
+export const acceptMeetingInvite = async (
+  token: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<acceptMeetingInviteResponse> => {
+  return apiFetch<acceptMeetingInviteResponse>(getAcceptMeetingInviteUrl(token), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type renameMeetingResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type renameMeetingResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type renameMeetingResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type renameMeetingResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type renameMeetingResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type renameMeetingResponseSuccess = renameMeetingResponse200 & {
+  headers: Headers;
+};
+export type renameMeetingResponseError = (
+  | renameMeetingResponse400
+  | renameMeetingResponse403
+  | renameMeetingResponse404
+  | renameMeetingResponse409
+) & {
+  headers: Headers;
+};
+
+export type renameMeetingResponse = renameMeetingResponseSuccess | renameMeetingResponseError;
+
+export const getRenameMeetingUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}`;
+};
+
+/**
+ * @summary Renames a running meeting (facilitator).
+ */
+export const renameMeeting = async (
+  meetingId: string,
+  renameMeetingRequest: RenameMeetingRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<renameMeetingResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<renameMeetingResponse>(getRenameMeetingUrl(meetingId), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(renameMeetingRequest),
+  });
+};
+
+export type endMeetingResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type endMeetingResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type endMeetingResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type endMeetingResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type endMeetingResponseSuccess = endMeetingResponse200 & {
+  headers: Headers;
+};
+export type endMeetingResponseError = (
+  endMeetingResponse403 | endMeetingResponse404 | endMeetingResponse409
+) & {
+  headers: Headers;
+};
+
+export type endMeetingResponse = endMeetingResponseSuccess | endMeetingResponseError;
+
+export const getEndMeetingUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/end`;
+};
+
+/**
+ * @summary Ends the meeting (facilitator).
+ */
+export const endMeeting = async (
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<endMeetingResponse> => {
+  return apiFetch<endMeetingResponse>(getEndMeetingUrl(meetingId), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type setFacilitatorResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type setFacilitatorResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type setFacilitatorResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type setFacilitatorResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type setFacilitatorResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type setFacilitatorResponseSuccess = setFacilitatorResponse200 & {
+  headers: Headers;
+};
+export type setFacilitatorResponseError = (
+  | setFacilitatorResponse400
+  | setFacilitatorResponse403
+  | setFacilitatorResponse404
+  | setFacilitatorResponse409
+) & {
+  headers: Headers;
+};
+
+export type setFacilitatorResponse = setFacilitatorResponseSuccess | setFacilitatorResponseError;
+
+export const getSetFacilitatorUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/facilitator`;
+};
+
+/**
+ * @summary Transfers the facilitator role (facilitator) or takes it over (team admin).
+ */
+export const setFacilitator = async (
+  meetingId: string,
+  setFacilitatorRequest: SetFacilitatorRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<setFacilitatorResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<setFacilitatorResponse>(getSetFacilitatorUrl(meetingId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(setFacilitatorRequest),
+  });
+};
+
+export type icebreakerGotoResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type icebreakerGotoResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type icebreakerGotoResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type icebreakerGotoResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type icebreakerGotoResponseSuccess = icebreakerGotoResponse200 & {
+  headers: Headers;
+};
+export type icebreakerGotoResponseError = (
+  icebreakerGotoResponse403 | icebreakerGotoResponse404 | icebreakerGotoResponse409
+) & {
+  headers: Headers;
+};
+
+export type icebreakerGotoResponse = icebreakerGotoResponseSuccess | icebreakerGotoResponseError;
+
+export const getIcebreakerGotoUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/icebreaker/goto`;
+};
+
+/**
+ * @summary Goes back to someone who already had their turn (facilitator); the turn
+continues from them.
+ */
+export const icebreakerGoto = async (
+  meetingId: string,
+  icebreakerGotoRequest: IcebreakerGotoRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<icebreakerGotoResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<icebreakerGotoResponse>(getIcebreakerGotoUrl(meetingId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(icebreakerGotoRequest),
+  });
+};
+
+export type icebreakerNextResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type icebreakerNextResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type icebreakerNextResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type icebreakerNextResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type icebreakerNextResponseSuccess = icebreakerNextResponse200 & {
+  headers: Headers;
+};
+export type icebreakerNextResponseError = (
+  icebreakerNextResponse403 | icebreakerNextResponse404 | icebreakerNextResponse409
+) & {
+  headers: Headers;
+};
+
+export type icebreakerNextResponse = icebreakerNextResponseSuccess | icebreakerNextResponseError;
+
+export const getIcebreakerNextUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/icebreaker/next`;
+};
+
+/**
+ * @summary Moves the icebreaker to the next person (facilitator).
+ */
+export const icebreakerNext = async (
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<icebreakerNextResponse> => {
+  return apiFetch<icebreakerNextResponse>(getIcebreakerNextUrl(meetingId), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type getInviteLinkResponse200 = {
+  data: MeetingInviteLinkDto;
+  status: 200;
+};
+
+export type getInviteLinkResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type getInviteLinkResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type getInviteLinkResponseSuccess = getInviteLinkResponse200 & {
+  headers: Headers;
+};
+export type getInviteLinkResponseError = (getInviteLinkResponse404 | getInviteLinkResponse409) & {
+  headers: Headers;
+};
+
+export type getInviteLinkResponse = getInviteLinkResponseSuccess | getInviteLinkResponseError;
+
+export const getGetInviteLinkUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/invite-link`;
+};
+
+/**
+ * @summary The invite link of a running meeting (any team member).
+ */
+export const getInviteLink = async (
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<getInviteLinkResponse> => {
+  return apiFetch<getInviteLinkResponse>(getGetInviteLinkUrl(meetingId), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export type regenerateInviteLinkResponse200 = {
+  data: MeetingInviteLinkDto;
+  status: 200;
+};
+
+export type regenerateInviteLinkResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type regenerateInviteLinkResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type regenerateInviteLinkResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type regenerateInviteLinkResponseSuccess = regenerateInviteLinkResponse200 & {
+  headers: Headers;
+};
+export type regenerateInviteLinkResponseError = (
+  | regenerateInviteLinkResponse403
+  | regenerateInviteLinkResponse404
+  | regenerateInviteLinkResponse409
+) & {
+  headers: Headers;
+};
+
+export type regenerateInviteLinkResponse =
+  regenerateInviteLinkResponseSuccess | regenerateInviteLinkResponseError;
+
+export const getRegenerateInviteLinkUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/invite-link`;
+};
+
+/**
+ * @summary Replaces the invite link, invalidating the previous one (facilitator).
+ */
+export const regenerateInviteLink = async (
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<regenerateInviteLinkResponse> => {
+  return apiFetch<regenerateInviteLinkResponse>(getRegenerateInviteLinkUrl(meetingId), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type joinMeetingResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type joinMeetingResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type joinMeetingResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type joinMeetingResponseSuccess = joinMeetingResponse200 & {
+  headers: Headers;
+};
+export type joinMeetingResponseError = (joinMeetingResponse404 | joinMeetingResponse409) & {
+  headers: Headers;
+};
+
+export type joinMeetingResponse = joinMeetingResponseSuccess | joinMeetingResponseError;
+
+export const getJoinMeetingUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/join`;
+};
+
+/**
+ * @summary Joins a running meeting as a participant (idempotent).
+ */
+export const joinMeeting = async (
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<joinMeetingResponse> => {
+  return apiFetch<joinMeetingResponse>(getJoinMeetingUrl(meetingId), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type nextPhaseResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type nextPhaseResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type nextPhaseResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type nextPhaseResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type nextPhaseResponseSuccess = nextPhaseResponse200 & {
+  headers: Headers;
+};
+export type nextPhaseResponseError = (
+  nextPhaseResponse403 | nextPhaseResponse404 | nextPhaseResponse409
+) & {
+  headers: Headers;
+};
+
+export type nextPhaseResponse = nextPhaseResponseSuccess | nextPhaseResponseError;
+
+export const getNextPhaseUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/phase/next`;
+};
+
+/**
+ * @summary Advances to the next phase (facilitator).
+ */
+export const nextPhase = async (
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<nextPhaseResponse> => {
+  return apiFetch<nextPhaseResponse>(getNextPhaseUrl(meetingId), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type getMeetingStateResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type getMeetingStateResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type getMeetingStateResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type getMeetingStateResponseSuccess = getMeetingStateResponse200 & {
+  headers: Headers;
+};
+export type getMeetingStateResponseError = (
+  getMeetingStateResponse401 | getMeetingStateResponse404
+) & {
+  headers: Headers;
+};
+
+export type getMeetingStateResponse = getMeetingStateResponseSuccess | getMeetingStateResponseError;
+
+export const getGetMeetingStateUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/state`;
+};
+
+/**
+ * @summary The meeting room's full state; used on entry and after a reconnect.
+ */
+export const getMeetingState = async (
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<getMeetingStateResponse> => {
+  return apiFetch<getMeetingStateResponse>(getGetMeetingStateUrl(meetingId), {
+    ...options,
+    method: 'GET',
   });
 };
 
@@ -1635,6 +2395,101 @@ export const updateJoinLink = async (
   });
 };
 
+export type listMeetingsResponse200 = {
+  data: MeetingSummaryDto[];
+  status: 200;
+};
+
+export type listMeetingsResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type listMeetingsResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type listMeetingsResponseSuccess = listMeetingsResponse200 & {
+  headers: Headers;
+};
+export type listMeetingsResponseError = (listMeetingsResponse401 | listMeetingsResponse404) & {
+  headers: Headers;
+};
+
+export type listMeetingsResponse = listMeetingsResponseSuccess | listMeetingsResponseError;
+
+export const getListMeetingsUrl = (teamId: string, params?: ListMeetingsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/teams/${teamId}/meetings?${stringifiedParams}`
+    : `/api/v1/teams/${teamId}/meetings`;
+};
+
+/**
+ * @summary Lists the team's meetings, newest first.
+ */
+export const listMeetings = async (
+  teamId: string,
+  params?: ListMeetingsParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<listMeetingsResponse> => {
+  return apiFetch<listMeetingsResponse>(getListMeetingsUrl(teamId, params), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export type startMeetingResponse201 = {
+  data: MeetingStateDto;
+  status: 201;
+};
+
+export type startMeetingResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type startMeetingResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type startMeetingResponseSuccess = startMeetingResponse201 & {
+  headers: Headers;
+};
+export type startMeetingResponseError = (startMeetingResponse401 | startMeetingResponse404) & {
+  headers: Headers;
+};
+
+export type startMeetingResponse = startMeetingResponseSuccess | startMeetingResponseError;
+
+export const getStartMeetingUrl = (teamId: string) => {
+  return `/api/v1/teams/${teamId}/meetings`;
+};
+
+/**
+ * @summary Starts a meeting; the caller becomes its facilitator.
+ */
+export const startMeeting = async (
+  teamId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<startMeetingResponse> => {
+  return apiFetch<startMeetingResponse>(getStartMeetingUrl(teamId), {
+    ...options,
+    method: 'POST',
+  });
+};
+
 export type listMembersResponse200 = {
   data: MemberDto[];
   status: 200;
@@ -1907,6 +2762,41 @@ export const getPicture = async (
   return apiFetch<getPictureResponse>(getGetPictureUrl(userId, params), {
     ...options,
     method: 'GET',
+  });
+};
+
+export type wsTicketResponse200 = {
+  data: WsTicketDto;
+  status: 200;
+};
+
+export type wsTicketResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type wsTicketResponseSuccess = wsTicketResponse200 & {
+  headers: Headers;
+};
+export type wsTicketResponseError = wsTicketResponse401 & {
+  headers: Headers;
+};
+
+export type wsTicketResponse = wsTicketResponseSuccess | wsTicketResponseError;
+
+export const getWsTicketUrl = () => {
+  return `/api/v1/ws-ticket`;
+};
+
+/**
+ * @summary Issues a short-lived ticket for the WebSocket handshake (spec §3.3).
+ */
+export const wsTicket = async (
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<wsTicketResponse> => {
+  return apiFetch<wsTicketResponse>(getWsTicketUrl(), {
+    ...options,
+    method: 'POST',
   });
 };
 

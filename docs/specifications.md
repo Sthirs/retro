@@ -160,6 +160,7 @@ Authentication is performed by the **backend**, which issues Retro's own session
   - the user joins the meeting as a participant and lands directly in the meeting room.
 - The link stops working when the meeting ends. The facilitator can regenerate it, which invalidates the previous one.
 - The meeting invite link works even if the team join link (§6.2) is disabled. It is scoped to the running meeting.
+- When a member leaves or is removed, the invite links of the team's active meetings are regenerated, so a former member cannot rejoin the team with a meeting link they knew. Links already shared stop working; participants copy the new one from the **Invite** button.
 
 ---
 
@@ -215,7 +216,8 @@ The individual meeting phases cannot be replayed.
 
 ### 8.2 Common meeting UI
 
-- Header: meeting title (team name + date), current phase with a stepper showing all five phases, facilitator name, participant avatars with presence, and an **Invite** button that copies the meeting invite link (§6.3).
+- **Title**: each meeting has a title, **"Retro #N"** by default (`N` counts the team's meetings, starting at 1). The facilitator can rename it from the pencil next to the title (1–80 characters) while the meeting is active.
+- Header: meeting title, team name and date, current phase with a stepper showing all five phases, facilitator name, participant avatars with presence, and an **Invite** button that copies the meeting invite link (§6.3).
 - Facilitator controls: **Next** (person/group/phase depending on context), **Timer**, **Settings** (e.g. votes), **Transfer facilitator**, **End meeting**.
 - Team admins who are not the facilitator see a **Take over facilitation** action.
 - **Ready** button at the bottom for participants (used in Reflect, Group and Vote). The facilitator sees a counter such as *"4 / 6 ready"* and who is ready. Ready states reset when the phase changes.
@@ -228,14 +230,14 @@ The individual meeting phases cannot be replayed.
 ### 9.1 Icebreaker
 
 - At meeting creation the backend picks:
-  - a **greeting** ("Hello") in a randomly chosen language, shown with the language name (e.g. *"Ciao — Italian"*);
+  - a **greeting** ("Hello") in a randomly chosen language, shown with its pronunciation (IPA) and the language name (e.g. *"Ciao! /ˈtʃa.o/ — Italian"*);
   - an **icebreaker question** from a curated list.
 
   Both differ from meeting to meeting. Where possible, the backend avoids repeating the team's recent picks.
-- The participants are shown **one at a time** on everyone's screen (avatar + name), in a randomized order fixed at phase start.
+- The participants are shown **one at a time** on everyone's screen (avatar + name), in a randomized order. The meeting starts in this phase, so the order is built as people join: while the facilitator is still on the first person, each newcomer takes a random place among those who have not spoken yet; this shuffles everyone who joins at the start.
 - Only the **facilitator** can move to the **next person**. After the last person, the facilitator can move to the **next phase** (Reflect).
-- The facilitator can skip a person.
-- Participants who join late are added to the end of the queue.
+- The facilitator can go back to the **previous person**, or to **anyone who has already had their turn** by selecting them in the speaking order. The turn continues from that person: everyone after them is up again, and Next walks through them in the same order.
+- Participants who join after the first person has finished are added to the end of the queue.
 
 ### 9.2 Reflect
 
@@ -303,7 +305,7 @@ The individual meeting phases cannot be replayed.
     - *Interim:* until image attachments ship, task text is plain rich text (bold, italic, links, mentions); images are a long-term goal (see ADR-0010's follow-ups).
   - author at the bottom (avatar + name).
 - Cards can be **dragged and dropped** between columns and reordered within a column. Any team member can move cards.
-- Changes are broadcast in real time to anyone viewing the board. Until the real-time hub (§11) exists, the board refreshes when the window regains focus.
+- Changes are broadcast in real time to anyone viewing the board (§11).
 - Any team member can edit or delete any task.
 - Filters: mentioned users (several can be picked; a task matches if it mentions any of them), author, meeting. Filters combine with AND.
 
@@ -320,10 +322,11 @@ The individual meeting phases cannot be replayed.
 - One WebSocket per client at `/api/v1/ws`. Clients **subscribe** to channels:
   - `meeting:{id}` — everything in a meeting;
   - `team:{id}` — team-level changes (meeting started/ended, task board updates, membership changes).
-- The server checks team membership before accepting any subscription.
-- Messages are JSON: `{ "type": string, "channel": string, "seq": number, "payload": object }`.
+- The server checks team membership before accepting any subscription. When a member leaves or is removed, or the team is deleted, the server ends that user's subscriptions to the team's channels (the team channel and its meetings' channels) at once, with an `error` message on each; a former member receives nothing more.
+- Messages are JSON: `{ "type": string, "channel": string, "seq": number, "payload": object }`. Errors have the same shape: `{ "type": "error", "channel", "seq": null, "payload": { "code" } }`.
 - Every message carries a per-channel `seq`. After a reconnect, the client either resyncs by fetching the full state (`GET /meetings/{id}/state`) or requests the messages after the last `seq` it saw.
 - Client → server **ephemeral** messages (typing, drag in progress, cursor) go over the WebSocket and are **not persisted**. **State-changing** actions go through the REST API (or WS commands), are validated, persisted, then broadcast.
+- Protocol details (ticket, subscribe messages, `seq`, presence across replicas): [ADR-0011](adr/0011-realtime-hub.md).
 - Horizontal scaling: when more than one backend replica runs, broadcasts go through **PostgreSQL `LISTEN/NOTIFY`** so that every replica reaches its connected clients (see §11.3).
 
 ### 11.2 Event catalogue (non-exhaustive)
@@ -331,12 +334,12 @@ The individual meeting phases cannot be replayed.
 | Event | Payload highlights | Visible to |
 | --- | --- | --- |
 | `participant.joined` / `participant.left` | user | all |
-| `presence.changed` | user, online | all |
+| `presence.changed` | user, online (on the team channel also the meeting) | meeting + team channel |
 | `facilitator.changed` | new facilitator | all |
 | `phase.changed` | phase | all |
 | `timer.updated` | state, ends_at, server_now | all |
 | `ready.changed` | user, ready, ready_count | all |
-| `icebreaker.person_changed` | user index/id | all |
+| `icebreaker.person_changed` | index | all |
 | `reflection.typing` | column (no author) | all |
 | `reflection.count_changed` | counts per column | all (Reflect) |
 | `reflection.upserted` / `reflection.deleted` | full reflection | author only in Reflect; all from Group onward |
@@ -348,8 +351,12 @@ The individual meeting phases cannot be replayed.
 | `vote.totals_revealed` | totals per group | all (Discuss start) |
 | `discuss.group_changed` | group id | all |
 | `reaction.changed` | reflection, emoji, count | all |
-| `task.created` / `task.updated` / `task.moved` / `task.deleted` | task | meeting + team channel |
-| `meeting.started` / `meeting.ended` | meeting | team channel |
+| `task.created` / `task.updated` / `task.moved` / `task.deleted` | task, `clientId` of the tab that made the change (from its `X-Client-Id` header, else `null`), so that tab skips its own echo | meeting + team channel |
+| `meeting.renamed` | title | meeting + team channel |
+| `meeting.started` / `meeting.ended` | meeting | team channel (`meeting.ended` also on the meeting channel) |
+| `meeting.updated` | meeting id (phase, facilitator or participants changed) | team channel |
+| `member.removed` | user | team channel |
+| `team.deleted` | — | team channel |
 
 ### 11.3 Real-time backbone: PostgreSQL vs Valkey
 
@@ -398,6 +405,7 @@ Constraints and mitigations:
 | Regenerate meeting invite link | ✗ | ✗ | ✗* | ✓ |
 | Advance person / phase / group | ✗ | ✗ | ✗* | ✓ |
 | Set timer, vote settings | ✗ | ✗ | ✗* | ✓ |
+| Rename meeting | ✗ | ✗ | ✗* | ✓ |
 | Transfer facilitator role | ✗ | ✗ | ✗* | ✓ |
 | Take over facilitator role | ✗ | ✗ | ✓ | — |
 | End meeting | ✗ | ✗ | ✗* | ✓ |
@@ -430,7 +438,8 @@ user_identities(id, user_id → users, issuer, subject, created_at)
 refresh_tokens(id, user_id → users, family_id, token_hash UNIQUE, persistent,
                expires_at, revoked_at NULL, replaced_by NULL, created_at)
 
-teams(id, name, join_token NULL, join_enabled, created_by → users, created_at, updated_at)
+teams(id, name, join_token NULL, join_enabled, created_by → users, created_at, updated_at,
+      event_seq)                                   -- last `seq` sent on `team:{id}` (§11)
 
 team_members(team_id → teams, user_id → users, role ENUM('admin','member'), joined_at)
     PK(team_id, user_id)
@@ -440,14 +449,19 @@ invitations(id, team_id → teams, email, token UNIQUE, invited_by → users,
     UNIQUE(team_id, email) WHERE status = 'pending'   -- one open invitation per email
 
 meetings(id, team_id → teams, created_by → users, facilitator_id → users,
+         number,                                   -- 1, 2, … per team; UNIQUE(team_id, number)
+         title,                                    -- "Retro #N" by default, renamable
          status ENUM('active','ended'),
          invite_token UNIQUE,                      -- meeting invite link, invalid once ended
          phase ENUM('icebreaker','reflect','group','vote','discuss'),
          greeting_text, greeting_language, icebreaker_question,
+         greeting_lang_code,                       -- BCP 47, for the `lang` attribute
+         greeting_pronunciation,                   -- IPA, e.g. "/ˈtʃa.o/"
          icebreaker_order UUID[], icebreaker_index,
          vote_budget DEFAULT 5, vote_max_per_group DEFAULT 3,
          discuss_group_id NULL,
          timer_state JSONB NULL,
+         event_seq,                                -- last `seq` sent on `meeting:{id}` (§11)
          created_at, ended_at NULL)
 
 meeting_participants(meeting_id, user_id, joined_at, is_ready)
@@ -480,7 +494,7 @@ attachments(id, team_id → teams, meeting_id NULL → meetings, uploader_id →
             content_type, size_bytes, sha256, data BYTEA, created_at)
 
 icebreaker_questions(id, text, active)
-greetings(id, language, text)
+greetings(id, language, lang_code, text, pronunciation)
 ```
 
 Notes:
@@ -488,7 +502,7 @@ Notes:
 - When Vote starts, every ungrouped card is wrapped in an implicit single-card group, so votes always reference groups.
 - **Images** pasted into reflections or tasks are stored **only in PostgreSQL** (`attachments.data BYTEA`). There is no object storage. Uploads are limited to 5 MB and to the image types PNG, JPEG, GIF and WebP. The backend serves them through `GET /attachments/{id}` with membership checks and long-lived `Cache-Control: private, immutable` headers. Attachments not referenced by any reflection or task are removed by a periodic cleanup job.
 - **Cascade deletion**: every team-scoped table references `teams` (directly or through `meetings`) with `ON DELETE CASCADE`, so deleting a team removes all of its data (§5.1).
-- Seed data (greetings in at least 30 languages, at least 100 icebreaker questions) is loaded by a migration.
+- Seed data (50 greetings, each "Hello" in a different language with its pronunciation, and 50 icebreaker questions) is loaded by a migration. A new meeting takes one of each at random.
 
 ---
 
@@ -542,6 +556,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | GET | `/teams/{teamId}/meetings?status=active\|ended` | List meetings |
 | POST | `/teams/{teamId}/meetings` | Start a meeting |
 | GET | `/meetings/{id}/state` | Full snapshot, filtered by the caller's permissions and the current phase |
+| PATCH | `/meetings/{id}` | `{ title }`: rename (facilitator) |
 | GET | `/meetings/{id}/summary` | Summary of an ended meeting (§8.3) |
 | POST | `/meetings/{id}/join` | Join as participant |
 | GET | `/meetings/{id}/invite-link` | Get the meeting invite link |
@@ -550,6 +565,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/meetings/{id}/facilitator` | Transfer (facilitator) or take over (team admin) the facilitator role |
 | POST | `/meetings/{id}/phase/next` | Advance phase (facilitator) |
 | POST | `/meetings/{id}/icebreaker/next` | Next person (facilitator) |
+| POST | `/meetings/{id}/icebreaker/goto` | `{ userId }`: back to someone who already had their turn (facilitator) |
 | PUT | `/meetings/{id}/timer` | Start / pause / stop the timer (facilitator) |
 | PUT | `/meetings/{id}/ready` | Set own ready flag |
 | PATCH | `/meetings/{id}/settings` | Vote budget / max per group (facilitator) |

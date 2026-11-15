@@ -101,15 +101,69 @@ export async function seedTask(
     status: 'future' | 'stuck' | 'active' | 'done';
     content: string;
     authorId?: string;
-    /** A source meeting id (a plain id until meetings exist). */
+    /** A source meeting of the team (see `startMeeting`). */
     meetingId?: string;
   },
 ): Promise<{ id: string }> {
   const { api } = await signedIn(login);
   try {
-    const res = await api.post(`/api/v1/dev/teams/${teamId}/tasks`, { data: task });
+    const res = await api.post(`/api/v1/dev/teams/${teamId}/tasks`, {
+      data: task,
+    });
     if (!res.ok()) throw new Error(`seed task: ${res.status()} ${await res.text()}`);
     return (await res.json()) as { id: string };
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Starts a meeting in the team, with `login` as its facilitator; returns its id. */
+export async function startMeeting(login: string, teamId: string): Promise<string> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/teams/${teamId}/meetings`);
+    if (!res.ok()) throw new Error(`start meeting: ${res.status()} ${await res.text()}`);
+    return ((await res.json()) as { id: string }).id;
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Removes `userId` from the team (`login` is an admin, or the user leaving). */
+export async function removeMember(login: string, teamId: string, userId: string): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.delete(`/api/v1/teams/${teamId}/members/${userId}`);
+    if (res.status() !== 204) throw new Error(`remove member: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** The path of a running meeting's invite link (`/m/{token}`), as a member copies it. */
+export async function meetingInvitePath(login: string, meetingId: string): Promise<string> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.get(`/api/v1/meetings/${meetingId}/invite-link`);
+    if (!res.ok()) throw new Error(`invite link: ${res.status()} ${await res.text()}`);
+    return new URL(((await res.json()) as { url: string }).url).pathname;
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Renames a running meeting (`login` is its facilitator). */
+export async function renameMeeting(
+  login: string,
+  meetingId: string,
+  title: string,
+): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.patch(`/api/v1/meetings/${meetingId}`, {
+      data: { title },
+    });
+    if (!res.ok()) throw new Error(`rename meeting: ${res.status()} ${await res.text()}`);
   } finally {
     await api.dispose();
   }

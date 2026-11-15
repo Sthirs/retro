@@ -1,3 +1,5 @@
+import { CLIENT_ID } from './clientId';
+
 /** Supplies the in-memory access token and renews it when it expires. */
 export interface TokenSource {
   token(): string | null;
@@ -14,8 +16,9 @@ export function setTokenSource(source: TokenSource | null): void {
 const AUTH_PATHS = ['/api/v1/auth/login', '/api/v1/auth/refresh', '/api/v1/auth/logout'];
 
 /**
- * Adds `Authorization: Bearer …` and, on a 401, renews the session once and
- * retries. Auth endpoints themselves are never retried.
+ * Adds `Authorization: Bearer …` and the tab's `X-Client-Id` and, on a 401,
+ * renews the session once and retries. Auth endpoints themselves are never
+ * retried.
  */
 export async function authFetch(input: Request): Promise<Response> {
   const retry = input.clone();
@@ -27,6 +30,7 @@ export async function authFetch(input: Request): Promise<Response> {
 }
 
 function withToken(request: Request): Request {
+  request.headers.set('X-Client-Id', CLIENT_ID);
   const token = tokens?.token();
   if (token) request.headers.set('Authorization', `Bearer ${token}`);
   return request;

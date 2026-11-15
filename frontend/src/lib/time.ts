@@ -36,3 +36,23 @@ export function formatDayMonth(iso: string): string {
   const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
   return `${get('day')} ${get('month').slice(0, 3)}`;
 }
+
+/** "18:02" (24-hour `HH:mm`) in the browser's time zone. */
+export function formatTime(iso: string): string {
+  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(
+    new Date(iso),
+  );
+}
+
+/** Whether an instant falls on the same local calendar day as `now`. */
+export function isSameDay(iso: string, now: number = Date.now()): boolean {
+  return new Date(iso).toDateString() === new Date(now).toDateString();
+}
+
+/** Whole minutes between two instants (at least 1). */
+export function minutesBetween(startIso: string, endIso: string): number {
+  return Math.max(
+    1,
+    Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / MINUTE),
+  );
+}

@@ -6,7 +6,14 @@ use utoipa::{
     openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
 };
 
-use crate::{api, entities::task::TaskStatus, error::Problem};
+use crate::{
+    api,
+    entities::{
+        meeting::{MeetingPhase, MeetingStatus},
+        task::TaskStatus,
+    },
+    error::Problem,
+};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -46,8 +53,22 @@ use crate::{api, entities::task::TaskStatus, error::Problem};
         api::tasks::move_task,
         api::tasks::update_task,
         api::tasks::delete_task,
+        api::meetings::list_meetings,
+        api::meetings::start_meeting,
+        api::meetings::get_meeting_state,
+        api::meetings::rename_meeting,
+        api::meetings::join_meeting,
+        api::meetings::icebreaker_next,
+        api::meetings::icebreaker_goto,
+        api::meetings::next_phase,
+        api::meetings::set_facilitator,
+        api::meetings::end_meeting,
+        api::meetings::get_invite_link,
+        api::meetings::regenerate_invite_link,
+        api::meetings::accept_meeting_invite,
+        api::meetings::ws_ticket,
     ),
-    components(schemas(Problem, TaskStatus)),
+    components(schemas(Problem, TaskStatus, MeetingStatus, MeetingPhase)),
     modifiers(&BearerAuth),
 )]
 pub struct ApiDoc;

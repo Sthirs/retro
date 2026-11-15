@@ -1,7 +1,9 @@
-import { expect, test, type Browser, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Page, type Request } from "@playwright/test";
 
-import { createTeam, deleteTeam, seedTask, userIdOf } from "../api";
+import { createTeam, deleteTeam, seedTask, startMeeting, userIdOf } from "../api";
+import { watchCsp } from "../csp";
 import { PASSWORD, USERS } from "../fixtures";
+import { channelSubscribed } from "../realtime";
 import { AccountPage } from "../pages/AccountPage";
 import { AppShell } from "../pages/AppShell";
 import { SignInPage } from "../pages/SignInPage";
@@ -30,16 +32,20 @@ async function signIn(page: Page, user: keyof typeof USERS): Promise<AppShell> {
 
 test.describe("tasks board", () => {
   let teamId: string;
+  let cspViolations: string[];
 
   // Each test works in a team of its own and deletes only that team, so it
   // needs no particular starting state for erin and finn.
   test.beforeEach(async ({ page }) => {
     teamId = await createTeam(ERIN, TEAM);
+    cspViolations = await watchCsp(page);
     await signIn(page, "erin");
   });
 
   test.afterEach(async () => {
     await deleteTeam(ERIN, teamId);
+    // The board works within the app's own Content Security Policy.
+    expect(cspViolations).toEqual([]);
   });
 
   /** Finn joins through the team's join link, in his own browser session. */
@@ -183,7 +189,8 @@ test.describe("tasks board", () => {
     ]);
     const chip = (id: string, name: string) =>
       `<span data-type="mention" data-id="${id}" data-label="${name}">@${name}</span>`;
-    const [first, second] = [crypto.randomUUID(), crypto.randomUUID()];
+    const first = await startMeeting(ERIN, teamId);
+    const second = await startMeeting(ERIN, teamId);
     await seedTask(ERIN, teamId, {
       status: "future",
       content: `<p>For Finn ${chip(finnId, USERS.finn.name)}</p>`,
@@ -245,6 +252,73 @@ test.describe("tasks board", () => {
         })),
       )
       .toEqual({ scrollX: 0, overflow: 0 });
+  });
+
+  test("live: another member's changes appear without a reload", async ({
+    page,
+    browser,
+  }) => {
+    const finn = await finnJoins(page, browser);
+    const finnTasks = new TasksPage(finn);
+    await finnTasks.goto(teamId);
+    // The first load has answered (the empty state), so the seeded task can
+    // only reach Finn through the team channel.
+    await expect(finnTasks.empty).toBeVisible();
+    await expect(finn.getByRole("article")).toHaveCount(0);
+
+    // Erin's new task shows up on Finn's open board.
+    await seedTask(ERIN, teamId, { status: "future", content: "<p>Live one</p>" });
+    await expect(finnTasks.card("Live one")).toBeVisible();
+
+    // And Finn's move reaches Erin's board.
+    const tasks = new TasksPage(page);
+    await tasks.goto(teamId);
+    await expect(tasks.card("Live one")).toBeVisible();
+    await finnTasks.moveWithKeyboard("Live one", "Done");
+    await expect(tasks.cards("Done")).toHaveCount(1);
+    await finn.context().close();
+  });
+
+  test("live: the board does not reload for its own changes", async ({ page, browser }) => {
+    const finn = await finnJoins(page, browser);
+    await seedTask(ERIN, teamId, { status: "future", content: "<p>Mine to move</p>" });
+    await seedTask(FINN, teamId, { status: "future", content: "<p>Finn's own</p>" });
+    const isList = (request: Request) =>
+      request.method() === "GET" &&
+      /^\/api\/v1\/teams\/[^/]+\/tasks$/.test(new URL(request.url()).pathname);
+    // A board loaded before its channel went live re-reads itself once it is
+    // (it may have missed events). Let any such re-read land before counting.
+    let inFlight = 0;
+    page.on("request", (r) => void (isList(r) && inFlight++));
+    page.on("requestfinished", (r) => void (isList(r) && inFlight--));
+    page.on("requestfailed", (r) => void (isList(r) && inFlight--));
+    const subscribed = channelSubscribed(page, `team:${teamId}`);
+    const tasks = new TasksPage(page);
+    await tasks.goto(teamId);
+    const finnTasks = new TasksPage(finn);
+    await finnTasks.goto(teamId);
+    await expect(tasks.card("Mine to move")).toBeVisible();
+    await expect(finnTasks.card("Mine to move")).toBeVisible();
+    await subscribed;
+    await expect.poll(() => inFlight).toBe(0);
+
+    let reloads = 0;
+    page.on("request", (request) => {
+      if (isList(request)) reloads++;
+    });
+
+    // Erin's move and edit reach Finn, and Erin's board does not reload for them.
+    await tasks.moveWithKeyboard("Mine to move", "Done");
+    await expect(finnTasks.cards("Done")).toHaveCount(1);
+    await tasks.edit("Mine to move", " now");
+    await expect(finnTasks.card("Mine to move now")).toBeVisible();
+    expect(reloads).toBe(0);
+
+    // Finn's change still reloads Erin's board, once.
+    await finnTasks.moveWithKeyboard("Finn's own", "Active");
+    await expect(tasks.cards("Active")).toHaveCount(1);
+    expect(reloads).toBe(1);
+    await finn.context().close();
   });
 
   test("touch: a quick swipe over a card scrolls and never starts a drag", async ({

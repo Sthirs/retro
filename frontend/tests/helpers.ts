@@ -146,3 +146,137 @@ export async function renderAt(path: string) {
   await flushPromises();
   return { wrapper, router };
 }
+
+/** `POST /ws-ticket`, for views that open the real-time socket. */
+export const wsTicket = () => ({
+  status: 200,
+  body: { ticket: 'ws-ticket', expiresAt: new Date(Date.now() + 30_000).toISOString() },
+});
+
+/** A fake WebSocket: tests open it, push server messages and read what was sent. */
+export class MockWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+  static instances: MockWebSocket[] = [];
+
+  readyState = MockWebSocket.CONNECTING;
+  sent: { type: string; channel: string }[] = [];
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+
+  constructor(public readonly url: string) {
+    MockWebSocket.instances.push(this);
+  }
+
+  /** The newest socket. */
+  static get last(): MockWebSocket | undefined {
+    return MockWebSocket.instances[MockWebSocket.instances.length - 1];
+  }
+
+  send(text: string): void {
+    this.sent.push(JSON.parse(text));
+  }
+
+  close(): void {
+    if (this.readyState === MockWebSocket.CLOSED) return;
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.();
+  }
+
+  /** The server accepted the connection. */
+  open(): void {
+    this.readyState = MockWebSocket.OPEN;
+    this.onopen?.();
+  }
+
+  /** A message from the server. */
+  emit(message: Record<string, unknown>): void {
+    this.onmessage?.({ data: JSON.stringify({ seq: null, payload: {}, ...message }) });
+  }
+
+  /** The connection dropped. */
+  drop(): void {
+    this.close();
+  }
+
+  /** Channels subscribed and not unsubscribed since. */
+  get channels(): string[] {
+    const open = new Set<string>();
+    for (const m of this.sent) {
+      if (m.type === 'subscribe') open.add(m.channel);
+      if (m.type === 'unsubscribe') open.delete(m.channel);
+    }
+    return [...open];
+  }
+}
+
+/** Replaces `WebSocket` with `MockWebSocket` and forgets the app socket's state. */
+export async function mockSocket(): Promise<void> {
+  const { realtime } = await import('@/api/realtime');
+  realtime.disconnect();
+  MockWebSocket.instances = [];
+  vi.stubGlobal('WebSocket', MockWebSocket);
+}
+
+/** Opens the app's socket once it has been created. */
+export async function openSocket(): Promise<MockWebSocket> {
+  await flushPromises();
+  const socket = MockWebSocket.last;
+  if (!socket) throw new Error('no WebSocket was opened');
+  if (socket.readyState !== MockWebSocket.OPEN) socket.open();
+  await flushPromises();
+  return socket;
+}
+
+export const MEETING_ID = '0190a4e0-0000-7000-8000-0000000000c1';
+
+/** A participant of a meeting. */
+export const participant = (user: typeof ALICE, overrides: Record<string, unknown> = {}) => ({
+  id: user.id,
+  displayName: user.displayName,
+  pictureVersion: null,
+  role: 'member',
+  online: true,
+  ...overrides,
+});
+
+/** `GET /meetings/{id}/state`: alice facilitates, alice then bob speak. */
+export const meetingState = (overrides: Record<string, unknown> = {}) => ({
+  id: MEETING_ID,
+  teamId: TEAM_ID,
+  teamName: 'Platform Team',
+  title: 'Retro #3',
+  status: 'active',
+  phase: 'icebreaker',
+  facilitatorId: ALICE.id,
+  participants: [participant(ALICE, { role: 'admin' }), participant(BOB)],
+  onlineIds: [ALICE.id, BOB.id],
+  greeting: { text: 'Ciao!', language: 'Italian', langCode: 'it', pronunciation: '/ˈtʃa.o/' },
+  question: "What's a small thing that made your week better?",
+  icebreaker: { order: [ALICE.id, BOB.id], index: 0 },
+  taskCount: 0,
+  seq: 2,
+  createdAt: '2026-11-10T17:02:00Z',
+  endedAt: null,
+  serverNow: '2026-11-10T17:10:00Z',
+  ...overrides,
+});
+
+/** `GET /teams/{id}/meetings` entries. */
+export const meetingSummary = (overrides: Record<string, unknown> = {}) => ({
+  id: MEETING_ID,
+  teamId: TEAM_ID,
+  title: 'Retro #3',
+  status: 'active',
+  phase: 'reflect',
+  facilitator: { id: ALICE.id, displayName: ALICE.displayName, pictureVersion: null },
+  participants: [participant(ALICE, { role: 'admin' })],
+  taskCount: 0,
+  groupCount: 0,
+  createdAt: new Date().toISOString(),
+  endedAt: null,
+  ...overrides,
+});

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { VueDraggable } from 'vue-draggable-plus';
 
 import type { TaskDto } from '@/api/client';
+import { CLIENT_ID } from '@/api/clientId';
 import RichTextEditor from '@/components/RichTextEditor.vue';
 import TaskFilters from '@/features/tasks/TaskFilters.vue';
 import { buildI18n } from '@/i18n';
@@ -12,14 +13,17 @@ import {
   BOB,
   me,
   mockFetch,
+  mockSocket,
+  openSocket,
   OTHER_TEAM_ID,
   renderAt,
   session,
   team,
   TEAM_ID,
+  wsTicket,
 } from './helpers';
 
-// Mounted views listen to window `focus`: unmount them so tests stay isolated.
+// Mounted views listen to the real-time socket: unmount them so tests stay isolated.
 const mounted: VueWrapper[] = [];
 afterEach(() => {
   for (const w of mounted.splice(0)) w.unmount();
@@ -138,21 +142,74 @@ describe('Tasks board', () => {
     expect(wrapper.findAll('section[aria-label]')).toHaveLength(4);
   });
 
-  it('reloads on window focus and stops listening after unmount', async () => {
-    const { calls } = mockFetch(routes([task('a1', 'active', 'a0')]));
+  it("reloads live when the team channel reports another member's change", async () => {
+    await mockSocket();
+    const { calls } = mockFetch({
+      ...routes([task('a1', 'active', 'a0')]),
+      'POST /api/v1/ws-ticket': wsTicket(),
+    });
     const { wrapper } = await open();
     const loads = () => calls.filter((c) => c.path === TASKS_PATH).length;
+    const socket = await openSocket();
+    expect(socket.url).toContain('/api/v1/ws?ticket=ws-ticket');
+    expect(socket.channels).toContain(`team:${TEAM_ID}`);
     expect(loads()).toBe(1);
 
-    window.dispatchEvent(new Event('focus'));
+    socket.emit({ type: 'task.moved', channel: `team:${TEAM_ID}`, seq: 3, payload: {} });
+    await flushPromises();
+    expect(loads()).toBe(2);
+    // Meeting events on the same channel leave the board alone.
+    socket.emit({ type: 'meeting.started', channel: `team:${TEAM_ID}`, seq: 4, payload: {} });
     await flushPromises();
     expect(loads()).toBe(2);
 
     wrapper.unmount();
     mounted.length = 0;
-    window.dispatchEvent(new Event('focus'));
+    socket.emit({ type: 'task.created', channel: `team:${TEAM_ID}`, seq: 5, payload: {} });
     await flushPromises();
     expect(loads()).toBe(2);
+  });
+
+  it("skips the echo of this tab's own changes, not of the user's other tabs", async () => {
+    await mockSocket();
+    const { calls } = mockFetch({
+      ...routes([task('a1', 'active', 'a0'), task('d1', 'done', 'a0')]),
+      'POST /api/v1/ws-ticket': wsTicket(),
+      'PUT /api/v1/tasks/a1/position': { status: 200, body: task('a1', 'done', 'a1') },
+    });
+    const { wrapper } = await open();
+    const loads = () => calls.filter((c) => c.path === TASKS_PATH).length;
+    const socket = await openSocket();
+
+    // Every request names this tab.
+    wrapper
+      .findAllComponents(VueDraggable)[3]!
+      .vm.$emit('add', { newIndex: 1, item: { dataset: { id: 'a1' } } });
+    await flushPromises();
+    const put = calls.find((c) => c.method === 'PUT')!;
+    expect(put.headers.get('X-Client-Id')).toBe(CLIENT_ID);
+    expect(loads()).toBe(1);
+
+    const moved = (clientId: unknown) =>
+      socket.emit({
+        type: 'task.moved',
+        channel: `team:${TEAM_ID}`,
+        payload: { taskId: 'a1', status: 'done', clientId },
+      });
+    moved(CLIENT_ID);
+    await flushPromises();
+    expect(loads()).toBe(1);
+    // Another tab, or a change without a tab id (another client), reloads.
+    moved('0190a4e0-0000-7000-8000-0000000000ff');
+    await flushPromises();
+    expect(loads()).toBe(2);
+    moved(null);
+    await flushPromises();
+    expect(loads()).toBe(3);
+    // A reconnect always reloads.
+    socket.emit({ type: 'resync', channel: `team:${TEAM_ID}` });
+    await flushPromises();
+    expect(loads()).toBe(4);
   });
 
   it('dropping a card calls PUT position', async () => {

@@ -22,6 +22,7 @@ use tower::ServiceExt;
 
 pub struct TestApp {
     pub router: Router,
+    pub state: AppState,
     pub db: DatabaseConnection,
     pub config: Config,
     _container: Option<ContainerAsync<Postgres>>,
@@ -41,13 +42,28 @@ impl TestApp {
         if config.seed_dev_users {
             seed::seed_dev_users(&db).await.expect("seed");
         }
-        let router = app::router(AppState::new(db.clone(), config.clone()));
+        let state = AppState::new(db.clone(), config.clone());
+        let router = app::router(state.clone());
         Self {
             router,
+            state,
             db,
             config,
             _container: container,
         }
+    }
+
+    /// Serves the router on a local port (for WebSocket tests) once the
+    /// real-time listener is ready, and returns `host:port`.
+    pub async fn spawn_server(&self) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("address");
+        let router = self.router.clone();
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        self.state.hub.wait_ready().await;
+        addr.to_string()
     }
 
     pub async fn send(&self, request: Request<Body>) -> TestResponse {
@@ -103,10 +119,25 @@ impl TestApp {
         token: &str,
         body: Option<Value>,
     ) -> TestResponse {
-        let builder = Request::builder()
+        self.call_with(method, path, token, body, &[]).await
+    }
+
+    /// [`Self::call`] with extra request headers.
+    pub async fn call_with(
+        &self,
+        method: &str,
+        path: &str,
+        token: &str,
+        body: Option<Value>,
+        headers: &[(&str, &str)],
+    ) -> TestResponse {
+        let mut builder = Request::builder()
             .method(method)
             .uri(path)
             .header(header::AUTHORIZATION, format!("Bearer {token}"));
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
         let request = match body {
             Some(json) => builder
                 .header(header::CONTENT_TYPE, "application/json")

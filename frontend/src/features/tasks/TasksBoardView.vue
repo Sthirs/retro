@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** The team's task board (spec §10): four columns of cards, drag and drop. */
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
@@ -12,6 +12,7 @@ import {
   type PersonDto,
   type TaskDto,
 } from '@/api/client';
+import { isOwnEvent } from '@/api/clientId';
 import AppIcon from '@/components/AppIcon.vue';
 import AppAlert from '@/components/ui/AppAlert.vue';
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue';
@@ -20,6 +21,7 @@ import TaskColumn from '@/features/tasks/TaskColumn.vue';
 import TaskFilters from '@/features/tasks/TaskFilters.vue';
 import { useSessionStore } from '@/stores/session';
 import { useTasksStore, type TaskFilter } from '@/stores/tasks';
+import { useChannel } from '@/composables/useChannel';
 import { useErrorText } from '@/composables/useErrorText';
 
 const COLUMNS = [TaskStatus.future, TaskStatus.stuck, TaskStatus.active, TaskStatus.done] as const;
@@ -151,13 +153,20 @@ function setFilter(next: TaskFilter): void {
   void router.replace({ query });
 }
 
-// Until the real-time hub exists, the board refreshes when the window regains focus.
 onMounted(() => {
   void load();
   void loadMembers();
-  window.addEventListener('focus', load);
 });
-onBeforeUnmount(() => window.removeEventListener('focus', load));
+
+// Other members' changes arrive live (spec §10.1); a reconnect may have missed some.
+// This tab's own changes come back too: their answer already updated the board.
+useChannel(
+  () => `team:${teamId.value}`,
+  (event) => {
+    if (event.type === 'resync') void store.refresh();
+    else if (event.type.startsWith('task.') && !isOwnEvent(event.payload)) void store.refresh();
+  },
+);
 
 // Switching team keeps this view alive: show the new team's board.
 watch(teamId, () => {

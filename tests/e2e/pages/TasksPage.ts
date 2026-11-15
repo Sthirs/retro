@@ -56,8 +56,10 @@ export class TasksPage {
    * A real pointer drag (SortableJS reacts to pointer moves, not to the
    * synthetic HTML5 drag events of `locator.dragTo`). The card is dropped on the
    * `target` box at `fraction` of its height (measured once the drag has started).
+   * Resolves once the server has saved the move.
    */
   async drag(source: Locator, target: Locator, fraction = 0.5): Promise<void> {
+    const saved = this.moveSaved();
     await source.scrollIntoViewIfNeeded();
     const from = (await source.boundingBox())!;
     const startX = from.x + from.width / 2;
@@ -73,6 +75,18 @@ export class TasksPage {
     const to = (await target.boundingBox())!;
     await this.page.mouse.move(to.x + to.width / 2, to.y + to.height * fraction, { steps: 20 });
     await this.page.mouse.up();
+    await saved;
+  }
+
+  /**
+   * The server's answer to the next move. The board shows a move at once and
+   * saves it in the background, so a reload before this answer would race it.
+   */
+  private async moveSaved(): Promise<void> {
+    const res = await this.page.waitForResponse(
+      (r) => r.request().method() === 'PUT' && /\/api\/v1\/tasks\/[^/]+\/position$/.test(r.url()),
+    );
+    expect(res.status(), 'the move is saved').toBe(200);
   }
 
   /** Drops a card onto the empty end of a column (its list), after its last card. */
@@ -83,7 +97,8 @@ export class TasksPage {
   /**
    * The whole keyboard route, no pointer: Enter on "Task actions", ArrowDown to
    * "Move to…", ArrowRight into its submenu, ArrowDown to the column, Enter.
-   * Focus must end up on the target column.
+   * Focus must end up on the target column. Resolves once the server has saved
+   * the move.
    */
   async moveWithKeyboard(cardText: string, name: ColumnName): Promise<void> {
     await this.actions(cardText).focus();
@@ -104,7 +119,9 @@ export class TasksPage {
     await expect(items.first()).toBeFocused();
     for (let i = 0; i < index; i++) await this.page.keyboard.press('ArrowDown');
     await expect(items.nth(index)).toBeFocused();
+    const saved = this.moveSaved();
     await this.page.keyboard.press('Enter');
+    await saved;
 
     await expect(this.menu).toBeHidden();
     await expect(this.column(name)).toBeFocused();

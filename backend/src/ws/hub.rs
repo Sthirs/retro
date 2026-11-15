@@ -8,12 +8,14 @@ use std::{
 };
 
 use sea_orm::DatabaseConnection;
-use serde_json::json;
+use serde::Deserialize;
+use serde_json::{Value, json};
 use sqlx::postgres::PgListener;
 use tokio::sync::{broadcast, watch};
 use uuid::Uuid;
 
 use super::{Channel, Notification, PG_CHANNEL, notify};
+use crate::entities::reflection::ReflectionColumn;
 
 /// Messages buffered per channel before a slow socket is told to resync.
 const CHANNEL_CAPACITY: usize = 256;
@@ -22,6 +24,10 @@ const PRESENCE_SYNC: &str = "presence.sync";
 const PRESENCE_ALIVE: &str = "presence.alive";
 /// Heartbeats a replica may miss before the others forget its presence.
 const MISSED_HEARTBEATS: u32 = 3;
+/// A replica's writing counts for a meeting (internal, ADR-0012).
+const WRITING_CHANGED: &str = "writing.changed";
+/// The cluster-wide writing counts, as clients get them.
+const REFLECTION_WRITING: &str = "reflection.writing";
 const MEMBER_REMOVED: &str = "member.removed";
 const TEAM_DELETED: &str = "team.deleted";
 /// Access changes buffered per socket; one that lags re-checks everything.
@@ -70,6 +76,54 @@ impl AccessChange {
     }
 }
 
+/// How a socket is writing a reflection (ADR-0012): a new one, or editing a
+/// sent one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WritingMode {
+    New = 0,
+    Edit = 1,
+}
+
+/// Open reflection editors, by column ([`ReflectionColumn::index`]) and mode
+/// (new, edit).
+pub type WritingCounts = [[u32; 2]; 4];
+
+const NO_WRITING: WritingCounts = [[0; 2]; 4];
+
+/// The client shape of writing counts: `{ "plus": { "new": 1, "edit": 0 }, … }`.
+pub fn writing_json(counts: &WritingCounts) -> Value {
+    let mut map = serde_json::Map::new();
+    for column in ReflectionColumn::ALL {
+        let [new, edit] = counts[column.index()];
+        let name = match column {
+            ReflectionColumn::Plus => "plus",
+            ReflectionColumn::Delta => "delta",
+            ReflectionColumn::Ideas => "ideas",
+            ReflectionColumn::Thanks => "thanks",
+        };
+        map.insert(name.to_owned(), json!({ "new": new, "edit": edit }));
+    }
+    Value::Object(map)
+}
+
+/// A message on its way to a channel's local subscribers: the serialized
+/// event, and the only user who may receive it (ADR-0012).
+#[derive(Debug, Clone)]
+pub struct Outbound {
+    pub user: Option<Uuid>,
+    pub text: Arc<str>,
+}
+
+/// What forgetting silent replicas changed.
+#[derive(Debug, Default, PartialEq)]
+struct Expired {
+    /// Users now offline.
+    offline: Vec<Change>,
+    /// Meetings whose writing totals changed, with the new totals.
+    writing: Vec<(Uuid, WritingCounts)>,
+}
+
 /// Who is online in which meeting, as this replica sees the cluster:
 /// meeting → user → their team and the replicas holding a socket for them;
 /// plus when each replica was last heard from, so one that stops without
@@ -77,6 +131,8 @@ impl AccessChange {
 #[derive(Debug, Default)]
 struct Online {
     meetings: HashMap<Uuid, HashMap<Uuid, Presence>>,
+    /// Writing counts: meeting → replica → that replica's counts.
+    writing: HashMap<Uuid, HashMap<Uuid, WritingCounts>>,
     seen: HashMap<Uuid, Instant>,
     /// Replicas forgotten for their silence: if one speaks again, every
     /// replica is asked to re-announce.
@@ -98,6 +154,46 @@ impl Online {
             .get(&meeting)
             .map(|users| users.keys().copied().collect())
             .unwrap_or_default()
+    }
+
+    /// The cluster-wide writing counts of a meeting.
+    fn writing(&self, meeting: Uuid) -> WritingCounts {
+        let mut total = NO_WRITING;
+        for counts in self
+            .writing
+            .get(&meeting)
+            .into_iter()
+            .flat_map(|r| r.values())
+        {
+            for (column, modes) in counts.iter().enumerate() {
+                for (mode, n) in modes.iter().enumerate() {
+                    total[column][mode] += n;
+                }
+            }
+        }
+        total
+    }
+
+    /// Folds in a replica's writing counts for a meeting; returns the new
+    /// total when it changed.
+    fn set_writing(
+        &mut self,
+        meeting: Uuid,
+        replica: Uuid,
+        counts: WritingCounts,
+    ) -> Option<WritingCounts> {
+        let before = self.writing(meeting);
+        let replicas = self.writing.entry(meeting).or_default();
+        if counts == NO_WRITING {
+            replicas.remove(&replica);
+        } else {
+            replicas.insert(replica, counts);
+        }
+        if replicas.is_empty() {
+            self.writing.remove(&meeting);
+        }
+        let after = self.writing(meeting);
+        (before != after).then_some(after)
     }
 
     /// Folds in a replica's announcement; true when the user's overall
@@ -141,8 +237,9 @@ impl Online {
     }
 
     /// Forgets the replicas (never `me`) silent for longer than `silence`,
-    /// and returns the users that leaves offline.
-    fn expire(&mut self, now: Instant, silence: Duration, me: Uuid) -> Vec<Change> {
+    /// and returns the users that leaves offline and the meetings whose
+    /// writing totals changed.
+    fn expire(&mut self, now: Instant, silence: Duration, me: Uuid) -> Expired {
         let gone: HashSet<Uuid> = self
             .seen
             .iter()
@@ -150,7 +247,7 @@ impl Online {
             .map(|(&replica, _)| replica)
             .collect();
         if gone.is_empty() {
-            return Vec::new();
+            return Expired::default();
         }
         self.seen.retain(|replica, _| !gone.contains(replica));
         self.expired.extend(gone.iter().copied());
@@ -166,16 +263,34 @@ impl Online {
             });
         }
         self.meetings.retain(|_, users| !users.is_empty());
-        offline
+        let mut writing = Vec::new();
+        let meetings: Vec<Uuid> = self.writing.keys().copied().collect();
+        for meeting in meetings {
+            let before = self.writing(meeting);
+            if let Some(replicas) = self.writing.get_mut(&meeting) {
+                replicas.retain(|replica, _| !gone.contains(replica));
+                if replicas.is_empty() {
+                    self.writing.remove(&meeting);
+                }
+            }
+            let after = self.writing(meeting);
+            if after != before {
+                writing.push((meeting, after));
+            }
+        }
+        Expired { offline, writing }
     }
 
     /// Starts over from this replica's own sockets (the others are asked
     /// again): after a listener reconnect even our own announcements may have
     /// been missed.
-    fn reset(&mut self, me: Uuid, sockets: &Sockets) {
+    fn reset(&mut self, me: Uuid, sockets: &Sockets, writers: &HashMap<Uuid, WritingCounts>) {
         *self = Self::default();
         for (&(meeting, user), &(team, _)) in sockets {
             self.apply(meeting, team, user, me, true);
+        }
+        for (&meeting, &counts) in writers {
+            self.set_writing(meeting, me, counts);
         }
     }
 }
@@ -190,6 +305,10 @@ struct Local {
     /// Announcements that could not be published: (meeting, user) → team.
     /// Each heartbeat retries them with the then-current socket count.
     pending: HashMap<(Uuid, Uuid), Uuid>,
+    /// This replica's writing counts per meeting (ADR-0012).
+    writers: HashMap<Uuid, WritingCounts>,
+    /// Meetings whose writing counts could not be published.
+    pending_writing: HashSet<Uuid>,
     /// Shutting down: this replica has said goodbye; sockets no longer count.
     closing: bool,
 }
@@ -200,7 +319,7 @@ pub struct Hub {
     /// How often this replica tells the others it is alive; a replica silent
     /// for [`MISSED_HEARTBEATS`] of them is forgotten.
     heartbeat: Duration,
-    channels: Mutex<HashMap<String, broadcast::Sender<Arc<str>>>>,
+    channels: Mutex<HashMap<String, broadcast::Sender<Outbound>>>,
     online: Mutex<Online>,
     /// Held from a socket count transition until its announcement is sent, so
     /// this replica's online/offline notifications commit in transition order
@@ -241,7 +360,7 @@ impl Hub {
     }
 
     /// A receiver of the messages sent on `channel`, already serialized.
-    pub fn subscribe(&self, channel: &str) -> broadcast::Receiver<Arc<str>> {
+    pub fn subscribe(&self, channel: &str) -> broadcast::Receiver<Outbound> {
         let mut channels = self.channels.lock().expect("hub channels");
         channels
             .entry(channel.to_owned())
@@ -258,6 +377,80 @@ impl Hub {
     /// The users online in a meeting, on any replica.
     pub fn online(&self, meeting_id: Uuid) -> HashSet<Uuid> {
         self.online.lock().expect("hub presence").users(meeting_id)
+    }
+
+    /// The reflections being written in a meeting, on any replica.
+    pub fn writing(&self, meeting_id: Uuid) -> WritingCounts {
+        self.online
+            .lock()
+            .expect("hub presence")
+            .writing(meeting_id)
+    }
+
+    /// A socket's writing state in a meeting went from `from` to `to`
+    /// (`None`: not writing).
+    pub async fn set_writing(
+        &self,
+        meeting_id: Uuid,
+        from: Option<(ReflectionColumn, WritingMode)>,
+        to: Option<(ReflectionColumn, WritingMode)>,
+    ) {
+        if from == to {
+            return;
+        }
+        let mut local = self.local.lock().await;
+        if local.closing {
+            return;
+        }
+        let counts = local.writers.entry(meeting_id).or_insert(NO_WRITING);
+        if let Some((column, mode)) = from {
+            let n = &mut counts[column.index()][mode as usize];
+            *n = n.saturating_sub(1);
+        }
+        if let Some((column, mode)) = to {
+            counts[column.index()][mode as usize] += 1;
+        }
+        self.announce_writing(&mut local, meeting_id).await;
+    }
+
+    /// Publishes this replica's writing counts for a meeting (absolute, so a
+    /// repeated or missed announcement is corrected by the next); one that
+    /// cannot be published is retried on the next heartbeat.
+    async fn announce_writing(&self, local: &mut Local, meeting_id: Uuid) {
+        let counts = local
+            .writers
+            .get(&meeting_id)
+            .copied()
+            .unwrap_or(NO_WRITING);
+        if counts == NO_WRITING {
+            local.writers.remove(&meeting_id);
+        }
+        if self.publish_writing(meeting_id, counts).await {
+            local.pending_writing.remove(&meeting_id);
+        } else {
+            local.pending_writing.insert(meeting_id);
+        }
+    }
+
+    async fn publish_writing(&self, meeting_id: Uuid, counts: WritingCounts) -> bool {
+        let notification = Notification {
+            channel: Channel::Meeting(meeting_id).to_string(),
+            kind: WRITING_CHANGED.into(),
+            seq: None,
+            payload: json!({
+                "meetingId": meeting_id,
+                "replica": self.replica,
+                "counts": counts,
+            }),
+            user: None,
+        };
+        match notify(&self.db, &notification).await {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, "cannot publish writing state");
+                false
+            }
+        }
     }
 
     /// A socket of `user_id` entered the meeting room.
@@ -306,6 +499,10 @@ impl Hub {
         for ((meeting, user), (team, _)) in std::mem::take(&mut local.sockets) {
             self.publish_presence(meeting, team, user, false).await;
         }
+        local.pending_writing.clear();
+        for meeting in std::mem::take(&mut local.writers).into_keys() {
+            self.publish_writing(meeting, NO_WRITING).await;
+        }
     }
 
     /// Publishes a socket count transition; one that cannot be published is
@@ -346,6 +543,7 @@ impl Hub {
                 "online": online,
                 "replica": self.replica,
             }),
+            user: None,
         };
         match notify(&self.db, &notification).await {
             Ok(()) => true,
@@ -368,6 +566,10 @@ impl Hub {
         for (meeting, team, user) in sockets {
             self.announce(&mut local, meeting, team, user, true).await;
         }
+        let writers: Vec<Uuid> = local.writers.keys().copied().collect();
+        for meeting in writers {
+            self.announce_writing(&mut local, meeting).await;
+        }
     }
 
     /// Publishes the announcements that failed, as the sockets now stand: a
@@ -378,6 +580,10 @@ impl Hub {
         for ((meeting, user), team) in pending {
             let online = local.sockets.contains_key(&(meeting, user));
             self.announce(&mut local, meeting, team, user, online).await;
+        }
+        let pending: Vec<Uuid> = local.pending_writing.iter().copied().collect();
+        for meeting in pending {
+            self.announce_writing(&mut local, meeting).await;
         }
     }
 
@@ -393,6 +599,7 @@ impl Hub {
                 kind: PRESENCE_ALIVE.into(),
                 seq: None,
                 payload: json!({ "replica": self.replica }),
+                user: None,
             };
             if let Err(error) = notify(&self.db, &alive).await {
                 tracing::warn!(%error, "cannot send the presence heartbeat");
@@ -403,13 +610,16 @@ impl Hub {
             if !*self.ready.borrow() {
                 continue;
             }
-            let gone = self.online.lock().expect("hub presence").expire(
+            let expired = self.online.lock().expect("hub presence").expire(
                 Instant::now(),
                 self.heartbeat * MISSED_HEARTBEATS,
                 self.replica,
             );
-            for (meeting, team, user) in gone {
+            for (meeting, team, user) in expired.offline {
                 self.send_presence(meeting, team, user, false);
+            }
+            for (meeting, counts) in expired.writing {
+                self.send_writing(meeting, &counts);
             }
         }
     }
@@ -449,10 +659,11 @@ impl Hub {
         let _ = self.access.send(AccessChange::Unknown);
         {
             let local = self.local.lock().await;
-            self.online
-                .lock()
-                .expect("hub presence")
-                .reset(self.replica, &local.sockets);
+            self.online.lock().expect("hub presence").reset(
+                self.replica,
+                &local.sockets,
+                &local.writers,
+            );
         }
         let channels: Vec<String> = {
             let channels = self.channels.lock().expect("hub channels");
@@ -464,6 +675,7 @@ impl Hub {
                 channel,
                 seq: None,
                 payload: json!({}),
+                user: None,
             });
         }
         self.request_presence().await;
@@ -477,6 +689,7 @@ impl Hub {
             kind: PRESENCE_SYNC.into(),
             seq: None,
             payload: json!({ "replica": self.replica }),
+            user: None,
         };
         if let Err(error) = notify(&self.db, &request).await {
             tracing::warn!(%error, "cannot request presence");
@@ -504,6 +717,7 @@ impl Hub {
         match notification.kind.as_str() {
             PRESENCE_SYNC => self.announce_local().await,
             PRESENCE_CHANGED => self.presence_changed(&notification).await,
+            WRITING_CHANGED => self.writing_changed(&notification).await,
             PRESENCE_ALIVE => {
                 if let Some(replica) = uuid_field(&notification.payload, "replica") {
                     self.heard_from(replica).await;
@@ -545,6 +759,40 @@ impl Hub {
         }
     }
 
+    /// Folds a replica's writing counts into the cluster view, and tells
+    /// clients when a meeting's totals changed.
+    async fn writing_changed(&self, notification: &Notification) {
+        let p = &notification.payload;
+        let (Some(meeting), Some(replica), Some(counts)) = (
+            uuid_field(p, "meetingId"),
+            uuid_field(p, "replica"),
+            p.get("counts")
+                .and_then(|v| serde_json::from_value::<WritingCounts>(v.clone()).ok()),
+        ) else {
+            return;
+        };
+        self.heard_from(replica).await;
+        let changed = self
+            .online
+            .lock()
+            .expect("hub presence")
+            .set_writing(meeting, replica, counts);
+        if let Some(total) = changed {
+            self.send_writing(meeting, &total);
+        }
+    }
+
+    /// Tells local clients how many reflections are being written.
+    fn send_writing(&self, meeting: Uuid, counts: &WritingCounts) {
+        self.send(&Notification {
+            channel: Channel::Meeting(meeting).to_string(),
+            kind: REFLECTION_WRITING.into(),
+            seq: None,
+            payload: json!({ "counts": writing_json(counts) }),
+            user: None,
+        });
+    }
+
     /// Tells local clients a user's overall presence in a meeting changed.
     fn send_presence(&self, meeting: Uuid, team: Uuid, user: Uuid, online: bool) {
         self.send(&Notification {
@@ -552,6 +800,7 @@ impl Hub {
             kind: PRESENCE_CHANGED.into(),
             seq: None,
             payload: json!({ "userId": user, "online": online }),
+            user: None,
         });
         // Meetings pages patch the card's presence: no list reload.
         self.send(&Notification {
@@ -559,6 +808,7 @@ impl Hub {
             kind: PRESENCE_CHANGED.into(),
             seq: None,
             payload: json!({ "meetingId": meeting, "userId": user, "online": online }),
+            user: None,
         });
     }
 
@@ -572,8 +822,14 @@ impl Hub {
             channels.remove(&notification.channel);
             return;
         }
-        if let Ok(text) = serde_json::to_string(notification) {
-            let _ = sender.send(Arc::from(text));
+        // The target user is for this hub only: clients never see it.
+        let mut message = notification.clone();
+        let user = message.user.take();
+        if let Ok(text) = serde_json::to_string(&message) {
+            let _ = sender.send(Outbound {
+                user,
+                text: Arc::from(text),
+            });
         }
     }
 }
@@ -634,7 +890,7 @@ mod tests {
         // Its "offline" was missed while the listener was down.
         online.apply(meeting, team, stale, mine, true);
         let sockets = Sockets::from([((meeting, me), (team, 1)), ((meeting, both), (team, 2))]);
-        online.reset(mine, &sockets);
+        online.reset(mine, &sockets, &HashMap::new());
         assert_eq!(online.users(meeting), HashSet::from([me, both]));
         // `both` now depends on this replica alone.
         assert!(online.apply(meeting, team, both, mine, false));
@@ -654,21 +910,103 @@ mod tests {
         online.apply(meeting, team, shared, dead, true);
         online.apply(meeting, team, shared, alive, true);
         // Not silent long enough yet.
-        assert!(online.expire(start + silence, silence, me).is_empty());
+        assert_eq!(
+            online.expire(start + silence, silence, me),
+            Expired::default()
+        );
 
         online.touch(alive, start + silence);
         let later = start + silence + Duration::from_secs(1);
         // `me` is never expired, however long since our own heartbeat.
         assert_eq!(
-            online.expire(later, silence, me),
+            online.expire(later, silence, me).offline,
             vec![(meeting, team, theirs)]
         );
         assert_eq!(online.users(meeting), HashSet::from([mine, shared]));
-        assert!(online.expire(later, silence, me).is_empty());
+        assert_eq!(online.expire(later, silence, me), Expired::default());
         // The forgotten replica speaking again is noticed (once).
         assert!(online.touch(dead, later));
         assert!(!online.touch(dead, later));
         assert!(!online.touch(alive, later));
+    }
+
+    fn counts(column: ReflectionColumn, mode: WritingMode, n: u32) -> WritingCounts {
+        let mut counts = NO_WRITING;
+        counts[column.index()][mode as usize] = n;
+        counts
+    }
+
+    #[test]
+    fn writing_counts_add_up_across_replicas() {
+        let [meeting, a, b] = ids();
+        let mut online = Online::default();
+        let delta = counts(ReflectionColumn::Delta, WritingMode::New, 1);
+        assert_eq!(online.set_writing(meeting, a, delta), Some(delta));
+        let total = online
+            .set_writing(
+                meeting,
+                b,
+                counts(ReflectionColumn::Delta, WritingMode::New, 2),
+            )
+            .unwrap();
+        assert_eq!(total[ReflectionColumn::Delta.index()], [3, 0]);
+        // Absolute counts: repeating an announcement changes nothing.
+        assert_eq!(online.set_writing(meeting, a, delta), None);
+        online.set_writing(meeting, a, NO_WRITING);
+        online.set_writing(meeting, b, NO_WRITING);
+        assert_eq!(online.writing(meeting), NO_WRITING);
+        assert!(online.writing.is_empty());
+    }
+
+    #[test]
+    fn a_silent_replica_stops_writing() {
+        let [meeting, me, dead] = ids();
+        let silence = Duration::from_secs(45);
+        let start = Instant::now();
+        let mut online = Online::default();
+        online.touch(me, start);
+        online.touch(dead, start);
+        online.set_writing(
+            meeting,
+            me,
+            counts(ReflectionColumn::Plus, WritingMode::Edit, 1),
+        );
+        online.set_writing(
+            meeting,
+            dead,
+            counts(ReflectionColumn::Plus, WritingMode::New, 1),
+        );
+        let expired = online.expire(start + silence * 2, silence, me);
+        assert_eq!(
+            expired.writing,
+            vec![(
+                meeting,
+                counts(ReflectionColumn::Plus, WritingMode::Edit, 1)
+            )]
+        );
+    }
+
+    #[test]
+    fn reconnecting_keeps_only_our_own_writers() {
+        let [meeting, other, me, them] = ids();
+        let mut online = Online::default();
+        online.set_writing(
+            meeting,
+            them,
+            counts(ReflectionColumn::Ideas, WritingMode::New, 1),
+        );
+        let ours = counts(ReflectionColumn::Thanks, WritingMode::New, 2);
+        online.reset(me, &Sockets::new(), &HashMap::from([(other, ours)]));
+        assert_eq!(online.writing(meeting), NO_WRITING);
+        assert_eq!(online.writing(other), ours);
+    }
+
+    #[test]
+    fn writing_json_names_every_column() {
+        let json = writing_json(&counts(ReflectionColumn::Delta, WritingMode::Edit, 1));
+        assert_eq!(json["delta"], json!({ "new": 0, "edit": 1 }));
+        assert_eq!(json["plus"], json!({ "new": 0, "edit": 0 }));
+        assert_eq!(json.as_object().unwrap().len(), 4);
     }
 
     fn event(channel: &str, kind: &str, payload: serde_json::Value) -> Notification {
@@ -677,6 +1015,7 @@ mod tests {
             kind: kind.to_owned(),
             seq: Some(1),
             payload,
+            user: None,
         }
     }
 

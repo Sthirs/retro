@@ -1,19 +1,23 @@
-//! Meetings: lifecycle, participants, facilitator and the icebreaker
-//! (spec §8, §9.1). Every change publishes its real-time events inside its
+//! Meetings: lifecycle, participants, facilitator, timer, ready flags and
+//! the icebreaker (spec §8, §9.1). Every change publishes its real-time events inside its
 //! transaction (ADR-0011).
 
 use std::collections::HashMap;
 
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, FromQueryResult,
-    QueryFilter, QueryOrder, QuerySelect, Set, Statement, TransactionSession, TransactionTrait,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, Statement, TransactionSession,
+    TransactionTrait,
 };
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    domain::{random_token, teams},
+    domain::{
+        random_token, teams,
+        timer::{self, Timer, TimerAction},
+    },
     entities::{
         greeting, icebreaker_question,
         meeting::{self, MeetingPhase, MeetingStatus},
@@ -36,6 +40,8 @@ pub const TITLE_MAX_CHARS: usize = 80;
 pub struct Participant {
     pub user: user::Model,
     pub role: Option<Role>,
+    /// Pressed Ready in the current phase.
+    pub ready: bool,
 }
 
 /// A meeting with what its screens show next to it.
@@ -86,7 +92,7 @@ pub fn join_position(
 /// order of every team mutation (task writes, member removal and the cascade
 /// of a team delete), so a meeting write cannot deadlock with them. The
 /// meeting is re-read under its lock.
-async fn find_for_member(
+pub(crate) async fn find_for_member(
     db: &impl ConnectionTrait,
     meeting_id: Uuid,
     actor: Uuid,
@@ -182,6 +188,7 @@ struct ParticipantRow {
     meeting_id: Uuid,
     user_id: Uuid,
     role: Option<Role>,
+    is_ready: bool,
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -208,7 +215,7 @@ async fn views(
     let rows = ParticipantRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
         format!(
-            "SELECT p.meeting_id, p.user_id, tm.role \
+            "SELECT p.meeting_id, p.user_id, tm.role, p.is_ready \
              FROM meeting_participants p \
              JOIN meetings m ON m.id = p.meeting_id \
              LEFT JOIN team_members tm ON tm.team_id = m.team_id AND tm.user_id = p.user_id \
@@ -260,6 +267,7 @@ async fn views(
                 .push(Participant {
                     user: user.clone(),
                     role: row.role,
+                    ready: row.is_ready,
                 });
         }
     }
@@ -609,6 +617,106 @@ pub async fn next_phase(
         .await?;
     ws::publish_meeting(&txn, meeting.id, "phase.changed", json!({ "phase": phase })).await?;
     team_updated(&txn, &meeting).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// Fails with `not_participant` unless `actor` joined the meeting.
+pub(crate) async fn require_participant(
+    txn: &impl ConnectionTrait,
+    meeting_id: Uuid,
+    actor: Uuid,
+) -> Result<(), AppError> {
+    meeting_participant::Entity::find_by_id((meeting_id, actor))
+        .one(txn)
+        .await?
+        .map(|_| ())
+        .ok_or(AppError::Denied("not_participant"))
+}
+
+/// Sets, pauses, extends or stops the timer (facilitator, any phase).
+/// Publishes `timer.updated` with the new timer (`null` once stopped).
+pub async fn set_timer(
+    db: &(impl TransactionTrait + ConnectionTrait),
+    meeting_id: Uuid,
+    actor: Uuid,
+    action: TimerAction,
+) -> Result<(), AppError> {
+    let txn = db.begin().await?;
+    let meeting = lock_as_facilitator(&txn, meeting_id, actor).await?;
+    let now = OffsetDateTime::now_utc();
+    let next = timer::apply(Timer::from_json(meeting.timer_state.as_ref()), action, now)?;
+    meeting::ActiveModel {
+        id: Set(meeting.id),
+        timer_state: Set(next.as_ref().map(Timer::to_json)),
+        ..Default::default()
+    }
+    .update(&txn)
+    .await?;
+    let server_now = now
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| AppError::Internal(e.into()))?;
+    ws::publish_meeting(
+        &txn,
+        meeting.id,
+        "timer.updated",
+        json!({ "timer": next, "serverNow": server_now }),
+    )
+    .await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// Phases where participants press Ready (spec §8.2).
+pub fn has_ready(phase: MeetingPhase) -> bool {
+    matches!(
+        phase,
+        MeetingPhase::Reflect | MeetingPhase::Group | MeetingPhase::Vote
+    )
+}
+
+/// Sets the caller's own ready flag (a participant, in Reflect, Group or
+/// Vote). Publishes `ready.changed` with the new ready count.
+pub async fn set_ready(
+    db: &(impl TransactionTrait + ConnectionTrait),
+    meeting_id: Uuid,
+    actor: Uuid,
+    ready: bool,
+) -> Result<(), AppError> {
+    let txn = db.begin().await?;
+    let (meeting, _) = find_for_member(&txn, meeting_id, actor, true).await?;
+    if meeting.status != MeetingStatus::Active {
+        return Err(AppError::Conflict("meeting_ended"));
+    }
+    if !has_ready(meeting.phase) {
+        return Err(AppError::Conflict("wrong_phase"));
+    }
+    let participant = meeting_participant::Entity::find_by_id((meeting.id, actor))
+        .one(&txn)
+        .await?
+        .ok_or(AppError::Denied("not_participant"))?;
+    if participant.is_ready != ready {
+        meeting_participant::ActiveModel {
+            meeting_id: Set(meeting.id),
+            user_id: Set(actor),
+            is_ready: Set(ready),
+            ..Default::default()
+        }
+        .update(&txn)
+        .await?;
+        let ready_count = meeting_participant::Entity::find()
+            .filter(meeting_participant::Column::MeetingId.eq(meeting.id))
+            .filter(meeting_participant::Column::IsReady.eq(true))
+            .count(&txn)
+            .await?;
+        ws::publish_meeting(
+            &txn,
+            meeting.id,
+            "ready.changed",
+            json!({ "userId": actor, "ready": ready, "readyCount": ready_count }),
+        )
+        .await?;
+    }
     txn.commit().await?;
     Ok(())
 }

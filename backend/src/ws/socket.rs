@@ -1,6 +1,10 @@
 //! One client's WebSocket: subscriptions, forwarding and keep-alive.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use axum::{
     extract::{
@@ -19,10 +23,13 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use super::{AccessChange, Channel, ticket};
+use super::{AccessChange, Channel, WritingMode, hub::Outbound, ticket};
 use crate::{
     domain::teams,
-    entities::meeting::{self, MeetingStatus},
+    entities::{
+        meeting::{self, MeetingStatus},
+        reflection::ReflectionColumn,
+    },
     error::AppError,
     state::AppState,
 };
@@ -32,6 +39,9 @@ const MAX_SUBSCRIPTIONS: usize = 32;
 /// The code sent on each channel of a team the user lost access to: the team
 /// is gone or they are no longer a member.
 const REVOKED: &str = "team_not_found";
+/// Ephemeral client messages (`writing`) a socket may send per second; extra
+/// ones are dropped (ADR-0012).
+const EPHEMERAL_PER_SECOND: u32 = 10;
 
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
@@ -41,8 +51,48 @@ pub struct WsQuery {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum Command {
-    Subscribe { channel: String },
-    Unsubscribe { channel: String },
+    Subscribe {
+        channel: String,
+    },
+    Unsubscribe {
+        channel: String,
+    },
+    /// The socket's reflection editor opened (`column`) or closed (`null`)
+    /// in a meeting (ADR-0012).
+    Writing {
+        channel: String,
+        column: Option<ReflectionColumn>,
+        #[serde(default)]
+        mode: Option<WritingMode>,
+    },
+}
+
+/// What one socket is writing in a meeting.
+type Writing = (ReflectionColumn, WritingMode);
+
+/// A fixed one-second window counting ephemeral messages.
+struct RateLimit {
+    window: Instant,
+    count: u32,
+}
+
+impl RateLimit {
+    fn new() -> Self {
+        Self {
+            window: Instant::now(),
+            count: 0,
+        }
+    }
+
+    /// Counts one message; false when the window's budget is spent.
+    fn allow(&mut self, now: Instant) -> bool {
+        if now.duration_since(self.window) >= Duration::from_secs(1) {
+            self.window = now;
+            self.count = 0;
+        }
+        self.count += 1;
+        self.count <= EPHEMERAL_PER_SECOND
+    }
 }
 
 struct Subscription {
@@ -51,6 +101,8 @@ struct Subscription {
     team: Uuid,
     /// Set for a meeting the user participates in: (meeting, team).
     presence: Option<(Uuid, Uuid)>,
+    /// The reflection this socket is writing in that meeting, if any.
+    writing: Option<Writing>,
 }
 
 /// A channel's message on its way to the socket, tagged with its channel so
@@ -81,6 +133,7 @@ async fn serve(socket: WebSocket, state: AppState, user_id: Uuid) {
     let mut subscriptions: HashMap<String, Subscription> = HashMap::new();
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
+    let mut limit = RateLimit::new();
 
     loop {
         tokio::select! {
@@ -112,8 +165,11 @@ async fn serve(socket: WebSocket, state: AppState, user_id: Uuid) {
             }
             incoming = stream.next() => match incoming {
                 Some(Ok(Message::Text(text))) => {
-                    let reply = command(&state, user_id, &text, &out, &mut subscriptions).await;
-                    if sink.send(text_message(reply)).await.is_err() {
+                    let reply =
+                        command(&state, user_id, &text, &out, &mut subscriptions, &mut limit).await;
+                    if let Some(reply) = reply
+                        && sink.send(text_message(reply)).await.is_err()
+                    {
                         break;
                     }
                 }
@@ -187,23 +243,72 @@ fn text_message(value: serde_json::Value) -> Message {
 async fn end(state: &AppState, user_id: Uuid, subscription: Subscription) {
     subscription.forward.abort();
     if let Some((meeting, team)) = subscription.presence {
+        if subscription.writing.is_some() {
+            state
+                .hub
+                .set_writing(meeting, subscription.writing, None)
+                .await;
+        }
         state.hub.leave(meeting, team, user_id).await;
     }
 }
 
-/// Runs one client command and returns the reply.
+/// Runs one client command and returns the reply, if it has one.
 async fn command(
     state: &AppState,
     user_id: Uuid,
     text: &str,
     out: &mpsc::Sender<Outgoing>,
     subscriptions: &mut HashMap<String, Subscription>,
+    limit: &mut RateLimit,
+) -> Option<serde_json::Value> {
+    let Ok(command) = serde_json::from_str::<Command>(text) else {
+        return Some(error_message("", "invalid_message"));
+    };
+    if let Command::Writing {
+        channel,
+        column,
+        mode,
+    } = command
+    {
+        if !limit.allow(Instant::now()) {
+            return None;
+        }
+        return writing(state, &channel, column, mode, subscriptions)
+            .await
+            .err()
+            .map(|code| error_message(&channel, code));
+    }
+    Some(subscription_command(state, user_id, command, out, subscriptions).await)
+}
+
+/// Records what the socket is writing in a running meeting it is in.
+async fn writing(
+    state: &AppState,
+    channel: &str,
+    column: Option<ReflectionColumn>,
+    mode: Option<WritingMode>,
+    subscriptions: &mut HashMap<String, Subscription>,
+) -> Result<(), &'static str> {
+    let subscription = subscriptions.get_mut(channel).ok_or("not_subscribed")?;
+    let (meeting, _) = subscription.presence.ok_or("invalid_channel")?;
+    let to = column.map(|c| (c, mode.unwrap_or(WritingMode::New)));
+    let from = std::mem::replace(&mut subscription.writing, to);
+    state.hub.set_writing(meeting, from, to).await;
+    Ok(())
+}
+
+/// Subscribes or unsubscribes, and returns the reply.
+async fn subscription_command(
+    state: &AppState,
+    user_id: Uuid,
+    command: Command,
+    out: &mpsc::Sender<Outgoing>,
+    subscriptions: &mut HashMap<String, Subscription>,
 ) -> serde_json::Value {
     let error = error_message;
-    let Ok(command) = serde_json::from_str::<Command>(text) else {
-        return error("", "invalid_message");
-    };
     match command {
+        Command::Writing { .. } => error("", "invalid_message"),
         Command::Unsubscribe { channel } => {
             if let Some(subscription) = subscriptions.remove(&channel) {
                 end(state, user_id, subscription).await;
@@ -233,7 +338,12 @@ async fn command(
             };
             // Subscribe before acknowledging, so no event after the ack is lost.
             let receiver = state.hub.subscribe(&name);
-            let forward = tokio::spawn(forward(receiver, out.clone(), Arc::from(name.as_str())));
+            let forward = tokio::spawn(forward(
+                receiver,
+                out.clone(),
+                Arc::from(name.as_str()),
+                user_id,
+            ));
             if let Some((meeting, team)) = presence {
                 state.hub.enter(meeting, team, user_id).await;
             }
@@ -243,6 +353,7 @@ async fn command(
                     forward,
                     team,
                     presence,
+                    writing: None,
                 },
             );
             json!({ "type": "subscribed", "channel": name })
@@ -282,16 +393,21 @@ async fn authorize(
     }
 }
 
-/// Copies a channel's messages to the socket. A socket too slow to keep up is
-/// told to resync instead of silently missing events.
+/// Copies a channel's messages to the socket, skipping those meant for
+/// another user. A socket too slow to keep up is told to resync instead of
+/// silently missing events.
 async fn forward(
-    mut receiver: broadcast::Receiver<Arc<str>>,
+    mut receiver: broadcast::Receiver<Outbound>,
     out: mpsc::Sender<Outgoing>,
     channel: Arc<str>,
+    user_id: Uuid,
 ) {
     loop {
         let message = match receiver.recv().await {
-            Ok(text) => Message::Text(Utf8Bytes::from(text.as_ref())),
+            Ok(Outbound {
+                user: Some(user), ..
+            }) if user != user_id => continue,
+            Ok(Outbound { text, .. }) => Message::Text(Utf8Bytes::from(text.as_ref())),
             Err(RecvError::Lagged(_)) => text_message(
                 json!({ "type": "resync", "channel": channel.as_ref(), "seq": null, "payload": {} }),
             ),
@@ -318,5 +434,16 @@ mod tests {
                 "payload": { "code": "meeting_not_found" },
             })
         );
+    }
+
+    #[test]
+    fn ephemeral_messages_are_limited_per_second() {
+        let mut limit = RateLimit::new();
+        let start = limit.window;
+        for _ in 0..EPHEMERAL_PER_SECOND {
+            assert!(limit.allow(start));
+        }
+        assert!(!limit.allow(start + Duration::from_millis(999)));
+        assert!(limit.allow(start + Duration::from_secs(1)));
     }
 }

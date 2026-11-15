@@ -5,6 +5,7 @@ pub mod icebreaker_question;
 pub mod invitation;
 pub mod meeting;
 pub mod meeting_participant;
+pub mod reflection;
 pub mod refresh_token;
 pub mod task;
 pub mod task_mention;

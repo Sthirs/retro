@@ -969,3 +969,326 @@ async fn a_stopping_replica_takes_its_users_offline() {
     app.state.hub.shutdown().await;
     assert!(!presence_of(&mut alice_socket, &bob_id).await);
 }
+
+// --- Reflect: counts, author-only events, writing state (ADR-0012) ---------
+
+async fn to_reflect(app: &TestApp, alice: &str, m: &str) {
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/meetings/{m}/phase/next"),
+            alice,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+}
+
+async fn send_writing(socket: &mut Socket, m: &str, column: Value, mode: &str) {
+    socket
+        .send(Message::text(
+            json!({ "type": "writing", "channel": format!("meeting:{m}"), "column": column, "mode": mode })
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+}
+
+/// The next `reflection.writing` event's counts.
+async fn writing_counts(socket: &mut Socket) -> Value {
+    next_of(socket, "reflection.writing").await["payload"]["counts"].clone()
+}
+
+fn writing(column: &str, new: u32, edit: u32) -> Value {
+    let mut counts = json!({
+        "plus": { "new": 0, "edit": 0 },
+        "delta": { "new": 0, "edit": 0 },
+        "ideas": { "new": 0, "edit": 0 },
+        "thanks": { "new": 0, "edit": 0 },
+    });
+    counts[column] = json!({ "new": new, "edit": edit });
+    counts
+}
+
+#[tokio::test]
+async fn reflection_content_reaches_only_its_author() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, _, m) = team_with_meeting(&app).await;
+    to_reflect(&app, &alice, &m).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut bob_tab = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_tab, &channel).await;
+
+    let tab = Uuid::now_v7().to_string();
+    let res = app
+        .call_with(
+            "POST",
+            &format!("/api/v1/meetings/{m}/reflections"),
+            &bob,
+            Some(json!({ "column": "delta", "content": "<p>Secret</p>" })),
+            &[("x-client-id", &tab)],
+        )
+        .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    let id = res.json()["reflections"][0]["id"].clone();
+
+    // Everyone gets the counts, with a seq.
+    let counts = next_of(&mut alice_socket, "reflection.count_changed").await;
+    assert!(counts["seq"].is_i64());
+    assert_eq!(
+        counts["payload"]["counts"],
+        json!({ "plus": 0, "delta": 1, "ideas": 0, "thanks": 0 })
+    );
+    // Bob's tabs also learn which reflection changed and which tab did it.
+    let mut bob_events = Vec::new();
+    while bob_events.len() < 2 {
+        let event = next(&mut bob_tab).await;
+        if event["type"] == "reflection.count_changed" || event["type"] == "reflection.changed" {
+            bob_events.push(event);
+        }
+    }
+    let changed = bob_events
+        .iter()
+        .find(|e| e["type"] == "reflection.changed")
+        .unwrap();
+    assert_eq!(changed["payload"], json!({ "id": id, "clientId": tab }));
+    assert_eq!(changed["seq"], Value::Null);
+    assert!(changed.get("user").is_none());
+    // Alice never gets the author-only event, let alone the content.
+    let leaked = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            let event = next(&mut alice_socket).await;
+            if event["type"] != "presence.changed" {
+                return event;
+            }
+        }
+    })
+    .await;
+    assert!(leaked.is_err(), "unexpected: {leaked:?}");
+}
+
+#[tokio::test]
+async fn everyone_sees_how_many_reflections_are_being_written() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, _, m) = team_with_meeting(&app).await;
+    to_reflect(&app, &alice, &m).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+
+    send_writing(&mut bob_socket, &m, json!("delta"), "new").await;
+    assert_eq!(
+        writing_counts(&mut alice_socket).await,
+        writing("delta", 1, 0)
+    );
+    // The snapshot has it too.
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    assert_eq!(state["writing"], writing("delta", 1, 0));
+
+    // Switching to editing a sent card in Ideas moves the count.
+    send_writing(&mut bob_socket, &m, json!("ideas"), "edit").await;
+    assert_eq!(
+        writing_counts(&mut alice_socket).await,
+        writing("ideas", 0, 1)
+    );
+    send_writing(&mut bob_socket, &m, Value::Null, "new").await;
+    assert_eq!(
+        writing_counts(&mut alice_socket).await,
+        writing("plus", 0, 0)
+    );
+
+    // A closed socket stops writing.
+    send_writing(&mut bob_socket, &m, json!("thanks"), "new").await;
+    assert_eq!(
+        writing_counts(&mut alice_socket).await,
+        writing("thanks", 1, 0)
+    );
+    bob_socket.close(None).await.unwrap();
+    assert_eq!(
+        writing_counts(&mut alice_socket).await,
+        writing("plus", 0, 0)
+    );
+}
+
+#[tokio::test]
+async fn two_tabs_writing_add_up_and_unsubscribing_stops_writing() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, _, m) = team_with_meeting(&app).await;
+    to_reflect(&app, &alice, &m).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut one = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut one, &channel).await;
+    let mut two = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut two, &channel).await;
+
+    send_writing(&mut one, &m, json!("plus"), "new").await;
+    assert_eq!(
+        writing_counts(&mut alice_socket).await,
+        writing("plus", 1, 0)
+    );
+    send_writing(&mut two, &m, json!("plus"), "new").await;
+    assert_eq!(
+        writing_counts(&mut alice_socket).await,
+        writing("plus", 2, 0)
+    );
+    // Repeating the same state changes nothing.
+    send_writing(&mut two, &m, json!("plus"), "new").await;
+    unsubscribe(&mut one, &channel).await;
+    assert_eq!(
+        writing_counts(&mut alice_socket).await,
+        writing("plus", 1, 0)
+    );
+}
+
+#[tokio::test]
+async fn writing_needs_a_running_meeting_the_socket_follows() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, _, _, team, m) = team_with_meeting(&app).await;
+    let mut socket = connect(&addr, &ticket(&app, &alice).await).await;
+
+    send_writing(&mut socket, &m, json!("plus"), "new").await;
+    let error = next(&mut socket).await;
+    assert_eq!(error["type"], "error");
+    assert_eq!(error["payload"]["code"], "not_subscribed");
+
+    // A team channel has no reflections.
+    let team_channel = format!("team:{team}");
+    subscribe(&mut socket, &team_channel).await;
+    socket
+        .send(Message::text(
+            json!({ "type": "writing", "channel": team_channel, "column": "plus" }).to_string(),
+        ))
+        .await
+        .unwrap();
+    let error = next_of(&mut socket, "error").await;
+    assert_eq!(error["payload"]["code"], "invalid_channel");
+
+    // An unknown column is not a valid message.
+    subscribe(&mut socket, &format!("meeting:{m}")).await;
+    socket
+        .send(Message::text(
+            json!({ "type": "writing", "channel": format!("meeting:{m}"), "column": "kudos" })
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+    let error = next_of(&mut socket, "error").await;
+    assert_eq!(error["payload"]["code"], "invalid_message");
+}
+
+#[tokio::test]
+async fn writing_messages_are_rate_limited() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, _, m) = team_with_meeting(&app).await;
+    to_reflect(&app, &alice, &m).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+
+    // Ten toggles go through; the eleventh (opening Ideas) is dropped.
+    for i in 0..10 {
+        let column = if i % 2 == 0 {
+            json!("plus")
+        } else {
+            Value::Null
+        };
+        send_writing(&mut bob_socket, &m, column, "new").await;
+    }
+    send_writing(&mut bob_socket, &m, json!("ideas"), "new").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    assert_eq!(state["writing"], writing("plus", 0, 0));
+}
+
+#[tokio::test]
+async fn a_silent_replica_stops_writing() {
+    let app = TestApp::with_config(|c| c.presence_heartbeat = Duration::from_millis(100)).await;
+    let addr = app.spawn_server().await;
+    let (alice, _, _, _, m) = team_with_meeting(&app).await;
+    let mut socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut socket, &format!("meeting:{m}")).await;
+
+    let mut counts = [[0u32; 2]; 4];
+    counts[1][0] = 2;
+    notify_raw(
+        &app,
+        json!({
+            "channel": format!("meeting:{m}"),
+            "type": "writing.changed",
+            "seq": null,
+            "payload": { "meetingId": m, "replica": Uuid::now_v7(), "counts": counts },
+        }),
+    )
+    .await;
+    assert_eq!(writing_counts(&mut socket).await, writing("delta", 2, 0));
+    // Three missed heartbeats later, nobody is writing there.
+    assert_eq!(writing_counts(&mut socket).await, writing("plus", 0, 0));
+}
+
+#[tokio::test]
+async fn timer_and_ready_changes_reach_everyone() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, bob_id, _, m) = team_with_meeting(&app).await;
+    to_reflect(&app, &alice, &m).await;
+    let mut socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut socket, &format!("meeting:{m}")).await;
+
+    let res = app
+        .call(
+            "PUT",
+            &format!("/api/v1/meetings/{m}/timer"),
+            &alice,
+            Some(json!({ "action": "start", "durationSeconds": 120 })),
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let event = next_of(&mut socket, "timer.updated").await;
+    assert!(event["seq"].is_i64());
+    assert_eq!(event["payload"]["timer"], res.json()["timer"]);
+    assert!(event["payload"]["serverNow"].is_string());
+
+    app.call(
+        "PUT",
+        &format!("/api/v1/meetings/{m}/timer"),
+        &alice,
+        Some(json!({ "action": "stop" })),
+    )
+    .await;
+    let event = next_of(&mut socket, "timer.updated").await;
+    assert_eq!(event["payload"]["timer"], Value::Null);
+
+    let res = app
+        .call(
+            "PUT",
+            &format!("/api/v1/meetings/{m}/ready"),
+            &bob,
+            Some(json!({ "ready": true })),
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let event = next_of(&mut socket, "ready.changed").await;
+    assert_eq!(
+        event["payload"],
+        json!({ "userId": bob_id, "ready": true, "readyCount": 1 })
+    );
+}

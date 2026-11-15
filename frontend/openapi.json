@@ -1345,6 +1345,172 @@
         ]
       }
     },
+    "/api/v1/meetings/{meeting_id}/ready": {
+      "put": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Sets the caller's own ready flag (participants, in Reflect, Group and Vote).",
+        "operationId": "set_ready",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetReadyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, or `wrong_phase` (no Ready in this phase)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/reflections": {
+      "post": {
+        "tags": [
+          "reflections"
+        ],
+        "summary": "Sends a reflection (participants, during Reflect).",
+        "operationId": "create_reflection",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReflectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The meeting, with the new reflection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_reflection_content`: blank or too long",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, `wrong_phase` (not Reflect) or `too_many_reflections`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/meetings/{meeting_id}/state": {
       "get": {
         "tags": [
@@ -1387,6 +1553,248 @@
           },
           "404": {
             "description": "`meeting_not_found`: no such meeting or not a team member",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/timer": {
+      "put": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Sets, pauses, resumes, extends or stops the timer (facilitator, any phase).",
+        "operationId": "set_timer",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TimerAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting, with its timer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_duration`: start outside 1 s–99:59, or add outside 1 s–1 h",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, or `no_timer` (pause, resume or add with no timer set)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/reflections/{reflection_id}": {
+      "delete": {
+        "tags": [
+          "reflections"
+        ],
+        "summary": "Deletes the caller's own reflection (during Reflect).",
+        "operationId": "delete_reflection",
+        "parameters": [
+          {
+            "name": "reflection_id",
+            "in": "path",
+            "description": "Reflection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`reflection_not_found` (also someone else's) or `meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended` or `wrong_phase`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "reflections"
+        ],
+        "summary": "Edits or moves the caller's own reflection (during Reflect).",
+        "operationId": "update_reflection",
+        "parameters": [
+          {
+            "name": "reflection_id",
+            "in": "path",
+            "description": "Reflection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateReflectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_reflection_content`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`reflection_not_found` (also someone else's) or `meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended` or `wrong_phase` (reflections are immutable after Reflect)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2782,6 +3190,43 @@
           }
         }
       },
+      "ColumnWritingDto": {
+        "type": "object",
+        "description": "Reflections being written in a column: new ones, and sent ones being\nedited.",
+        "required": [
+          "new",
+          "edit"
+        ],
+        "properties": {
+          "edit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "new": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateReflectionRequest": {
+        "type": "object",
+        "description": "A reflection to send.",
+        "required": [
+          "column",
+          "content"
+        ],
+        "properties": {
+          "column": {
+            "$ref": "#/components/schemas/ReflectionColumn"
+          },
+          "content": {
+            "type": "string",
+            "description": "Rich text (HTML); sanitized by the server."
+          }
+        }
+      },
       "GreetingDto": {
         "type": "object",
         "description": "\"Hello\" in the meeting's language.",
@@ -3141,6 +3586,9 @@
           "question",
           "icebreaker",
           "taskCount",
+          "reflections",
+          "reflectionCounts",
+          "writing",
           "seq",
           "createdAt",
           "serverNow"
@@ -3192,6 +3640,17 @@
           "question": {
             "type": "string"
           },
+          "reflectionCounts": {
+            "$ref": "#/components/schemas/ReflectionCountsDto",
+            "description": "Sent reflections per column, everyone's."
+          },
+          "reflections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReflectionDto"
+            },
+            "description": "During Reflect the caller's own reflections; from Group on, everyone's\n(anonymous)."
+          },
           "seq": {
             "type": "integer",
             "format": "int64",
@@ -3215,8 +3674,23 @@
           "teamName": {
             "type": "string"
           },
+          "timer": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timer",
+                "description": "The countdown, if the facilitator set one."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "title": {
             "type": "string"
+          },
+          "writing": {
+            "$ref": "#/components/schemas/WritingDto",
+            "description": "Reflections being written right now, per column."
           }
         }
       },
@@ -3348,7 +3822,8 @@
         "required": [
           "id",
           "displayName",
-          "online"
+          "online",
+          "ready"
         ],
         "properties": {
           "displayName": {
@@ -3368,6 +3843,10 @@
               "null"
             ],
             "description": "Content hash of the uploaded picture; `null` when there is none."
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "Pressed Ready in the current phase."
           },
           "role": {
             "oneOf": [
@@ -3471,6 +3950,81 @@
           }
         }
       },
+      "ReflectionColumn": {
+        "type": "string",
+        "description": "The Reflect columns (spec §9.2).",
+        "enum": [
+          "plus",
+          "delta",
+          "ideas",
+          "thanks"
+        ]
+      },
+      "ReflectionCountsDto": {
+        "type": "object",
+        "description": "Sent reflections per column.",
+        "required": [
+          "plus",
+          "delta",
+          "ideas",
+          "thanks"
+        ],
+        "properties": {
+          "delta": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ideas": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "plus": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "thanks": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ReflectionDto": {
+        "type": "object",
+        "description": "A reflection, as its viewer may see it: never who wrote it.",
+        "required": [
+          "id",
+          "column",
+          "content",
+          "mine",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "column": {
+            "$ref": "#/components/schemas/ReflectionColumn"
+          },
+          "content": {
+            "type": "string",
+            "description": "Sanitized rich text (HTML)."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "mine": {
+            "type": "boolean",
+            "description": "Written by the viewer."
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "RenameMeetingRequest": {
         "type": "object",
         "description": "A new title.",
@@ -3536,6 +4090,18 @@
             "type": "string",
             "format": "uuid",
             "description": "Another participant (transfer), or the caller (team admin take-over)."
+          }
+        }
+      },
+      "SetReadyRequest": {
+        "type": "object",
+        "description": "The caller's ready flag.",
+        "required": [
+          "ready"
+        ],
+        "properties": {
+          "ready": {
+            "type": "boolean"
           }
         }
       },
@@ -3678,6 +4244,136 @@
           }
         }
       },
+      "Timer": {
+        "type": "object",
+        "description": "The timer as stored and as clients see it.",
+        "required": [
+          "status",
+          "durationMs"
+        ],
+        "properties": {
+          "durationMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The duration it was set to, plus the time added since."
+          },
+          "endsAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When a running countdown reaches zero (it may already have)."
+          },
+          "remainingMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Time left on a paused countdown."
+          },
+          "status": {
+            "$ref": "#/components/schemas/TimerStatus"
+          }
+        }
+      },
+      "TimerAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Starts a new countdown (replacing any), 1 s to 99:59.",
+            "required": [
+              "durationSeconds",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "start"
+                ]
+              },
+              "durationSeconds": {
+                "type": "integer",
+                "format": "int64"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "pause"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "resume"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Adds time (1 s to 1 h); a countdown that ran out restarts from now.",
+            "required": [
+              "seconds",
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "add"
+                ]
+              },
+              "seconds": {
+                "type": "integer",
+                "format": "int64"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Removes the timer.",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "stop"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "What the facilitator does with the timer."
+      },
+      "TimerStatus": {
+        "type": "string",
+        "description": "Whether the countdown is running.",
+        "enum": [
+          "running",
+          "paused"
+        ]
+      },
       "UpdateMeRequest": {
         "type": "object",
         "required": [
@@ -3687,6 +4383,30 @@
           "displayName": {
             "type": "string",
             "description": "New display name; trimmed, 1 to 80 characters."
+          }
+        }
+      },
+      "UpdateReflectionRequest": {
+        "type": "object",
+        "description": "Changes to the caller's own reflection.",
+        "properties": {
+          "column": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReflectionColumn",
+                "description": "Moves it to this column."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New rich text (HTML); sanitized by the server."
           }
         }
       },
@@ -3740,6 +4460,30 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "WritingDto": {
+        "type": "object",
+        "description": "Reflections being written, per column (spec §9.2).",
+        "required": [
+          "plus",
+          "delta",
+          "ideas",
+          "thanks"
+        ],
+        "properties": {
+          "delta": {
+            "$ref": "#/components/schemas/ColumnWritingDto"
+          },
+          "ideas": {
+            "$ref": "#/components/schemas/ColumnWritingDto"
+          },
+          "plus": {
+            "$ref": "#/components/schemas/ColumnWritingDto"
+          },
+          "thanks": {
+            "$ref": "#/components/schemas/ColumnWritingDto"
           }
         }
       },

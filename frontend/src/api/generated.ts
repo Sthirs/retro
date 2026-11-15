@@ -25,6 +25,38 @@ export interface AuthConfig {
 }
 
 /**
+ * Reflections being written in a column: new ones, and sent ones being
+ * edited.
+ */
+export interface ColumnWritingDto {
+  /** @minimum 0 */
+  edit: number;
+  /** @minimum 0 */
+  new: number;
+}
+
+/**
+ * The Reflect columns (spec §9.2).
+ */
+export type ReflectionColumn = (typeof ReflectionColumn)[keyof typeof ReflectionColumn];
+
+export const ReflectionColumn = {
+  plus: 'plus',
+  delta: 'delta',
+  ideas: 'ideas',
+  thanks: 'thanks',
+} as const;
+
+/**
+ * A reflection to send.
+ */
+export interface CreateReflectionRequest {
+  column: ReflectionColumn;
+  /** Rich text (HTML); sanitized by the server. */
+  content: string;
+}
+
+/**
  * "Hello" in the meeting's language.
  */
 export interface GreetingDto {
@@ -278,7 +310,33 @@ export interface ParticipantDto {
    * @nullable
    */
   pictureVersion?: string | null;
+  /** Pressed Ready in the current phase. */
+  ready: boolean;
   role?: Role | null;
+}
+
+/**
+ * Sent reflections per column.
+ */
+export interface ReflectionCountsDto {
+  delta: number;
+  ideas: number;
+  plus: number;
+  thanks: number;
+}
+
+/**
+ * A reflection, as its viewer may see it: never who wrote it.
+ */
+export interface ReflectionDto {
+  column: ReflectionColumn;
+  /** Sanitized rich text (HTML). */
+  content: string;
+  createdAt: string;
+  id: string;
+  /** Written by the viewer. */
+  mine: boolean;
+  updatedAt: string;
 }
 
 /**
@@ -290,6 +348,45 @@ export const MeetingStatus = {
   active: 'active',
   ended: 'ended',
 } as const;
+
+/**
+ * Whether the countdown is running.
+ */
+export type TimerStatus = (typeof TimerStatus)[keyof typeof TimerStatus];
+
+export const TimerStatus = {
+  running: 'running',
+  paused: 'paused',
+} as const;
+
+/**
+ * The timer as stored and as clients see it.
+ */
+export interface Timer {
+  /** The duration it was set to, plus the time added since. */
+  durationMs: number;
+  /**
+   * When a running countdown reaches zero (it may already have).
+   * @nullable
+   */
+  endsAt?: string | null;
+  /**
+   * Time left on a paused countdown.
+   * @nullable
+   */
+  remainingMs?: number | null;
+  status: TimerStatus;
+}
+
+/**
+ * Reflections being written, per column (spec §9.2).
+ */
+export interface WritingDto {
+  delta: ColumnWritingDto;
+  ideas: ColumnWritingDto;
+  plus: ColumnWritingDto;
+  thanks: ColumnWritingDto;
+}
 
 /**
  * Everything the meeting room shows (spec §14.3 `GET /meetings/{id}/state`).
@@ -311,6 +408,13 @@ export interface MeetingStateDto {
   participants: ParticipantDto[];
   phase: MeetingPhase;
   question: string;
+  /** Sent reflections per column, everyone's. */
+  reflectionCounts: ReflectionCountsDto;
+  /**
+   * During Reflect the caller's own reflections; from Group on, everyone's
+   * (anonymous).
+   */
+  reflections: ReflectionDto[];
   /** Last event `seq` included in this snapshot on `meeting:{id}`. */
   seq: number;
   serverNow: string;
@@ -318,7 +422,10 @@ export interface MeetingStateDto {
   taskCount: number;
   teamId: string;
   teamName: string;
+  timer?: Timer | null;
   title: string;
+  /** Reflections being written right now, per column. */
+  writing: WritingDto;
 }
 
 /**
@@ -425,6 +532,13 @@ export interface SetFacilitatorRequest {
 }
 
 /**
+ * The caller's ready flag.
+ */
+export interface SetReadyRequest {
+  ready: boolean;
+}
+
+/**
  * A task on the board.
  */
 export interface TaskDto {
@@ -446,9 +560,43 @@ export interface TeamNameRequest {
   name: string;
 }
 
+/**
+ * What the facilitator does with the timer.
+ */
+export type TimerAction =
+  | {
+      action: 'start';
+      durationSeconds: number;
+    }
+  | {
+      action: 'pause';
+    }
+  | {
+      action: 'resume';
+    }
+  | {
+      action: 'add';
+      seconds: number;
+    }
+  | {
+      action: 'stop';
+    };
+
 export interface UpdateMeRequest {
   /** New display name; trimmed, 1 to 80 characters. */
   displayName: string;
+}
+
+/**
+ * Changes to the caller's own reflection.
+ */
+export interface UpdateReflectionRequest {
+  column?: ReflectionColumn | null;
+  /**
+   * New rich text (HTML); sanitized by the server.
+   * @nullable
+   */
+  content?: string | null;
 }
 
 /**
@@ -1658,6 +1806,155 @@ export const nextPhase = async (
   });
 };
 
+export type setReadyResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type setReadyResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type setReadyResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type setReadyResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type setReadyResponseSuccess = setReadyResponse200 & {
+  headers: Headers;
+};
+export type setReadyResponseError = (
+  setReadyResponse403 | setReadyResponse404 | setReadyResponse409
+) & {
+  headers: Headers;
+};
+
+export type setReadyResponse = setReadyResponseSuccess | setReadyResponseError;
+
+export const getSetReadyUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/ready`;
+};
+
+/**
+ * @summary Sets the caller's own ready flag (participants, in Reflect, Group and Vote).
+ */
+export const setReady = async (
+  meetingId: string,
+  setReadyRequest: SetReadyRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<setReadyResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<setReadyResponse>(getSetReadyUrl(meetingId), {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(setReadyRequest),
+  });
+};
+
+export type createReflectionResponse201 = {
+  data: MeetingStateDto;
+  status: 201;
+};
+
+export type createReflectionResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type createReflectionResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type createReflectionResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type createReflectionResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type createReflectionResponseSuccess = createReflectionResponse201 & {
+  headers: Headers;
+};
+export type createReflectionResponseError = (
+  | createReflectionResponse400
+  | createReflectionResponse403
+  | createReflectionResponse404
+  | createReflectionResponse409
+) & {
+  headers: Headers;
+};
+
+export type createReflectionResponse =
+  createReflectionResponseSuccess | createReflectionResponseError;
+
+export const getCreateReflectionUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/reflections`;
+};
+
+/**
+ * @summary Sends a reflection (participants, during Reflect).
+ */
+export const createReflection = async (
+  meetingId: string,
+  createReflectionRequest: CreateReflectionRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<createReflectionResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<createReflectionResponse>(getCreateReflectionUrl(meetingId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createReflectionRequest),
+  });
+};
+
 export type getMeetingStateResponse200 = {
   data: MeetingStateDto;
   status: 200;
@@ -1698,6 +1995,209 @@ export const getMeetingState = async (
   return apiFetch<getMeetingStateResponse>(getGetMeetingStateUrl(meetingId), {
     ...options,
     method: 'GET',
+  });
+};
+
+export type setTimerResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type setTimerResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type setTimerResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type setTimerResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type setTimerResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type setTimerResponseSuccess = setTimerResponse200 & {
+  headers: Headers;
+};
+export type setTimerResponseError = (
+  setTimerResponse400 | setTimerResponse403 | setTimerResponse404 | setTimerResponse409
+) & {
+  headers: Headers;
+};
+
+export type setTimerResponse = setTimerResponseSuccess | setTimerResponseError;
+
+export const getSetTimerUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/timer`;
+};
+
+/**
+ * @summary Sets, pauses, resumes, extends or stops the timer (facilitator, any phase).
+ */
+export const setTimer = async (
+  meetingId: string,
+  timerAction: TimerAction,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<setTimerResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<setTimerResponse>(getSetTimerUrl(meetingId), {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(timerAction),
+  });
+};
+
+export type deleteReflectionResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type deleteReflectionResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type deleteReflectionResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type deleteReflectionResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type deleteReflectionResponseSuccess = deleteReflectionResponse200 & {
+  headers: Headers;
+};
+export type deleteReflectionResponseError = (
+  deleteReflectionResponse403 | deleteReflectionResponse404 | deleteReflectionResponse409
+) & {
+  headers: Headers;
+};
+
+export type deleteReflectionResponse =
+  deleteReflectionResponseSuccess | deleteReflectionResponseError;
+
+export const getDeleteReflectionUrl = (reflectionId: string) => {
+  return `/api/v1/reflections/${reflectionId}`;
+};
+
+/**
+ * @summary Deletes the caller's own reflection (during Reflect).
+ */
+export const deleteReflection = async (
+  reflectionId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<deleteReflectionResponse> => {
+  return apiFetch<deleteReflectionResponse>(getDeleteReflectionUrl(reflectionId), {
+    ...options,
+    method: 'DELETE',
+  });
+};
+
+export type updateReflectionResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type updateReflectionResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type updateReflectionResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type updateReflectionResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type updateReflectionResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type updateReflectionResponseSuccess = updateReflectionResponse200 & {
+  headers: Headers;
+};
+export type updateReflectionResponseError = (
+  | updateReflectionResponse400
+  | updateReflectionResponse403
+  | updateReflectionResponse404
+  | updateReflectionResponse409
+) & {
+  headers: Headers;
+};
+
+export type updateReflectionResponse =
+  updateReflectionResponseSuccess | updateReflectionResponseError;
+
+export const getUpdateReflectionUrl = (reflectionId: string) => {
+  return `/api/v1/reflections/${reflectionId}`;
+};
+
+/**
+ * @summary Edits or moves the caller's own reflection (during Reflect).
+ */
+export const updateReflection = async (
+  reflectionId: string,
+  updateReflectionRequest: UpdateReflectionRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<updateReflectionResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<updateReflectionResponse>(getUpdateReflectionUrl(reflectionId), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(updateReflectionRequest),
   });
 };
 

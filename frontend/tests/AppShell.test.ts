@@ -3,7 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ALICE,
   me,
+  meetingSummary,
   mockFetch,
+  mockSocket,
+  openSocket,
   OTHER_TEAM_ID,
   pendingInvitation,
   renderAt,
@@ -11,6 +14,7 @@ import {
   team,
   TEAM_ID,
   type FakeRoute,
+  wsTicket,
 } from './helpers';
 
 const second = team({ id: OTHER_TEAM_ID, name: 'Mobile Squad', role: 'member' });
@@ -167,5 +171,49 @@ describe('app shell', () => {
     await link.trigger('click');
     await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('account'));
     expect(wrapper.find('#user-menu').isVisible()).toBe(false);
+  });
+});
+
+describe('app shell, live', () => {
+  const channel = `team:${TEAM_ID}`;
+  const MEETINGS = `GET /api/v1/teams/${TEAM_ID}/meetings`;
+  beforeEach(async () => {
+    localStorage.clear();
+    await mockSocket();
+  });
+
+  function live(extra: Record<string, FakeRoute | (() => FakeRoute)> = {}) {
+    return base({
+      'POST /api/v1/ws-ticket': wsTicket(),
+      [MEETINGS]: { status: 200, body: [meetingSummary()] },
+      ...extra,
+    });
+  }
+
+  it('leaves a team whose channel the server ended', async () => {
+    // Removed from the Platform Team: only the other team is left.
+    let teams = [team(), second];
+    mockFetch(live({ 'GET /api/v1/me': () => me(teams) }));
+    const { wrapper, router } = await renderAt(`/teams/${TEAM_ID}/tasks`);
+    const socket = await openSocket();
+    expect(socket.channels).toContain(channel);
+
+    teams = [second];
+    socket.emit({ type: 'error', channel, payload: { code: 'team_not_found' } });
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.fullPath).toBe(`/teams/${OTHER_TEAM_ID}/meetings`),
+    );
+    expect(wrapper.find('[data-testid="team-selector"]').text()).toContain('Mobile Squad');
+  });
+
+  it('goes to onboarding when the last team is gone', async () => {
+    let teams = [team()];
+    mockFetch(live({ 'GET /api/v1/me': () => me(teams) }));
+    const { router } = await renderAt(`/teams/${TEAM_ID}/meetings`);
+    const socket = await openSocket();
+
+    teams = [];
+    socket.emit({ type: 'error', channel, payload: { code: 'team_not_found' } });
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('home'));
   });
 });

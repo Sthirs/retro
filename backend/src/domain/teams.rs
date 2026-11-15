@@ -22,6 +22,7 @@ use crate::{
         user,
     },
     error::AppError,
+    ws,
 };
 
 /// Longest team name, in characters.
@@ -235,6 +236,7 @@ pub async fn delete(
 ) -> Result<(), AppError> {
     let txn = db.begin().await?;
     lock_team_as_admin(&txn, team_id, actor).await?;
+    team_deleted(&txn, team_id).await?;
     team::Entity::delete_by_id(team_id).exec(&txn).await?;
     txn.commit().await?;
     Ok(())
@@ -375,6 +377,7 @@ pub async fn remove_member(
     match removal_outcome(member.role == Role::Admin, admins, rows.len()) {
         Removal::LastAdmin => return Err(AppError::Conflict("last_admin")),
         Removal::DeletesTeam => {
+            team_deleted(&txn, team_id).await?;
             team::Entity::delete_by_id(team_id).exec(&txn).await?;
         }
         Removal::Allowed => {
@@ -396,9 +399,26 @@ pub async fn remove_member(
             )
             .await?;
             crate::domain::meetings::rotate_invite_tokens(&txn, team_id).await?;
+            // Ends the former member's live subscriptions to the team and its
+            // meetings on every replica (spec §11.1, ADR-0011).
+            ws::publish_team(
+                &txn,
+                team_id,
+                "member.removed",
+                serde_json::json!({ "userId": target }),
+            )
+            .await?;
         }
     }
     txn.commit().await?;
+    Ok(())
+}
+
+/// Tells the team channel the team is going away, which ends every live
+/// subscription to it and its meetings (spec §11.1). Call it before the delete,
+/// in the same transaction.
+async fn team_deleted(txn: &impl ConnectionTrait, team_id: Uuid) -> Result<(), AppError> {
+    ws::publish_team(txn, team_id, "team.deleted", serde_json::json!({})).await?;
     Ok(())
 }
 

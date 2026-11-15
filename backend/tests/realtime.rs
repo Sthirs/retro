@@ -3,7 +3,7 @@
 
 mod common;
 
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use common::TestApp;
 use futures_util::{SinkExt, StreamExt};
@@ -405,4 +405,256 @@ async fn people_in_the_room_are_present_before_their_join_lands() {
         .unwrap()
         .clone();
     assert_eq!(bob_entry["online"], true);
+}
+
+// --- Losing access (spec §11.1) --------------------------------------------
+
+async fn start_meeting(app: &TestApp, token: &str, team: Uuid) -> String {
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/teams/{team}/meetings"),
+            token,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    res.json()["id"].as_str().unwrap().to_owned()
+}
+
+async fn remove(app: &TestApp, token: &str, team: Uuid, user: &str) {
+    let res = app
+        .call(
+            "DELETE",
+            &format!("/api/v1/teams/{team}/members/{user}"),
+            token,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 204, "{}", res.text());
+}
+
+async fn rename(app: &TestApp, token: &str, meeting: &str, title: &str) {
+    let res = app
+        .call(
+            "PATCH",
+            &format!("/api/v1/meetings/{meeting}"),
+            token,
+            Some(json!({ "title": title })),
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+}
+
+async fn create_task(app: &TestApp, token: &str, team: Uuid) -> Value {
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/dev/teams/{team}/tasks"),
+            token,
+            Some(json!({ "status": "future", "content": "<p>Later</p>" })),
+        )
+        .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    res.json()
+}
+
+/// Reads until an `error` arrived on each of `channels`, and returns them.
+async fn errors_on(socket: &mut Socket, channels: &[&str]) -> HashMap<String, Value> {
+    let mut errors = HashMap::new();
+    while errors.len() < channels.len() {
+        let message = next(socket).await;
+        if message["type"] == "error" {
+            let channel = message["channel"].as_str().unwrap().to_owned();
+            assert!(channels.contains(&channel.as_str()), "{message}");
+            errors.insert(channel, message);
+        }
+    }
+    errors
+}
+
+/// Fails if a message arrives within `wait`.
+async fn assert_silent(socket: &mut Socket, wait: Duration) {
+    let message = tokio::time::timeout(wait, async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Text(text))) => return Some(text.to_string()),
+                Some(Ok(_)) => continue,
+                _ => return None,
+            }
+        }
+    })
+    .await;
+    if let Ok(Some(text)) = message {
+        panic!("unexpected message: {text}");
+    }
+}
+
+fn revoked(channel: &str) -> Value {
+    json!({
+        "type": "error",
+        "channel": channel,
+        "seq": null,
+        "payload": { "code": "team_not_found" },
+    })
+}
+
+/// alice (admin) and bob in a team, with a meeting alice runs and bob joined.
+async fn team_with_meeting(app: &TestApp) -> (String, String, String, Uuid, String) {
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let bob_id = user_id(app, &bob).await;
+    let team = create_team(app, &alice, "Platform").await;
+    join_team(app, &alice, team, &bob).await;
+    let m = start_meeting(app, &alice, team).await;
+    let res = app
+        .call("POST", &format!("/api/v1/meetings/{m}/join"), &bob, None)
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    (alice, bob, bob_id, team, m)
+}
+
+async fn online_ids(app: &TestApp, token: &str, meeting: &str) -> Vec<Value> {
+    app.call(
+        "GET",
+        &format!("/api/v1/meetings/{meeting}/state"),
+        token,
+        None,
+    )
+    .await
+    .json()["onlineIds"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+#[tokio::test]
+async fn a_removed_member_loses_the_team_and_meeting_channels() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, bob_id, team, m) = team_with_meeting(&app).await;
+    let (team_channel, meeting_channel) = (format!("team:{team}"), format!("meeting:{m}"));
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &team_channel).await;
+    subscribe(&mut bob_socket, &meeting_channel).await;
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &team_channel).await;
+    subscribe(&mut alice_socket, &meeting_channel).await;
+    assert!(online_ids(&app, &alice, &m).await.contains(&json!(bob_id)));
+
+    remove(&app, &alice, team, &bob_id).await;
+
+    let errors = errors_on(&mut bob_socket, &[&team_channel, &meeting_channel]).await;
+    assert_eq!(errors[&team_channel], revoked(&team_channel));
+    assert_eq!(errors[&meeting_channel], revoked(&meeting_channel));
+    // The others hear about it, and bob is no longer in the room.
+    let removed = next_of(&mut alice_socket, "member.removed").await;
+    assert_eq!(removed["channel"], team_channel);
+    assert_eq!(removed["payload"]["userId"], bob_id);
+    let offline = loop {
+        let event = next_of(&mut alice_socket, "presence.changed").await;
+        if event["payload"]["userId"] == bob_id {
+            break event;
+        }
+    };
+    assert_eq!(offline["payload"]["online"], false);
+    assert!(!online_ids(&app, &alice, &m).await.contains(&json!(bob_id)));
+
+    // Later events reach the members only.
+    rename(&app, &alice, &m, "After bob").await;
+    create_task(&app, &alice, team).await;
+    next_of(&mut alice_socket, "meeting.renamed").await;
+    next_of(&mut alice_socket, "task.created").await;
+    assert_silent(&mut bob_socket, Duration::from_millis(500)).await;
+
+    // Subscribing again is refused, as for any non-member.
+    let reply = subscribe(&mut bob_socket, &meeting_channel).await;
+    assert_eq!(reply["payload"]["code"], "meeting_not_found");
+}
+
+#[tokio::test]
+async fn a_member_who_leaves_loses_the_channels() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, bob_id, team, m) = team_with_meeting(&app).await;
+    let (team_channel, meeting_channel) = (format!("team:{team}"), format!("meeting:{m}"));
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &team_channel).await;
+    subscribe(&mut bob_socket, &meeting_channel).await;
+
+    remove(&app, &bob, team, &bob_id).await;
+
+    errors_on(&mut bob_socket, &[&team_channel, &meeting_channel]).await;
+    rename(&app, &alice, &m, "Without bob").await;
+    assert_silent(&mut bob_socket, Duration::from_millis(500)).await;
+}
+
+#[tokio::test]
+async fn deleting_a_team_ends_everyones_subscriptions() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, team, m) = team_with_meeting(&app).await;
+    let (team_channel, meeting_channel) = (format!("team:{team}"), format!("meeting:{m}"));
+    let mut sockets = Vec::new();
+    for token in [&alice, &bob] {
+        let mut socket = connect(&addr, &ticket(&app, token).await).await;
+        subscribe(&mut socket, &team_channel).await;
+        subscribe(&mut socket, &meeting_channel).await;
+        sockets.push(socket);
+    }
+
+    let res = app
+        .call("DELETE", &format!("/api/v1/teams/{team}"), &alice, None)
+        .await;
+    assert_eq!(res.status, 204, "{}", res.text());
+
+    for socket in &mut sockets {
+        let errors = errors_on(socket, &[&team_channel, &meeting_channel]).await;
+        assert_eq!(errors[&team_channel], revoked(&team_channel));
+        assert_eq!(errors[&meeting_channel], revoked(&meeting_channel));
+        assert_silent(socket, Duration::from_millis(300)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_removal_keeps_the_other_teams_channels() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let bob_id = user_id(&app, &bob).await;
+    let left = create_team(&app, &alice, "Left").await;
+    let kept = create_team(&app, &alice, "Kept").await;
+    join_team(&app, &alice, left, &bob).await;
+    join_team(&app, &alice, kept, &bob).await;
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &format!("team:{left}")).await;
+    subscribe(&mut bob_socket, &format!("team:{kept}")).await;
+
+    remove(&app, &alice, left, &bob_id).await;
+
+    errors_on(&mut bob_socket, &[&format!("team:{left}")]).await;
+    let task = create_task(&app, &alice, kept).await;
+    let created = next_of(&mut bob_socket, "task.created").await;
+    assert_eq!(created["channel"], format!("team:{kept}"));
+    assert_eq!(created["payload"]["taskId"], task["id"]);
+}
+
+#[tokio::test]
+async fn a_member_added_back_can_subscribe_again() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, bob_id, team, _) = team_with_meeting(&app).await;
+    let channel = format!("team:{team}");
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+    remove(&app, &alice, team, &bob_id).await;
+    errors_on(&mut bob_socket, &[&channel]).await;
+
+    join_team(&app, &alice, team, &bob).await;
+    let reply = subscribe(&mut bob_socket, &channel).await;
+    assert_eq!(reply["type"], "subscribed");
+    let task = create_task(&app, &alice, team).await;
+    let created = next_of(&mut bob_socket, "task.created").await;
+    assert_eq!(created["payload"]["taskId"], task["id"]);
 }

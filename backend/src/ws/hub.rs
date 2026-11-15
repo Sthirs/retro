@@ -19,6 +19,53 @@ use super::{Channel, Notification, PG_CHANNEL, notify};
 const CHANNEL_CAPACITY: usize = 256;
 const PRESENCE_CHANGED: &str = "presence.changed";
 const PRESENCE_SYNC: &str = "presence.sync";
+const MEMBER_REMOVED: &str = "member.removed";
+const TEAM_DELETED: &str = "team.deleted";
+/// Access changes buffered per socket; one that lags re-checks everything.
+const ACCESS_CAPACITY: usize = 64;
+
+/// A change in who may follow a team's channels, for every local socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessChange {
+    /// `user` (everyone when `None`: the team was deleted) lost access to the
+    /// team's channel and its meetings' channels.
+    Revoked { team: Uuid, user: Option<Uuid> },
+    /// Changes may have been missed (the listener reconnected): every socket
+    /// re-checks its subscriptions.
+    Unknown,
+}
+
+impl AccessChange {
+    /// The access change a team event means, if any.
+    fn from_event(notification: &Notification) -> Option<Self> {
+        let Ok(Channel::Team(team)) = notification.channel.parse::<Channel>() else {
+            return None;
+        };
+        match notification.kind.as_str() {
+            MEMBER_REMOVED => {
+                let user = notification
+                    .payload
+                    .get("userId")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.parse::<Uuid>().ok())?;
+                Some(Self::Revoked {
+                    team,
+                    user: Some(user),
+                })
+            }
+            TEAM_DELETED => Some(Self::Revoked { team, user: None }),
+            _ => None,
+        }
+    }
+
+    /// Whether this change ends `user`'s subscription to a channel of `team`.
+    pub fn revokes(&self, team: Uuid, user: Uuid) -> bool {
+        match *self {
+            Self::Revoked { team: t, user: who } => t == team && who.is_none_or(|w| w == user),
+            Self::Unknown => false,
+        }
+    }
+}
 
 /// Who is online in which meeting, as this replica sees the cluster.
 #[derive(Default)]
@@ -34,6 +81,7 @@ pub struct Hub {
     db: DatabaseConnection,
     channels: Mutex<HashMap<String, broadcast::Sender<Arc<str>>>>,
     presence: Mutex<Presence>,
+    access: broadcast::Sender<AccessChange>,
     ready: watch::Sender<bool>,
 }
 
@@ -44,6 +92,7 @@ impl Hub {
             db,
             channels: Mutex::default(),
             presence: Mutex::default(),
+            access: broadcast::channel(ACCESS_CAPACITY).0,
             ready: watch::Sender::new(false),
         })
     }
@@ -68,6 +117,12 @@ impl Hub {
             .entry(channel.to_owned())
             .or_insert_with(|| broadcast::channel(CHANNEL_CAPACITY).0)
             .subscribe()
+    }
+
+    /// Access changes, for a socket to end the subscriptions it lost. Take it
+    /// before authorising any subscription, so none is missed.
+    pub fn access_changes(&self) -> broadcast::Receiver<AccessChange> {
+        self.access.subscribe()
     }
 
     /// The users online in a meeting, on any replica.
@@ -178,8 +233,10 @@ impl Hub {
     }
 
     /// After (re)connecting: forget the other replicas' presence and ask them
-    /// for it again, and tell local clients they may have missed events.
+    /// for it again, tell local clients they may have missed events, and have
+    /// local sockets re-check their access (a removal may have been missed).
     async fn on_connected(&self) {
+        let _ = self.access.send(AccessChange::Unknown);
         {
             let mut presence = self.presence.lock().expect("hub presence");
             let replica = self.replica;
@@ -223,7 +280,14 @@ impl Hub {
         match notification.kind.as_str() {
             PRESENCE_SYNC => self.announce_local().await,
             PRESENCE_CHANGED => self.presence_changed(&notification),
-            _ => self.send(&notification),
+            _ => {
+                // The event first (the remaining members see it), then the
+                // revocation: sockets handle it before any later event.
+                self.send(&notification);
+                if let Some(change) = AccessChange::from_event(&notification) {
+                    let _ = self.access.send(change);
+                }
+            }
         }
     }
 
@@ -292,5 +356,73 @@ impl Hub {
         if let Ok(text) = serde_json::to_string(notification) {
             let _ = sender.send(Arc::from(text));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(channel: &str, kind: &str, payload: serde_json::Value) -> Notification {
+        Notification {
+            channel: channel.to_owned(),
+            kind: kind.to_owned(),
+            seq: Some(1),
+            payload,
+        }
+    }
+
+    #[test]
+    fn a_removal_revokes_that_member_only() {
+        let (team, kai, jade) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let change = AccessChange::from_event(&event(
+            &format!("team:{team}"),
+            MEMBER_REMOVED,
+            json!({ "userId": kai }),
+        ))
+        .unwrap();
+        assert_eq!(
+            change,
+            AccessChange::Revoked {
+                team,
+                user: Some(kai)
+            }
+        );
+        assert!(change.revokes(team, kai));
+        assert!(!change.revokes(team, jade));
+        assert!(!change.revokes(Uuid::now_v7(), kai));
+    }
+
+    #[test]
+    fn a_deleted_team_revokes_everyone_in_it() {
+        let team = Uuid::now_v7();
+        let change =
+            AccessChange::from_event(&event(&format!("team:{team}"), TEAM_DELETED, json!({})))
+                .unwrap();
+        assert!(change.revokes(team, Uuid::now_v7()));
+        assert!(!change.revokes(Uuid::now_v7(), Uuid::now_v7()));
+    }
+
+    #[test]
+    fn other_events_change_no_access() {
+        let team = Uuid::now_v7();
+        let channel = format!("team:{team}");
+        assert_eq!(
+            AccessChange::from_event(&event(&channel, "task.created", json!({}))),
+            None
+        );
+        // Removals only count on a team channel, with a valid user.
+        let meeting = format!("meeting:{team}");
+        let kai = json!({ "userId": Uuid::now_v7() });
+        assert_eq!(
+            AccessChange::from_event(&event(&meeting, MEMBER_REMOVED, kai)),
+            None
+        );
+        let bad = json!({ "userId": "nope" });
+        assert_eq!(
+            AccessChange::from_event(&event(&channel, MEMBER_REMOVED, bad)),
+            None
+        );
+        assert!(!AccessChange::Unknown.revokes(team, Uuid::now_v7()));
     }
 }

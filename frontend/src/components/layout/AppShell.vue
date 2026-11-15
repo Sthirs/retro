@@ -6,7 +6,7 @@
  */
 import { computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { RouterLink, RouterView, useRoute } from 'vue-router';
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 
 import AppIcon from '@/components/AppIcon.vue';
 import type { IconName } from '@/components/icons';
@@ -21,6 +21,7 @@ import { useTeamsStore } from '@/stores/teams';
 
 const { t } = useI18n();
 const route = useRoute();
+const router = useRouter();
 const teams = useTeamsStore();
 const teamId = computed(() => {
   const param = route.params.teamId;
@@ -46,9 +47,22 @@ watch(
   },
   { immediate: true },
 );
+/**
+ * The server ended the team channel: the user was removed, left in another
+ * tab, or the team was deleted (spec §11.1). Their teams are reloaded, and a
+ * page of that team goes home, which opens another team or onboarding.
+ */
+async function leaveTeam(id: string): Promise<void> {
+  await teams.load().catch(() => undefined);
+  if (route.params.teamId === id) await router.replace({ name: 'home' });
+}
 useChannel(
   () => (teamId.value ? `team:${teamId.value}` : null),
   (event) => {
+    if (event.type === 'error') {
+      void leaveTeam(event.channel.slice('team:'.length));
+      return;
+    }
     if (event.type.startsWith('meeting.') || event.type === 'resync') meetings.reloadSoon();
   },
 );

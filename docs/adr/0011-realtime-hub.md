@@ -37,7 +37,7 @@ We will build the hub as follows:
   `(team, user | all)` on an in-process broadcast that every socket listens to from the moment
   it opens (so a subscription authorised concurrently is still revoked). A socket ends its
   subscriptions to that team's channels, including its meetings', leaves their presence, and
-  sends an `error` on each (`team_not_found` / `meeting_not_found`). A socket that lags on the
+  sends an `error` with `team_not_found` on each. A socket that lags on the
   revocation broadcast re-checks every subscription against the database.
 - **Fan-out.** State-changing requests call `pg_notify('retro_events', …)` inside the same
   transaction as the write, so an event exists only if the write committed. Each replica keeps

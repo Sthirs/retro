@@ -1,6 +1,6 @@
 //! One client's WebSocket: subscriptions, forwarding and keep-alive.
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use axum::{
     extract::{
@@ -13,10 +13,13 @@ use futures_util::{SinkExt, StreamExt};
 use sea_orm::EntityTrait;
 use serde::Deserialize;
 use serde_json::json;
-use tokio::{sync::broadcast::error::RecvError, sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::{broadcast, broadcast::error::RecvError, mpsc},
+    task::JoinHandle,
+};
 use uuid::Uuid;
 
-use super::{Channel, ticket};
+use super::{AccessChange, Channel, ticket};
 use crate::{
     domain::teams,
     entities::meeting::{self, MeetingStatus},
@@ -26,6 +29,9 @@ use crate::{
 
 const PING_EVERY: Duration = Duration::from_secs(25);
 const MAX_SUBSCRIPTIONS: usize = 32;
+/// The code sent on each channel of a team the user lost access to: the team
+/// is gone or they are no longer a member.
+const REVOKED: &str = "team_not_found";
 
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
@@ -41,9 +47,15 @@ enum Command {
 
 struct Subscription {
     forward: JoinHandle<()>,
+    /// The team the channel belongs to (a meeting's team for `meeting:`).
+    team: Uuid,
     /// Set for a meeting the user participates in: (meeting, team).
     presence: Option<(Uuid, Uuid)>,
 }
+
+/// A channel's message on its way to the socket, tagged with its channel so
+/// messages of a subscription that has just ended are dropped.
+type Outgoing = (Arc<str>, Message);
 
 /// `GET /api/v1/ws?ticket=…`: opens the real-time socket (ADR-0011). Not in
 /// the OpenAPI document: it is not a REST endpoint.
@@ -62,13 +74,42 @@ pub async fn ws_handler(
 
 async fn serve(socket: WebSocket, state: AppState, user_id: Uuid) {
     let (mut sink, mut stream) = socket.split();
-    let (out, mut outgoing) = mpsc::channel::<Message>(256);
+    let (out, mut outgoing) = mpsc::channel::<Outgoing>(256);
+    // Taken before any subscription is authorised: a removal that commits
+    // while one is being authorised still ends it.
+    let mut access = state.hub.access_changes();
     let mut subscriptions: HashMap<String, Subscription> = HashMap::new();
     let mut ping = tokio::time::interval(PING_EVERY);
     ping.tick().await;
 
     loop {
         tokio::select! {
+            // Access changes first: the hub sends a revocation before any
+            // later event of the channel, so with this order no event after a
+            // removal reaches the former member.
+            biased;
+            change = access.recv() => {
+                let lost = match change {
+                    // Changes may have been missed: ask the database. If it
+                    // is unreachable, the listener's reconnect asks again.
+                    Ok(AccessChange::Unknown) | Err(RecvError::Lagged(_)) => {
+                        lost_on_recheck(&state, user_id, &subscriptions).await.unwrap_or_default()
+                    }
+                    Ok(change) => lost_to(&change, user_id, &subscriptions),
+                    Err(RecvError::Closed) => break,
+                };
+                let mut closed = false;
+                for name in lost {
+                    let Some(subscription) = subscriptions.remove(&name) else { continue };
+                    end(&state, user_id, subscription).await;
+                    if sink.send(text_message(error_message(&name, REVOKED))).await.is_err() {
+                        closed = true;
+                    }
+                }
+                if closed {
+                    break;
+                }
+            }
             incoming = stream.next() => match incoming {
                 Some(Ok(Message::Text(text))) => {
                     let reply = command(&state, user_id, &text, &out, &mut subscriptions).await;
@@ -79,7 +120,10 @@ async fn serve(socket: WebSocket, state: AppState, user_id: Uuid) {
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(_)) => {}
             },
-            Some(message) = outgoing.recv() => {
+            Some((channel, message)) = outgoing.recv() => {
+                if !subscriptions.contains_key(channel.as_ref()) {
+                    continue;
+                }
                 if sink.send(message).await.is_err() {
                     break;
                 }
@@ -95,6 +139,40 @@ async fn serve(socket: WebSocket, state: AppState, user_id: Uuid) {
     for (_, subscription) in subscriptions {
         end(&state, user_id, subscription).await;
     }
+}
+
+/// The subscriptions `change` ends for `user_id`.
+fn lost_to(
+    change: &AccessChange,
+    user_id: Uuid,
+    subscriptions: &HashMap<String, Subscription>,
+) -> Vec<String> {
+    subscriptions
+        .iter()
+        .filter(|(_, s)| change.revokes(s.team, user_id))
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// The subscriptions the user may no longer have, checked against the
+/// database (after missed access changes).
+async fn lost_on_recheck(
+    state: &AppState,
+    user_id: Uuid,
+    subscriptions: &HashMap<String, Subscription>,
+) -> Result<Vec<String>, AppError> {
+    let mut lost = Vec::new();
+    for name in subscriptions.keys() {
+        let Ok(channel) = name.parse::<Channel>() else {
+            continue;
+        };
+        match authorize(state, user_id, channel).await {
+            Ok(_) => {}
+            Err(AppError::NotFound(_)) => lost.push(name.clone()),
+            Err(other) => return Err(other),
+        }
+    }
+    Ok(lost)
 }
 
 /// An error about a channel, in the shape of every message (spec §11.1).
@@ -118,7 +196,7 @@ async fn command(
     state: &AppState,
     user_id: Uuid,
     text: &str,
-    out: &mpsc::Sender<Message>,
+    out: &mpsc::Sender<Outgoing>,
     subscriptions: &mut HashMap<String, Subscription>,
 ) -> serde_json::Value {
     let error = error_message;
@@ -142,35 +220,43 @@ async fn command(
             let Ok(channel) = name.parse::<Channel>() else {
                 return error(&name, "invalid_channel");
             };
-            let presence = match authorize(state, user_id, channel).await {
-                Ok(presence) => presence,
+            let (team, presence) = match authorize(state, user_id, channel).await {
+                Ok(access) => access,
                 Err(AppError::NotFound(code)) => return error(&name, code),
                 Err(_) => return error(&name, "internal"),
             };
             // Subscribe before acknowledging, so no event after the ack is lost.
             let receiver = state.hub.subscribe(&name);
-            let forward = tokio::spawn(forward(receiver, out.clone(), name.clone()));
+            let forward = tokio::spawn(forward(receiver, out.clone(), Arc::from(name.as_str())));
             if let Some((meeting, team)) = presence {
                 state.hub.enter(meeting, team, user_id).await;
             }
-            subscriptions.insert(name.clone(), Subscription { forward, presence });
+            subscriptions.insert(
+                name.clone(),
+                Subscription {
+                    forward,
+                    team,
+                    presence,
+                },
+            );
             json!({ "type": "subscribed", "channel": name })
         }
     }
 }
 
-/// Team members only. Subscribing to a running meeting's channel means being
-/// in its room, so it also marks the member as present (the room joins the
-/// meeting right after; presence does not wait for that).
+/// Team members only; returns the channel's team. Subscribing to a running
+/// meeting's channel means being in its room, so it also marks the member as
+/// present (the room joins the meeting right after; presence does not wait
+/// for that).
 async fn authorize(
     state: &AppState,
     user_id: Uuid,
     channel: Channel,
-) -> Result<Option<(Uuid, Uuid)>, AppError> {
+) -> Result<(Uuid, Option<(Uuid, Uuid)>), AppError> {
     match channel {
         Channel::Team(team_id) => {
             teams::require_member(&state.db, team_id, user_id).await?;
-            Ok(None)
+            Ok((team_id, None))
         }
         Channel::Meeting(meeting_id) => {
             let meeting = meeting::Entity::find_by_id(meeting_id)
@@ -183,7 +269,9 @@ async fn authorize(
                     AppError::NotFound(_) => AppError::NotFound("meeting_not_found"),
                     other => other,
                 })?;
-            Ok((meeting.status == MeetingStatus::Active).then_some((meeting_id, meeting.team_id)))
+            let presence =
+                (meeting.status == MeetingStatus::Active).then_some((meeting_id, meeting.team_id));
+            Ok((meeting.team_id, presence))
         }
     }
 }
@@ -191,19 +279,19 @@ async fn authorize(
 /// Copies a channel's messages to the socket. A socket too slow to keep up is
 /// told to resync instead of silently missing events.
 async fn forward(
-    mut receiver: tokio::sync::broadcast::Receiver<std::sync::Arc<str>>,
-    out: mpsc::Sender<Message>,
-    channel: String,
+    mut receiver: broadcast::Receiver<Arc<str>>,
+    out: mpsc::Sender<Outgoing>,
+    channel: Arc<str>,
 ) {
     loop {
         let message = match receiver.recv().await {
             Ok(text) => Message::Text(Utf8Bytes::from(text.as_ref())),
             Err(RecvError::Lagged(_)) => text_message(
-                json!({ "type": "resync", "channel": channel, "seq": null, "payload": {} }),
+                json!({ "type": "resync", "channel": channel.as_ref(), "seq": null, "payload": {} }),
             ),
             Err(RecvError::Closed) => break,
         };
-        if out.send(message).await.is_err() {
+        if out.send((Arc::clone(&channel), message)).await.is_err() {
             break;
         }
     }

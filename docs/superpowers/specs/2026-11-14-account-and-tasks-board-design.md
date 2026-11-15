@@ -44,7 +44,7 @@ Design reference: canvas artboards `Account-L/-D` and `Tasks-L/-D` (local copy i
 
 ## Approaches considered
 
-**Tasks scope**
+### Tasks scope
 
 1. *Board and backend without creation (picked).* Build the real tables and endpoints now. The
    board is fed by Discuss later, and tests seed tasks directly.
@@ -55,7 +55,7 @@ Design reference: canvas artboards `Account-L/-D` and `Tasks-L/-D` (local copy i
 **Task editing.** The Tiptap editor is built now (picked) because Reflect and Discuss need it
 anyway. The alternative was to defer Edit.
 
-**Provider pictures**
+### Provider pictures
 
 - Copy them into Retro: keeps the CSP, but the server makes outbound fetches.
 - Allow `https:` in the CSP: weakens it and lets the provider track views.

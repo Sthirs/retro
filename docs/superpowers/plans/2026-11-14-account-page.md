@@ -65,6 +65,7 @@ Vitest, Playwright.
 ## File map
 
 Backend:
+
 - `backend/migration/src/m20261114_000001_account.rs` (new) and `lib.rs`: the schema.
 - `backend/src/entities/user.rs` (+2 fields) and `entities/user_picture.rs` (new).
 - `backend/src/domain/users.rs`: display name rules and the SSO sync tweak.
@@ -75,6 +76,7 @@ Backend:
 - `backend/tests/account.rs` (new) and `tests/sso_linking.rs`: tests.
 
 Frontend:
+
 - `src/lib/images.ts` (new): authenticated blob cache.
 - `src/components/UserAvatar.vue`: picture support.
 - `src/composables/usePendingInvitations.ts` (new): shared by `UserMenu` and the account page.
@@ -123,18 +125,21 @@ Frontend:
 ### Task 2: Schema and entities
 
 **Files:**
+
 - Create `backend/migration/src/m20261114_000001_account.rs` and `backend/src/entities/user_picture.rs`.
 - Modify `backend/migration/src/lib.rs`, `backend/src/entities/{mod.rs,user.rs}`,
   `backend/tests/common/mod.rs` (`create_user`) and `backend/src/seed.rs`, so that ActiveModel
   inserts compile.
 
 **Interfaces:**
+
 - Produces `user::Model.display_name_custom: bool` and `user::Model.picture_version: Option<String>`.
 - Produces `user_picture::Model { user_id: Uuid, content_type: String, size_bytes: i32, sha256: String, data: Vec<u8>, created_at }`.
 
 - [ ] **Step 1:** Write the migration in the raw-SQL style of
   `m20261113_000002_open_invitation_unique.rs`:
   - UP:
+
     ```sql
     ALTER TABLE users ADD COLUMN display_name_custom BOOLEAN NOT NULL DEFAULT false,
                       ADD COLUMN picture_version TEXT NULL;
@@ -143,6 +148,7 @@ Frontend:
       content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL,
       data BYTEA NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
     ```
+
   - DOWN: the reverse.
   - Register it last in `Migrator::migrations()`.
 - [ ] **Step 2:** Add the entity fields, and set them (`false`/`None`) wherever a
@@ -154,11 +160,13 @@ Frontend:
 ### Task 3: Editable display name
 
 **Files:**
+
 - Modify `backend/src/domain/users.rs`, `backend/src/api/me.rs`, `backend/src/app.rs` and
   `backend/src/openapi.rs`.
 - Test: create `backend/tests/account.rs` and modify `backend/tests/sso_linking.rs`.
 
 **Interfaces:**
+
 - Produces `pub const DISPLAY_NAME_MAX: usize = 80`.
 - Produces `pub fn validate_display_name(raw: &str) -> Result<String, AppError>`.
 - Produces `pub async fn update_display_name(db: &impl ConnectionTrait, user: user::Model, raw: &str) -> Result<user::Model, AppError>`.
@@ -187,12 +195,14 @@ Frontend:
 ### Task 4: Picture upload, removal and download
 
 **Files:**
+
 - Create `backend/src/domain/pictures.rs` (unit tests inside).
 - Modify `backend/src/domain/mod.rs`, `backend/src/api/{me.rs,mod.rs}`, `backend/src/app.rs`,
   `backend/src/openapi.rs` and `backend/src/error.rs` (new variants, 413/415).
 - Test: `backend/tests/account.rs`.
 
 **Interfaces:**
+
 - Produces `pub const PICTURE_MAX_BYTES: usize = 5 * 1024 * 1024`.
 - Produces `pub fn sniff_image_type(bytes: &[u8]) -> Option<&'static str>`, which returns
   `image/png | image/jpeg | image/gif | image/webp`.
@@ -260,11 +270,13 @@ Frontend:
 ### Task 5: Account details on `/me`, then regenerate the client
 
 **Files:**
+
 - Modify `backend/src/api/me.rs` and `backend/tests/account.rs`.
 - Regenerate `frontend/openapi.json` and `frontend/src/api/generated.ts`.
 - Modify `frontend/src/api/client.ts` to export the new types.
 
 **Interfaces:**
+
 - Produces `MeResponse` with `member_since: OffsetDateTime` (rfc3339) and `sign_in_method:
   SignInMethod`, where `#[serde(rename_all="lowercase")] enum SignInMethod { Password, Sso }`.
   It is `sso` when the user has a `user_identities` row, else `password`.
@@ -283,6 +295,7 @@ Frontend:
 ### Task 6: Pictures in avatars
 
 **Files:**
+
 - Create `frontend/src/lib/images.ts`.
 - Modify `frontend/src/components/UserAvatar.vue` and every `<UserAvatar>` caller that has a
   `UserDto` or `PersonDto` (pass `:picture-version`).
@@ -292,6 +305,7 @@ Frontend:
 - Test: create `frontend/tests/avatar.test.ts`.
 
 **Interfaces:**
+
 - Produces `loadImage(url: string): Promise<string>`, which resolves to a `blob:` URL. It is
   cached per URL for the session, fetched with `authFetch` from `@/api/fetcher`, and rejects on
   a non-200 response.
@@ -317,11 +331,13 @@ Frontend:
 ### Task 7: `/account` route, shell without a team param, user menu link
 
 **Files:**
+
 - Modify `frontend/src/router/index.ts`, `frontend/src/components/layout/AppShell.vue`,
   `frontend/src/components/layout/UserMenu.vue` and `frontend/src/i18n/en.ts`.
 - Test: `frontend/tests/router.test.ts` and `frontend/tests/AppShell.test.ts`.
 
 **Interfaces:**
+
 - Produces the route `{ path: '/account', component: AppShell, meta: { requiresAuth: true },
   children: [{ path: '', name: 'account', component: AccountView }] }`. `AccountView` is a
   stub `<h1>` until Task 8.
@@ -344,11 +360,13 @@ Frontend:
 ### Task 8: Account page — Profile section
 
 **Files:**
+
 - Create `frontend/src/features/account/{AccountView.vue,AccountPanel.vue,ProfileSection.vue}`.
 - Modify `frontend/src/stores/session.ts` and `frontend/src/i18n/en.ts` (`account.*`).
 - Test: create `frontend/tests/AccountView.test.ts`.
 
 **Interfaces:**
+
 - Produces the session store method `setUser(user: User): void`.
 - Produces `AccountView`, which loads `GET /me` itself for `memberSince` and `signInMethod`
   through `api.me()`. The teams store keeps its own copy, and the page reads teams and
@@ -396,6 +414,7 @@ Frontend:
 ### Task 9: Teams and invitations sections
 
 **Files:**
+
 - Create `frontend/src/composables/{usePendingInvitations.ts,useLeaveTeam.ts}` and
   `frontend/src/features/account/{TeamsSection.vue,InvitationsSection.vue}`.
 - Modify `frontend/src/components/layout/UserMenu.vue` and
@@ -405,6 +424,7 @@ Frontend:
   `TeamSettingsView.test.ts` must stay green.
 
 **Interfaces:**
+
 - Produces `usePendingInvitations()`, returning `{ invitations: ComputedRef<PendingInvitationDto[]>, busy: Ref<string|null>, error: Ref<string|null>, accept(token): Promise<void>, decline(token): Promise<void> }`.
   `accept` navigates to the joined team's meetings, the same as `UserMenu` does today.
 - Produces `useLeaveTeam()`, returning `{ pending: Ref<TeamRefDto & { soleMember: boolean } | null>, dialog: ComputedRef<{title,text,confirm}|null>, error: Ref<string|null>, ask(team, soleMember), confirm(userId): Promise<boolean>, cancel() }`.
@@ -439,11 +459,13 @@ Frontend:
 ### Task 10: Preferences and log out
 
 **Files:**
+
 - Create `frontend/src/features/account/PreferencesSection.vue`.
 - Modify `AccountView.vue` and `en.ts`.
 - Test: `frontend/tests/AccountView.test.ts`.
 
 **Interfaces:**
+
 - Theme: a segmented group (`role="group"`, `aria-pressed`) with Light, Dark and System, using
   `readThemePreference` and `applyThemePreference` from `lib/theme.ts`. The hint is "System
   follows your device setting."
@@ -480,12 +502,14 @@ Frontend:
 ### Task 12: End-to-end test
 
 **Files:**
+
 - Create `tests/e2e/account/account.spec.ts` and `tests/e2e/pages/AccountPage.ts`.
 - Modify `tests/e2e/api.ts`: `resetAccount` also PATCHes `/api/v1/me` back to the
   `fixtures.ts` name and DELETEs `/api/v1/me/picture`.
 - Add a PNG fixture: `tests/e2e/assets/avatar.png`, a 64×64 PNG generated once and committed.
 
 **Interfaces:**
+
 - `AccountPage`:
   - Fields: `displayName: Locator`, `save: Locator`, `uploadInput: Locator`.
   - Methods: `goto()` (through the user menu's "Your account" link), `rename(name)`,

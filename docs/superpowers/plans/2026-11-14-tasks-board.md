@@ -65,6 +65,7 @@ DOMPurify, vue-draggable-plus, Vitest, Playwright.
 ## File map
 
 Backend:
+
 - `backend/migration/src/m20261114_000002_tasks.rs` (new) and `lib.rs`.
 - `backend/src/entities/{task.rs,task_mention.rs}` (new) and `mod.rs`.
 - `backend/src/domain/ordering.rs` (new): fractional keys.
@@ -76,6 +77,7 @@ Backend:
 - `backend/tests/tasks.rs` (new).
 
 Frontend:
+
 - `src/components/{RichText.vue,RichTextEditor.vue}` (new).
 - `src/stores/tasks.ts` (new).
 - `src/features/tasks/`: `TasksBoardView.vue`, `TaskColumn.vue`, `TaskCard.vue`,
@@ -115,11 +117,13 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 ### Task 2: Schema and entities
 
 **Files:**
+
 - Create `backend/migration/src/m20261114_000002_tasks.rs` and
   `backend/src/entities/{task.rs,task_mention.rs}`.
 - Modify `backend/migration/src/lib.rs` and `backend/src/entities/mod.rs`.
 
 **Interfaces:**
+
 - Produces `task::Model { id, team_id, meeting_id: Option<Uuid>, group_id: Option<Uuid>, author_id, content: String, status: TaskStatus, position: String, created_at, updated_at }`.
 - Produces `TaskStatus`: a `DeriveActiveEnum` over the Postgres enum `task_status`, with the
   variants `Future, Stuck, Active, Done` and `#[serde(rename_all = "lowercase")]`, plus
@@ -158,6 +162,7 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 `backend/src/domain/mod.rs`.
 
 **Interfaces:**
+
 - Produces `pub fn key_between(after: Option<&str>, before: Option<&str>) -> Option<String>`.
   It returns `None` when `after >= before`, or when either key is empty or ends in `'0'`
   (both are invalid keys).
@@ -185,6 +190,7 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
     if b is Some and b.len() > 1: return b[..1]
     return [a[0] or '0'] + mid(a[1..], None)
   ```
+
 - [ ] **Step 4:** Run it again. Expected: PASS.
 - [ ] **Step 5:** Commit: `feat(tasks): fractional position keys`.
 
@@ -194,6 +200,7 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 `backend/src/domain/mod.rs`. Create `backend/src/domain/rich_text.rs` (unit tests inside).
 
 **Interfaces:**
+
 - Produces `pub struct Sanitized { pub html: String, pub mention_ids: Vec<Uuid> }`, with
   mentions de-duplicated in order of appearance.
 - Produces `pub const CONTENT_MAX_CHARS: usize = 10_000`.
@@ -220,11 +227,13 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 ### Task 5: List the board
 
 **Files:**
+
 - Create `backend/src/domain/tasks.rs` and `backend/src/api/tasks.rs`.
 - Modify `backend/src/api/mod.rs`, `backend/src/app.rs` and `backend/src/openapi.rs`.
 - Create `backend/tests/tasks.rs`.
 
 **Interfaces:**
+
 - Produces `pub struct BoardFilter { mentioned: Option<Uuid>, author: Option<Uuid>, meeting: Option<Uuid> }`.
 - Produces `pub async fn list(db, team_id, actor: Uuid, filter: BoardFilter) -> Result<Vec<TaskView>, AppError>`.
   `TaskView` is the task, its author `user::Model`, its mentioned `Vec<user::Model>`, and
@@ -257,6 +266,7 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 `openapi.rs` and `backend/tests/tasks.rs`.
 
 **Interfaces:**
+
 - Produces `pub async fn move_task(db, task_id, actor, status: TaskStatus, after: Option<Uuid>, before: Option<Uuid>) -> Result<TaskView, AppError>`.
 - Produces the handler `api::tasks::move_task`, `PUT /api/v1/tasks/{task_id}/position`. The body
   is `MoveTaskRequest { status, after_id: Option<Uuid>, before_id: Option<Uuid> }` (camelCase),
@@ -293,6 +303,7 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 `openapi.rs` and `backend/tests/tasks.rs`.
 
 **Interfaces:**
+
 - Produces `pub async fn edit(db, task_id, actor, raw: &str) -> Result<TaskView, AppError>`.
 - Produces `pub async fn delete(db, task_id, actor) -> Result<(), AppError>`.
 - Produces the handlers:
@@ -325,6 +336,7 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 `backend/src/app.rs` and `backend/tests/tasks.rs`.
 
 **Interfaces:**
+
 - Produces `POST /api/v1/dev/teams/{team_id}/tasks`. The body is
   `{ status, content, authorId?: Uuid }`, where `authorId` defaults to the caller and must be a
   member. It returns 201 `TaskDto`. The caller must be a member.
@@ -341,6 +353,7 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 ### Task 9: Rich text components
 
 **Files:**
+
 - Modify `frontend/package.json` and the lockfile. Install, exact-pinned:
   `@tiptap/vue-3 @tiptap/pm @tiptap/starter-kit @tiptap/extension-mention @tiptap/suggestion dompurify vue-draggable-plus`,
   plus `@tiptap/extension-link` only if the installed StarterKit doesn't bundle Link.
@@ -348,6 +361,7 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 - Test: create `frontend/tests/RichText.test.ts`.
 
 **Interfaces:**
+
 - `RichText`:
   - Props `{ html: string }`. It renders `DOMPurify.sanitize(html, { ALLOWED_TAGS: ['p','br','strong','em','a','span'], ALLOWED_ATTR: ['href','rel','data-type','data-id','data-label'] })`
     with `v-html`. If the `vue/no-v-html` rule is on, disable it for that one line with a
@@ -380,6 +394,7 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 **Files:** Create `frontend/src/stores/tasks.ts` and `frontend/tests/tasksStore.test.ts`.
 
 **Interfaces:**
+
 - Produces `useTasksStore()`, which returns:
   - `tasks: Ref<TaskDto[]>`, `loading`, `error: Ref<string|null>`;
   - `columns: ComputedRef<Record<TaskStatus, TaskDto[]>>`, sorted by `position` with plain
@@ -412,12 +427,14 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 ### Task 11: Board view, columns, cards, drag and drop
 
 **Files:**
+
 - Create `frontend/src/features/tasks/{TasksBoardView.vue,TaskColumn.vue,TaskCard.vue}`.
 - Modify `frontend/src/router/index.ts` (`team-tasks` → `TasksBoardView`, and `ComingSoonView`
   loses its `tasks` variant and its i18n key) and `en.ts`.
 - Test: create `frontend/tests/TasksBoardView.test.ts`.
 
 **Interfaces:**
+
 - `TasksBoardView`:
   - The header is "Tasks" plus the subtitle "Created during the Discuss phase of a meeting.
     Drag cards between columns, or use Move to… from the keyboard."
@@ -454,6 +471,7 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 `TasksBoardView.vue`, `en.ts` and `frontend/tests/TasksBoardView.test.ts`.
 
 **Interfaces:**
+
 - The filter state lives in the route query `mentioned`, `author` and `meeting`, updated with
   `router.replace`. The view watches the query and calls `store.load`.
 - Controls, in the design's order:
@@ -474,10 +492,12 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 ### Task 13: Card menu — Move to…, Edit, Delete
 
 **Files:**
+
 - Create `frontend/src/features/tasks/{TaskMenu.vue,EditTaskDialog.vue}`.
 - Modify `TaskCard.vue`, `en.ts` and `frontend/tests/TasksBoardView.test.ts`.
 
 **Interfaces:**
+
 - `TaskMenu`:
   - It is a `role="menu"` positioned with `usePopover`, with Edit and Delete only when
     `task.canEdit`.
@@ -502,11 +522,13 @@ E2E: `tests/e2e/tasks/tasks.spec.ts`, `tests/e2e/pages/TasksPage.ts` and
 ### Task 14: Visual pass and end-to-end test
 
 **Files:**
+
 - `frontend/src/features/tasks/*.vue` styles.
 - Create `tests/e2e/tasks/tasks.spec.ts` and `tests/e2e/pages/TasksPage.ts`.
 - Modify `tests/e2e/api.ts`.
 
 **Interfaces:**
+
 - Produces `seedTask(login, teamId, { status, content, authorId? }): Promise<{ id: string }>` in
   `api.ts`, which calls the dev route.
 - Produces `TasksPage`:

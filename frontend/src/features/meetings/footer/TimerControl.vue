@@ -4,7 +4,7 @@
  * "Set timer" opens the Timer popover; while a timer is set, its countdown
  * with pause or resume, "+1 min" and stop.
  */
-import { computed, ref } from 'vue';
+import { computed, ref, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import { TimerStatus, type TimerAction } from '@/api/client';
@@ -22,8 +22,10 @@ const { display } = useCountdown(timer, store.serverTime);
 const paused = computed(() => timer.value?.status === TimerStatus.paused);
 
 const root = ref<HTMLElement | null>(null);
-const trigger = ref<HTMLElement | null>(null);
-const { open, toggle, close } = usePopover(root, trigger);
+const triggerBox = ref<HTMLElement | null>(null);
+/** The "Set timer" button, which gets the focus back when the popover closes. */
+const trigger = computed(() => triggerBox.value?.querySelector('button') ?? null);
+const { open, toggle, close } = usePopover(root, trigger as Ref<HTMLElement | null>);
 const busy = ref(false);
 
 async function run(action: TimerAction): Promise<boolean> {
@@ -73,7 +75,7 @@ async function run(action: TimerAction): Promise<boolean> {
         <AppIcon name="stop" :size="15" />
       </button>
     </div>
-    <span v-else ref="trigger" class="timer__trigger">
+    <span v-else ref="triggerBox" class="timer__trigger">
       <AppButton size="touch" aria-haspopup="dialog" :aria-expanded="open" @click="toggle">
         <AppIcon name="clock" :size="18" />{{ t('timer.set') }}
       </AppButton>

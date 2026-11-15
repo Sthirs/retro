@@ -286,9 +286,15 @@ describe('Bottom bar', () => {
     expect(dialog.get('[role="alert"]').text()).toContain('00:01 and 99:59');
     expect(calls.some((c) => c.path === `${BASE}/timer`)).toBe(false);
 
+    // Esc closes it and gives the focus back to "Set timer".
+    await dialog.get('input').trigger('keydown', { key: 'Escape' });
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false);
+    expect(document.activeElement).toBe(button(wrapper, 'Set timer')!.element);
+    await button(wrapper, 'Set timer')!.trigger('click');
+    const reopened = wrapper.get('[role="dialog"]');
     await button(wrapper, '10 min')!.trigger('click');
-    expect((dialog.get('input').element as HTMLInputElement).value).toBe('10:00');
-    await dialog.get('form').trigger('submit');
+    expect((reopened.get('input').element as HTMLInputElement).value).toBe('10:00');
+    await reopened.get('form').trigger('submit');
     await flushPromises();
     expect(calls.find((c) => c.path === `${BASE}/timer`)?.body).toEqual({
       action: 'start',

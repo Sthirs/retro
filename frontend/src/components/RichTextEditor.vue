@@ -299,12 +299,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="rte" :class="{ 'rte--reflection': reflection }">
+    <!-- Pointer presses on the toolbar keep the editor's focus and selection. -->
     <div class="rte-toolbar" role="toolbar" :aria-label="t('richText.toolbar')">
       <button
         type="button"
         class="rte-btn"
         :aria-label="t('richText.bold')"
         :aria-pressed="editor?.isActive('bold') ?? false"
+        @mousedown.prevent
         @click="editor?.chain().focus().toggleBold().run()"
       >
         <AppIcon name="bold" :size="16" />
@@ -314,6 +316,7 @@ onBeforeUnmount(() => {
         class="rte-btn"
         :aria-label="t('richText.italic')"
         :aria-pressed="editor?.isActive('italic') ?? false"
+        @mousedown.prevent
         @click="editor?.chain().focus().toggleItalic().run()"
       >
         <AppIcon name="italic" :size="16" />
@@ -324,6 +327,7 @@ onBeforeUnmount(() => {
         class="rte-btn"
         :aria-label="t('richText.strike')"
         :aria-pressed="editor?.isActive('strike') ?? false"
+        @mousedown.prevent
         @click="editor?.chain().focus().toggleStrike().run()"
       >
         <AppIcon name="strikethrough" :size="16" />
@@ -335,6 +339,7 @@ onBeforeUnmount(() => {
         :aria-label="t('richText.link')"
         :aria-pressed="linkActive"
         :aria-expanded="linkOpen"
+        @mousedown.prevent
         @click="toggleLink"
       >
         <AppIcon name="link" :size="16" />
@@ -345,6 +350,7 @@ onBeforeUnmount(() => {
           class="rte-btn"
           :aria-label="t('richText.bulletList')"
           :aria-pressed="editor?.isActive('bulletList') ?? false"
+          @mousedown.prevent
           @click="editor?.chain().focus().toggleBulletList().run()"
         >
           <AppIcon name="list" :size="16" />
@@ -354,6 +360,7 @@ onBeforeUnmount(() => {
           class="rte-btn"
           :aria-label="t('richText.code')"
           :aria-pressed="editor?.isActive('code') ?? false"
+          @mousedown.prevent
           @click="editor?.chain().focus().toggleCode().run()"
         >
           <AppIcon name="code" :size="16" />

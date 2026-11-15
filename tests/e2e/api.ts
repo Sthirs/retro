@@ -168,3 +168,95 @@ export async function renameMeeting(
     await api.dispose();
   }
 }
+
+/** Adds `login` to the team through its join link (`admin` reads the link). */
+export async function joinTeam(admin: string, teamId: string, login: string): Promise<void> {
+  const { api: adminApi } = await signedIn(admin);
+  let token: string;
+  try {
+    const res = await adminApi.get(`/api/v1/teams/${teamId}/join-link`);
+    if (!res.ok()) throw new Error(`join link: ${res.status()} ${await res.text()}`);
+    token = new URL(((await res.json()) as { url: string }).url).pathname.split('/').pop()!;
+  } finally {
+    await adminApi.dispose();
+  }
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/join/${token}`);
+    if (!res.ok()) throw new Error(`join team: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Changes a member's team role (`admin` is a team admin). */
+export async function setRole(
+  admin: string,
+  teamId: string,
+  userId: string,
+  role: 'admin' | 'member',
+): Promise<void> {
+  const { api } = await signedIn(admin);
+  try {
+    const res = await api.patch(`/api/v1/teams/${teamId}/members/${userId}`, {
+      data: { role },
+    });
+    if (!res.ok()) throw new Error(`set role: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** POSTs `/meetings/{id}/{action}` as `login` (e.g. `join`, `phase/next`). */
+export async function meetingAction(
+  login: string,
+  meetingId: string,
+  action: string,
+): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/meetings/${meetingId}/${action}`);
+    if (!res.ok()) throw new Error(`${action}: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Sends a reflection as `login` (a participant, during Reflect). */
+export async function writeReflection(
+  login: string,
+  meetingId: string,
+  column: 'plus' | 'delta' | 'ideas' | 'thanks',
+  content: string,
+): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/meetings/${meetingId}/reflections`, {
+      data: { column, content },
+    });
+    if (!res.ok()) throw new Error(`write reflection: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** The meeting state as `login` sees it. */
+export async function meetingState(
+  login: string,
+  meetingId: string,
+): Promise<{
+  phase: string;
+  reflections: { content: string; mine: boolean }[];
+}> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.get(`/api/v1/meetings/${meetingId}/state`);
+    if (!res.ok()) throw new Error(`state: ${res.status()} ${await res.text()}`);
+    return (await res.json()) as {
+      phase: string;
+      reflections: { content: string; mine: boolean }[];
+    };
+  } finally {
+    await api.dispose();
+  }
+}

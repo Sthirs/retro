@@ -658,3 +658,80 @@ async fn a_member_added_back_can_subscribe_again() {
     let created = next_of(&mut bob_socket, "task.created").await;
     assert_eq!(created["payload"]["taskId"], task["id"]);
 }
+
+// --- Presence with several tabs --------------------------------------------
+
+async fn unsubscribe(socket: &mut Socket, channel: &str) -> Value {
+    socket
+        .send(Message::text(
+            json!({ "type": "unsubscribe", "channel": channel }).to_string(),
+        ))
+        .await
+        .unwrap();
+    next_of(socket, "unsubscribed").await
+}
+
+/// bob's last announced presence on alice's socket, once nothing more arrives.
+async fn settled_presence(socket: &mut Socket, user: &str) -> Option<bool> {
+    let mut last = None;
+    while let Ok(Some(Ok(message))) =
+        tokio::time::timeout(Duration::from_millis(700), socket.next()).await
+    {
+        let Message::Text(text) = message else {
+            continue;
+        };
+        let event: Value = serde_json::from_str(&text).unwrap();
+        if event["type"] == "presence.changed" && event["payload"]["userId"] == user {
+            last = event["payload"]["online"].as_bool();
+        }
+    }
+    last
+}
+
+#[tokio::test]
+async fn presence_survives_two_tabs_coming_and_going_at_once() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, bob_id, _, m) = team_with_meeting(&app).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut tabs = [
+        connect(&addr, &ticket(&app, &bob).await).await,
+        connect(&addr, &ticket(&app, &bob).await).await,
+    ];
+    subscribe(&mut tabs[0], &channel).await;
+
+    // One tab leaves the room while the other enters it: bob stays in the
+    // room throughout (his count goes 1 → 0 → 1 or 1 → 2 → 1).
+    for round in 0..50 {
+        let [first, second] = &mut tabs;
+        let (leaving, entering) = if round % 2 == 0 {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        let (left, entered) = tokio::join!(
+            unsubscribe(leaving, &channel),
+            subscribe(entering, &channel)
+        );
+        assert_eq!(left["type"], "unsubscribed");
+        assert_eq!(entered["type"], "subscribed", "{entered}");
+    }
+    assert_eq!(
+        settled_presence(&mut alice_socket, &bob_id).await,
+        Some(true)
+    );
+    assert!(online_ids(&app, &alice, &m).await.contains(&json!(bob_id)));
+
+    // The last tab leaves (unsubscribing a channel not followed is a no-op):
+    // bob is offline everywhere.
+    for tab in &mut tabs {
+        unsubscribe(tab, &channel).await;
+    }
+    assert_eq!(
+        settled_presence(&mut alice_socket, &bob_id).await,
+        Some(false)
+    );
+    assert!(!online_ids(&app, &alice, &m).await.contains(&json!(bob_id)));
+}

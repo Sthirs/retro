@@ -67,20 +67,64 @@ impl AccessChange {
     }
 }
 
-/// Who is online in which meeting, as this replica sees the cluster.
-#[derive(Default)]
-struct Presence {
-    /// meeting → user → replicas holding at least one socket for them.
-    online: HashMap<Uuid, HashMap<Uuid, HashSet<Uuid>>>,
-    /// This replica's sockets: (meeting, user) → (team, socket count).
-    local: HashMap<(Uuid, Uuid), (Uuid, usize)>,
+/// Who is online in which meeting, as this replica sees the cluster:
+/// meeting → user → replicas holding at least one socket for them.
+#[derive(Debug, Default)]
+struct Online(HashMap<Uuid, HashMap<Uuid, HashSet<Uuid>>>);
+
+impl Online {
+    fn users(&self, meeting: Uuid) -> HashSet<Uuid> {
+        self.0
+            .get(&meeting)
+            .map(|users| users.keys().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Folds in a replica's announcement; true when the user's overall
+    /// status (online on any replica) changed.
+    fn apply(&mut self, meeting: Uuid, user: Uuid, replica: Uuid, online: bool) -> bool {
+        let users = self.0.entry(meeting).or_default();
+        let was_online = users.contains_key(&user);
+        if online {
+            users.entry(user).or_default().insert(replica);
+        } else if let Some(replicas) = users.get_mut(&user) {
+            replicas.remove(&replica);
+            if replicas.is_empty() {
+                users.remove(&user);
+            }
+        }
+        let is_online = users.contains_key(&user);
+        if users.is_empty() {
+            self.0.remove(&meeting);
+        }
+        was_online != is_online
+    }
+
+    /// Keeps only `replica`'s entries (the others are asked again).
+    fn keep_only(&mut self, replica: Uuid) {
+        for users in self.0.values_mut() {
+            for replicas in users.values_mut() {
+                replicas.retain(|r| *r == replica);
+            }
+            users.retain(|_, replicas| !replicas.is_empty());
+        }
+        self.0.retain(|_, users| !users.is_empty());
+    }
 }
+
+/// This replica's sockets: (meeting, user) → (team, socket count).
+type Local = HashMap<(Uuid, Uuid), (Uuid, usize)>;
 
 pub struct Hub {
     replica: Uuid,
     db: DatabaseConnection,
     channels: Mutex<HashMap<String, broadcast::Sender<Arc<str>>>>,
-    presence: Mutex<Presence>,
+    online: Mutex<Online>,
+    /// Held from a socket count transition until its announcement is sent, so
+    /// this replica's online/offline notifications commit in transition order
+    /// (two tabs of one user entering and leaving at once cannot leave the
+    /// cluster believing the opposite of the truth).
+    local: tokio::sync::Mutex<Local>,
     access: broadcast::Sender<AccessChange>,
     ready: watch::Sender<bool>,
 }
@@ -91,7 +135,8 @@ impl Hub {
             replica: Uuid::now_v7(),
             db,
             channels: Mutex::default(),
-            presence: Mutex::default(),
+            online: Mutex::default(),
+            local: tokio::sync::Mutex::default(),
             access: broadcast::channel(ACCESS_CAPACITY).0,
             ready: watch::Sender::new(false),
         })
@@ -127,45 +172,32 @@ impl Hub {
 
     /// The users online in a meeting, on any replica.
     pub fn online(&self, meeting_id: Uuid) -> HashSet<Uuid> {
-        let presence = self.presence.lock().expect("hub presence");
-        presence
-            .online
-            .get(&meeting_id)
-            .map(|users| users.keys().copied().collect())
-            .unwrap_or_default()
+        self.online.lock().expect("hub presence").users(meeting_id)
     }
 
     /// A socket of `user_id` entered the meeting room.
     pub async fn enter(&self, meeting_id: Uuid, team_id: Uuid, user_id: Uuid) {
-        let first = {
-            let mut presence = self.presence.lock().expect("hub presence");
-            let entry = presence
-                .local
-                .entry((meeting_id, user_id))
-                .or_insert((team_id, 0));
-            entry.1 += 1;
-            entry.1 == 1
-        };
-        if first {
+        let mut local = self.local.lock().await;
+        let entry = local.entry((meeting_id, user_id)).or_insert((team_id, 0));
+        entry.1 += 1;
+        if entry.1 == 1 {
             self.announce(meeting_id, team_id, user_id, true).await;
         }
     }
 
     /// A socket of `user_id` left the meeting room.
     pub async fn leave(&self, meeting_id: Uuid, team_id: Uuid, user_id: Uuid) {
-        let last = {
-            let mut presence = self.presence.lock().expect("hub presence");
-            match presence.local.get_mut(&(meeting_id, user_id)) {
-                Some(entry) if entry.1 > 1 => {
-                    entry.1 -= 1;
-                    false
-                }
-                Some(_) => {
-                    presence.local.remove(&(meeting_id, user_id));
-                    true
-                }
-                None => false,
+        let mut local = self.local.lock().await;
+        let last = match local.get_mut(&(meeting_id, user_id)) {
+            Some(entry) if entry.1 > 1 => {
+                entry.1 -= 1;
+                false
             }
+            Some(_) => {
+                local.remove(&(meeting_id, user_id));
+                true
+            }
+            None => false,
         };
         if last {
             self.announce(meeting_id, team_id, user_id, false).await;
@@ -192,15 +224,9 @@ impl Hub {
 
     /// Re-announces this replica's sockets (answer to `presence.sync`).
     async fn announce_local(&self) {
-        let local: Vec<_> = {
-            let presence = self.presence.lock().expect("hub presence");
-            presence
-                .local
-                .iter()
-                .map(|(&(meeting, user), &(team, _))| (meeting, team, user))
-                .collect()
-        };
-        for (meeting, team, user) in local {
+        // Held throughout, so a socket leaving meanwhile announces after.
+        let local = self.local.lock().await;
+        for (&(meeting, user), &(team, _)) in local.iter() {
             self.announce(meeting, team, user, true).await;
         }
     }
@@ -237,17 +263,10 @@ impl Hub {
     /// local sockets re-check their access (a removal may have been missed).
     async fn on_connected(&self) {
         let _ = self.access.send(AccessChange::Unknown);
-        {
-            let mut presence = self.presence.lock().expect("hub presence");
-            let replica = self.replica;
-            for users in presence.online.values_mut() {
-                for replicas in users.values_mut() {
-                    replicas.retain(|r| *r == replica);
-                }
-                users.retain(|_, replicas| !replicas.is_empty());
-            }
-            presence.online.retain(|_, users| !users.is_empty());
-        }
+        self.online
+            .lock()
+            .expect("hub presence")
+            .keep_only(self.replica);
         let channels: Vec<String> = {
             let channels = self.channels.lock().expect("hub channels");
             channels.keys().cloned().collect()
@@ -309,24 +328,11 @@ impl Hub {
         ) else {
             return;
         };
-        let changed = {
-            let mut presence = self.presence.lock().expect("hub presence");
-            let users = presence.online.entry(meeting).or_default();
-            let was_online = users.contains_key(&user);
-            if online {
-                users.entry(user).or_default().insert(replica);
-            } else if let Some(replicas) = users.get_mut(&user) {
-                replicas.remove(&replica);
-                if replicas.is_empty() {
-                    users.remove(&user);
-                }
-            }
-            let is_online = users.contains_key(&user);
-            if users.is_empty() {
-                presence.online.remove(&meeting);
-            }
-            was_online != is_online
-        };
+        let changed = self
+            .online
+            .lock()
+            .expect("hub presence")
+            .apply(meeting, user, replica, online);
         if changed {
             self.send(&Notification {
                 channel: notification.channel.clone(),
@@ -362,6 +368,56 @@ impl Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_user_is_online_while_any_replica_holds_a_socket() {
+        let (meeting, user) = (Uuid::now_v7(), Uuid::now_v7());
+        let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+        let mut online = Online::default();
+        assert!(online.apply(meeting, user, a, true));
+        // Already online: a second replica changes nothing visible.
+        assert!(!online.apply(meeting, user, b, true));
+        assert!(!online.apply(meeting, user, a, true));
+        assert!(!online.apply(meeting, user, a, false));
+        assert_eq!(online.users(meeting), HashSet::from([user]));
+        assert!(online.apply(meeting, user, b, false));
+        assert!(online.users(meeting).is_empty());
+        // Nothing left behind; a repeated "offline" is a no-op.
+        assert!(online.0.is_empty());
+        assert!(!online.apply(meeting, user, b, false));
+        assert!(online.0.is_empty());
+    }
+
+    #[test]
+    fn meetings_are_kept_apart() {
+        let (one, two, user, replica) = (
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+            Uuid::now_v7(),
+        );
+        let mut online = Online::default();
+        online.apply(one, user, replica, true);
+        assert!(online.users(two).is_empty());
+        assert!(online.apply(two, user, replica, true));
+        assert!(online.apply(one, user, replica, false));
+        assert_eq!(online.users(two), HashSet::from([user]));
+    }
+
+    #[test]
+    fn reconnecting_forgets_the_other_replicas_only() {
+        let (meeting, mine, theirs) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let (me, other, both) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let mut online = Online::default();
+        online.apply(meeting, me, mine, true);
+        online.apply(meeting, other, theirs, true);
+        online.apply(meeting, both, mine, true);
+        online.apply(meeting, both, theirs, true);
+        online.keep_only(mine);
+        assert_eq!(online.users(meeting), HashSet::from([me, both]));
+        // `both` now depends on this replica alone.
+        assert!(online.apply(meeting, both, mine, false));
+    }
 
     fn event(channel: &str, kind: &str, payload: serde_json::Value) -> Notification {
         Notification {

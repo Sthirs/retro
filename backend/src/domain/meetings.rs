@@ -81,6 +81,11 @@ pub fn join_position(
 
 /// Loads the meeting for `actor`, who must be a member of its team
 /// (`meeting_not_found` otherwise), and returns their team role.
+///
+/// With `lock`, locks the team row first and the meeting row second: the
+/// order of every team mutation (task writes, member removal and the cascade
+/// of a team delete), so a meeting write cannot deadlock with them. The
+/// meeting is re-read under its lock.
 async fn find_for_member(
     db: &impl ConnectionTrait,
     meeting_id: Uuid,
@@ -100,12 +105,27 @@ async fn find_for_member(
     if !lock {
         return Ok((meeting, role));
     }
+    lock_team(db, meeting.team_id, "meeting_not_found").await?;
     let meeting = meeting::Entity::find_by_id(meeting_id)
         .lock_exclusive()
         .one(db)
         .await?
         .ok_or(AppError::NotFound("meeting_not_found"))?;
     Ok((meeting, role))
+}
+
+/// Locks a team row until the transaction ends; `missing` when it is gone.
+async fn lock_team(
+    db: &impl ConnectionTrait,
+    team_id: Uuid,
+    missing: &'static str,
+) -> Result<(), AppError> {
+    team::Entity::find_by_id(team_id)
+        .lock_exclusive()
+        .one(db)
+        .await?
+        .ok_or(AppError::NotFound(missing))?;
+    Ok(())
 }
 
 /// Locks a running meeting for a facilitator action.
@@ -331,11 +351,7 @@ pub async fn create(
     let txn = db.begin().await?;
     teams::require_member(&txn, team_id, actor).await?;
     // Serialises meeting numbers per team.
-    team::Entity::find_by_id(team_id)
-        .lock_exclusive()
-        .one(&txn)
-        .await?
-        .ok_or(AppError::NotFound("team_not_found"))?;
+    lock_team(&txn, team_id, "team_not_found").await?;
     let number: i32 = meeting::Entity::find()
         .filter(meeting::Column::TeamId.eq(team_id))
         .select_only()
@@ -764,13 +780,23 @@ pub async fn accept_invite(
     actor: Uuid,
 ) -> Result<(meeting::Model, bool), AppError> {
     let txn = db.begin().await?;
-    let meeting = meeting::Entity::find()
+    let invalid = || AppError::NotFound("meeting_invite_invalid");
+    let found = meeting::Entity::find()
         .filter(meeting::Column::InviteToken.eq(token))
         .filter(meeting::Column::Status.eq(MeetingStatus::Active))
+        .one(&txn)
+        .await?
+        .ok_or_else(invalid)?;
+    // Team row first, then the meeting (see `find_for_member`). The meeting is
+    // checked again under its lock: a concurrent member removal or a
+    // regeneration may have replaced the token, or the meeting may have ended.
+    lock_team(&txn, found.team_id, "meeting_invite_invalid").await?;
+    let meeting = meeting::Entity::find_by_id(found.id)
         .lock_exclusive()
         .one(&txn)
         .await?
-        .ok_or(AppError::NotFound("meeting_invite_invalid"))?;
+        .filter(|m| m.status == MeetingStatus::Active && m.invite_token.as_deref() == Some(token))
+        .ok_or_else(invalid)?;
     let joined_team = teams::add_member(&txn, meeting.team_id, actor).await?;
     if joined_team {
         crate::domain::invitations::close_for_member(&txn, meeting.team_id, actor).await?;

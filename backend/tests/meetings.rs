@@ -3,7 +3,10 @@
 
 mod common;
 
+use std::time::Duration;
+
 use common::TestApp;
+use sea_orm::{ConnectionTrait, DbBackend, Statement, TransactionTrait};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -630,4 +633,260 @@ async fn ws_tickets_need_a_signed_in_user() {
 
     let res = app.call("POST", "/api/v1/ws-ticket", "nope", None).await;
     assert_eq!(res.status, 401);
+}
+
+// --- Lock order (team row first, then the meeting row) ---------------------
+
+/// `app.call` with an owned path, for requests built ahead of time.
+async fn call_at(
+    app: &TestApp,
+    method: &str,
+    path: String,
+    token: &str,
+    body: Option<Value>,
+) -> common::TestResponse {
+    app.call(method, &path, token, body).await
+}
+
+/// Whether a request of this test's database waits for a row lock.
+async fn someone_waits_for_a_lock(app: &TestApp) -> bool {
+    let row = app
+        .db
+        .query_one_raw(Statement::from_string(
+            DbBackend::Postgres,
+            "SELECT count(*) AS waiting FROM pg_stat_activity \
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    row.try_get::<i64>("", "waiting").unwrap() > 0
+}
+
+/// Runs `request` while another transaction holds the team row, and checks
+/// that the request waits for the team without holding the meeting row: the
+/// order of a team delete (team row, then its meetings through the cascade),
+/// so the two cannot deadlock.
+async fn takes_the_team_before_the_meeting(
+    app: &TestApp,
+    team: Uuid,
+    meeting: &str,
+    request: impl std::future::Future<Output = common::TestResponse>,
+) -> common::TestResponse {
+    let meeting: Uuid = meeting.parse().unwrap();
+    let holder = app.db.begin().await.unwrap();
+    holder
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM teams WHERE id = $1 FOR UPDATE",
+            [team.into()],
+        ))
+        .await
+        .unwrap();
+    let check = async move {
+        let mut waiting = false;
+        for _ in 0..500 {
+            if someone_waits_for_a_lock(app).await {
+                waiting = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(waiting, "the request never waited for the team row");
+        let meeting_row = holder
+            .execute_raw(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "SELECT id FROM meetings WHERE id = $1 FOR UPDATE NOWAIT",
+                [meeting.into()],
+            ))
+            .await;
+        assert!(
+            meeting_row.is_ok(),
+            "the request holds the meeting row while it waits for the team: {meeting_row:?}"
+        );
+        holder.rollback().await.unwrap();
+    };
+    let (res, ()) = tokio::join!(request, check);
+    res
+}
+
+/// A team (alice admin, bob member) with a running meeting alice facilitates.
+async fn fresh_meeting(app: &TestApp, alice: &str, bob: &str, name: &str) -> (Uuid, String) {
+    let team = create_team(app, alice, name).await;
+    join_team(app, alice, team, bob).await;
+    let meeting = start(app, alice, team).await;
+    (team, id(&meeting).to_owned())
+}
+
+#[tokio::test]
+async fn meeting_writes_lock_the_team_before_the_meeting() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let alice_id = user_id(&app, &alice).await;
+    let bob_id = user_id(&app, &bob).await;
+    let dave = app
+        .create_user("dave", "dave@example.com", "Dave Costa")
+        .await;
+
+    // Joining.
+    let (team, m) = fresh_meeting(&app, &alice, &bob, "Join").await;
+    let res =
+        takes_the_team_before_the_meeting(&app, team, &m, act(&app, &bob, &m, "join", None)).await;
+    assert_eq!(res.status, 200, "join: {}", res.text());
+
+    // The icebreaker: next person and going back.
+    let (team, m) = fresh_meeting(&app, &alice, &bob, "Next").await;
+    act(&app, &bob, &m, "join", None).await;
+    let res = takes_the_team_before_the_meeting(
+        &app,
+        team,
+        &m,
+        act(&app, &alice, &m, "icebreaker/next", None),
+    )
+    .await;
+    assert_eq!(res.status, 200, "next: {}", res.text());
+    let first = state(&app, &alice, &m).await["icebreaker"]["order"][0].clone();
+    let res = takes_the_team_before_the_meeting(
+        &app,
+        team,
+        &m,
+        act(
+            &app,
+            &alice,
+            &m,
+            "icebreaker/goto",
+            Some(json!({ "userId": first })),
+        ),
+    )
+    .await;
+    assert_eq!(res.status, 200, "goto: {}", res.text());
+
+    // Phase, handover, rename, invite link, end.
+    let (team, m) = fresh_meeting(&app, &alice, &bob, "Phase").await;
+    act(&app, &bob, &m, "join", None).await;
+    let res = takes_the_team_before_the_meeting(
+        &app,
+        team,
+        &m,
+        act(&app, &alice, &m, "phase/next", None),
+    )
+    .await;
+    assert_eq!(res.status, 200, "phase: {}", res.text());
+    let res = takes_the_team_before_the_meeting(
+        &app,
+        team,
+        &m,
+        act(
+            &app,
+            &alice,
+            &m,
+            "facilitator",
+            Some(json!({ "userId": bob_id })),
+        ),
+    )
+    .await;
+    assert_eq!(res.status, 200, "handover: {}", res.text());
+    // alice, an admin, takes it back.
+    let res = takes_the_team_before_the_meeting(
+        &app,
+        team,
+        &m,
+        act(
+            &app,
+            &alice,
+            &m,
+            "facilitator",
+            Some(json!({ "userId": alice_id })),
+        ),
+    )
+    .await;
+    assert_eq!(res.status, 200, "take over: {}", res.text());
+    let rename = call_at(
+        &app,
+        "PATCH",
+        format!("/api/v1/meetings/{m}"),
+        &alice,
+        Some(json!({ "title": "Locked" })),
+    );
+    let res = takes_the_team_before_the_meeting(&app, team, &m, rename).await;
+    assert_eq!(res.status, 200, "rename: {}", res.text());
+    let res = takes_the_team_before_the_meeting(
+        &app,
+        team,
+        &m,
+        act(&app, &alice, &m, "invite-link", None),
+    )
+    .await;
+    assert_eq!(res.status, 200, "invite link: {}", res.text());
+    let token = invite_token(&app, &alice, &m).await;
+    let accept = call_at(
+        &app,
+        "POST",
+        format!("/api/v1/meeting-invites/{token}/accept"),
+        &dave,
+        None,
+    );
+    let res = takes_the_team_before_the_meeting(&app, team, &m, accept).await;
+    assert_eq!(res.status, 200, "accept invite: {}", res.text());
+    let res =
+        takes_the_team_before_the_meeting(&app, team, &m, act(&app, &alice, &m, "end", None)).await;
+    assert_eq!(res.status, 200, "end: {}", res.text());
+}
+
+#[tokio::test]
+async fn deleting_a_team_while_its_meeting_changes_never_fails() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let bob_id = user_id(&app, &bob).await;
+    for round in 0..20 {
+        let (team, m) = fresh_meeting(&app, &alice, &bob, &format!("Race {round}")).await;
+        let token = invite_token(&app, &alice, &m).await;
+        let delete = call_at(
+            &app,
+            "DELETE",
+            format!("/api/v1/teams/{team}"),
+            &alice,
+            None,
+        );
+        let writes = futures_util::future::join_all([
+            Box::pin(act(&app, &bob, &m, "join", None))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = common::TestResponse>>>,
+            Box::pin(act(&app, &alice, &m, "phase/next", None)),
+            Box::pin(act(&app, &alice, &m, "invite-link", None)),
+            Box::pin(act(
+                &app,
+                &alice,
+                &m,
+                "facilitator",
+                Some(json!({ "userId": bob_id })),
+            )),
+            Box::pin(call_at(
+                &app,
+                "PATCH",
+                format!("/api/v1/meetings/{m}"),
+                &alice,
+                Some(json!({ "title": "Racing" })),
+            )),
+            Box::pin(call_at(
+                &app,
+                "POST",
+                format!("/api/v1/meeting-invites/{token}/accept"),
+                &bob,
+                None,
+            )),
+            Box::pin(act(&app, &alice, &m, "end", None)),
+        ]);
+        let (deleted, results) = tokio::join!(delete, writes);
+        assert_eq!(deleted.status, 204, "round {round}: {}", deleted.text());
+        for res in results {
+            assert!(
+                [200, 204, 400, 403, 404, 409].contains(&res.status),
+                "round {round}: {} {}",
+                res.status,
+                res.text()
+            );
+        }
+    }
 }

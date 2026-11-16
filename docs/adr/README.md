@@ -36,3 +36,4 @@ Legend: 🟢 accepted · 🟡 proposed · 🔴 rejected · ⚪ superseded
 | [0010](0010-rich-text-format.md) | Rich text is stored as server-sanitized HTML | 🟡 proposed |
 | [0011](0011-realtime-hub.md) | Real-time hub over WebSocket with PostgreSQL LISTEN/NOTIFY fan-out | 🟡 proposed |
 | [0012](0012-ephemeral-client-messages-and-user-events.md) | Ephemeral client messages and user-targeted events on the real-time hub | 🟡 proposed |
+| [0013](0013-image-attachments.md) | Image attachments are re-encoded as WebP and referenced by id in rich text | 🟡 proposed |

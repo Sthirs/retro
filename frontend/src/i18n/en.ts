@@ -35,6 +35,7 @@ export default {
     unsupported_picture_type: 'Use a PNG, JPEG, GIF or WebP picture.',
     stale_position: 'The board changed in the meantime. We reloaded it, so try the move again.',
     invalid_task_content: 'The task text is empty or not valid. Check it and try again.',
+    attachment_not_found: 'An image in this text is no longer available. Remove it and try again.',
     task_not_found: 'This task no longer exists.',
     invalid_position: 'The board changed. It has been refreshed — try again.',
     meeting_not_found: 'This meeting no longer exists.',
@@ -548,5 +549,22 @@ export default {
     linkApply: 'Apply',
     linkCancel: 'Cancel',
     mentions: 'Mention a team member',
+    image: {
+      add: 'Add image',
+      alt: 'Image',
+      uploading: 'Uploading image…',
+      errors: {
+        image_too_large: 'Images must be 5 MB or smaller.',
+        unsupported_image_type: 'Use a PNG, JPEG, GIF or WebP image.',
+        invalid_image: 'This image could not be read.',
+        image_dimensions_too_large:
+          'This image is too big: at most 4096 pixels per side, and 500 frames for animations.',
+        too_many_requests: 'Too many images uploaded. Try again later.',
+        too_many_pending_attachments:
+          'Too many images not saved yet. Save or discard your drafts first.',
+        too_many_images: 'At most 10 images per text.',
+        unknown: 'The image could not be uploaded. Try again.',
+      },
+    },
   },
 };

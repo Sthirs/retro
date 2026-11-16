@@ -4,7 +4,7 @@ import { nextTick } from 'vue';
 
 import { realtime } from '@/api/realtime';
 import { useMeetingStore } from '@/stores/meeting';
-import { hasText, useReflectDraftsStore } from '@/stores/reflectDrafts';
+import { hasContent, useReflectDraftsStore } from '@/stores/reflectDrafts';
 import { useSessionStore } from '@/stores/session';
 
 import { ALICE, MEETING_ID, meetingState, mockFetch } from './helpers';
@@ -36,11 +36,14 @@ describe('reflect drafts', () => {
   afterEach(() => vi.restoreAllMocks());
 
   it('tells markup with text from empty markup', () => {
-    expect(hasText('<p>Hi</p>')).toBe(true);
-    expect(hasText('<p></p>')).toBe(false);
-    expect(hasText('<p>&nbsp; </p>')).toBe(false);
-    expect(hasText('<p><img src="x"></p>')).toBe(false);
-    expect(hasText('<<b>p>a')).toBe(true);
+    expect(hasContent('<p>Hi</p>')).toBe(true);
+    expect(hasContent('<p></p>')).toBe(false);
+    expect(hasContent('<p>&nbsp; </p>')).toBe(false);
+    expect(hasContent('<p><img src="x"></p>')).toBe(false);
+    expect(
+      hasContent('<p><img data-attachment-id="0193a4b2-7c1d-7e3f-8a9b-0c1d2e3f4a5b"></p>'),
+    ).toBe(true);
+    expect(hasContent('<<b>p>a')).toBe(true);
   });
 
   it('keeps a draft another tab saved in another column', async () => {

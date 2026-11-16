@@ -13,7 +13,7 @@ import RichTextEditor from '@/components/RichTextEditor.vue';
 import AppButton from '@/components/ui/AppButton.vue';
 import { COLUMNS } from '@/features/meetings/reflect/columns';
 import { useMeetingStore } from '@/stores/meeting';
-import { hasText, type OpenEditor, useReflectDraftsStore } from '@/stores/reflectDrafts';
+import { hasContent, type OpenEditor, useReflectDraftsStore } from '@/stores/reflectDrafts';
 
 const props = defineProps<{ column: ReflectionColumn; reflection?: ReflectionDto }>();
 const { t } = useI18n();
@@ -26,6 +26,8 @@ const name = computed(() => t(`reflect.columns.${props.column}.name`));
 const edited = ref(props.reflection?.content ?? '');
 const target = ref<ReflectionColumn>(props.reflection?.column ?? props.column);
 const busy = ref(false);
+/** Images are still uploading: the text is not final yet. */
+const uploading = ref(false);
 
 const content = computed({
   get: () => (editing.value ? edited.value : drafts.draft(props.column)),
@@ -34,7 +36,7 @@ const content = computed({
     else drafts.setDraft(props.column, html);
   },
 });
-const canSend = computed(() => hasText(content.value) && !busy.value);
+const canSend = computed(() => hasContent(content.value) && !busy.value && !uploading.value);
 
 /**
  * After a request, closes the editor that started it, if it is still the
@@ -98,10 +100,12 @@ function cancel(): void {
       kind="reflection"
       autofocus
       :readonly="busy"
+      :team-id="store.meeting?.teamId"
       :label="t('reflect.editorLabel', { column: name })"
       :placeholder="`${t(`reflect.columns.${column}.hint`)}…`"
       @submit="submit"
       @cancel="cancel"
+      @uploading="uploading = $event"
     />
     <div v-if="editing" class="composer__edit">
       <label class="composer__label" :for="`${uid}-column`">{{ t('reflect.moveTo') }}</label>

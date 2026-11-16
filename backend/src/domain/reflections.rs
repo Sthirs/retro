@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
+        attachments::{self, Owner},
         meetings::{find_for_member, require_participant},
         rich_text::{Profile, sanitize_as},
     },
@@ -194,9 +195,10 @@ pub async fn create(
     raw_content: &str,
     client: Option<Uuid>,
 ) -> Result<Uuid, AppError> {
-    let content = sanitize_as(raw_content, Profile::Reflection)?.html;
+    let content = sanitize_as(raw_content, Profile::Reflection)?;
     let txn = db.begin().await?;
     let meeting = lock_reflect(&txn, meeting_id, actor).await?;
+    let html = attachments::resolve(&txn, meeting.team_id, actor, None, &content).await?;
     let written = reflection::Entity::find()
         .filter(reflection::Column::MeetingId.eq(meeting.id))
         .filter(reflection::Column::AuthorId.eq(actor))
@@ -212,12 +214,13 @@ pub async fn create(
         meeting_id: Set(meeting.id),
         author_id: Set(actor),
         column: Set(column),
-        content: Set(content),
+        content: Set(html),
         created_at: Set(now),
         updated_at: Set(now),
     }
     .insert(&txn)
     .await?;
+    attachments::set_references(&txn, Owner::Reflection(id), &content.attachment_ids).await?;
     publish_change(&txn, meeting.id, actor, id, client, true).await?;
     txn.commit().await?;
     Ok(id)
@@ -234,20 +237,30 @@ pub async fn update(
     client: Option<Uuid>,
 ) -> Result<Uuid, AppError> {
     let content = raw_content
-        .map(|raw| sanitize_as(raw, Profile::Reflection).map(|s| s.html))
+        .map(|raw| sanitize_as(raw, Profile::Reflection))
         .transpose()?;
     let found = find_own(db, reflection_id, actor).await?;
     let txn = db.begin().await?;
     let meeting = lock_reflect(&txn, found.meeting_id, actor).await?;
     // Re-read under the meeting lock: it may have been deleted meanwhile.
     let current = find_own(&txn, reflection_id, actor).await?;
+    let owner = Owner::Reflection(current.id);
+    let html = match &content {
+        Some(content) => {
+            Some(attachments::resolve(&txn, meeting.team_id, actor, Some(owner), content).await?)
+        }
+        None => None,
+    };
     let moved = column.is_some_and(|c| c != current.column);
-    let edited = content.as_ref().is_some_and(|c| *c != current.content);
+    let edited = html.as_ref().is_some_and(|c| *c != current.content);
+    if edited && let Some(content) = &content {
+        attachments::set_references(&txn, owner, &content.attachment_ids).await?;
+    }
     if moved || edited {
         reflection::ActiveModel {
             id: Set(current.id),
             column: Set(column.unwrap_or(current.column)),
-            content: Set(content.unwrap_or(current.content)),
+            content: Set(html.unwrap_or(current.content)),
             updated_at: Set(OffsetDateTime::now_utc()),
             ..Default::default()
         }

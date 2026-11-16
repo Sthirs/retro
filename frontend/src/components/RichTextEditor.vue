@@ -6,17 +6,29 @@
  * - `reflection`: strikethrough, bullet lists and inline code (spec §9.2), in
  *   the compact Reflect composer (toolbar under the text, a placeholder,
  *   Ctrl/Cmd + Enter submits, Esc cancels).
- * Everything else is switched off so the editor cannot produce content the
- * server would strip.
+ * With a `teamId`, images can be pasted, dropped or picked (ADR-0013): they
+ * are uploaded at once and stored as `<img data-attachment-id>`, never with a
+ * `src`. Everything else is switched off so the editor cannot produce content
+ * the server would strip.
  */
 import Mention from '@tiptap/extension-mention';
 import StarterKit from '@tiptap/starter-kit';
-import { EditorContent, Extension, useEditor, type AnyExtension } from '@tiptap/vue-3';
+import {
+  EditorContent,
+  Extension,
+  Node,
+  useEditor,
+  type AnyExtension,
+  type Editor,
+} from '@tiptap/vue-3';
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
-import type { PersonDto } from '@/api/client';
+import { errorCode, type PersonDto } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
+import { ACCEPTED_TYPES, attachmentUrl, uploadAttachment } from '@/lib/attachments';
+import { loadImage } from '@/lib/images';
+import { ATTACHMENT_ID } from '@/lib/sanitize';
 import '@/styles/prosemirror.css';
 
 const props = withDefaults(
@@ -29,10 +41,25 @@ const props = withDefaults(
     autofocus?: boolean;
     /** Locks the text, e.g. while it is being sent. */
     readonly?: boolean;
+    /** The team images are uploaded to; without it, images are off. */
+    teamId?: string;
   }>(),
-  { members: () => [], kind: 'task', placeholder: '', autofocus: false, readonly: false },
+  {
+    members: () => [],
+    kind: 'task',
+    placeholder: '',
+    autofocus: false,
+    readonly: false,
+    teamId: undefined,
+  },
 );
-const emit = defineEmits<{ 'update:modelValue': [html: string]; submit: []; cancel: [] }>();
+const emit = defineEmits<{
+  'update:modelValue': [html: string];
+  submit: [];
+  cancel: [];
+  /** True while images are uploading: the content is not final yet. */
+  uploading: [busy: boolean];
+}>();
 const reflection = props.kind === 'reflection';
 const { t } = useI18n();
 
@@ -91,6 +118,80 @@ const RetroMention = Mention.extend({
   },
 });
 
+/** Most images in one content, as the server allows (spec §13). */
+const MAX_IMAGES = 10;
+
+/**
+ * An uploaded image. It parses only `img[data-attachment-id]`, so images
+ * pasted from other sites (`<img src>`) are dropped, and it renders no `src`:
+ * the node view loads the image with the access token.
+ */
+const AttachmentImage = Node.create({
+  name: 'attachmentImage',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  draggable: true,
+  selectable: true,
+  addAttributes() {
+    const numeric = (name: string) => ({
+      default: null,
+      parseHTML: (el: HTMLElement) => {
+        const value = el.getAttribute(name);
+        return value && /^[1-9]\d{0,4}$/.test(value) ? Number(value) : null;
+      },
+      renderHTML: (attrs: Record<string, unknown>) =>
+        attrs[name] ? { [name]: String(attrs[name]) } : {},
+    });
+    return {
+      attachmentId: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute('data-attachment-id'),
+        renderHTML: (attrs: Record<string, unknown>) => ({
+          'data-attachment-id': attrs.attachmentId,
+        }),
+      },
+      alt: {
+        default: '',
+        parseHTML: (el: HTMLElement) => el.getAttribute('alt') ?? '',
+        renderHTML: (attrs: Record<string, unknown>) => ({ alt: attrs.alt }),
+      },
+      width: numeric('width'),
+      height: numeric('height'),
+    };
+  },
+  parseHTML() {
+    return [
+      {
+        tag: 'img[data-attachment-id]',
+        getAttrs: (el: HTMLElement) =>
+          ATTACHMENT_ID.test(el.getAttribute('data-attachment-id') ?? '') ? null : false,
+      },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['img', HTMLAttributes];
+  },
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement('img');
+      const id = String(node.attrs.attachmentId);
+      dom.className = 'rte-image';
+      dom.dataset.attachmentId = id;
+      dom.alt = String(node.attrs.alt || t('richText.image.alt'));
+      if (node.attrs.width) dom.width = Number(node.attrs.width);
+      if (node.attrs.height) dom.height = Number(node.attrs.height);
+      loadImage(attachmentUrl(id)).then(
+        (url) => {
+          dom.src = url;
+        },
+        () => dom.classList.add('rte-image--broken'),
+      );
+      return { dom };
+    };
+  },
+});
+
 /** Reflections: Ctrl/Cmd + Enter sends, Esc cancels. */
 const Shortcuts = Extension.create({
   name: 'retroShortcuts',
@@ -123,6 +224,12 @@ const editor = useEditor({
       'aria-label': props.label,
       class: 'rte-content',
     },
+    handlePaste: (_view, event) => takeFiles(event.clipboardData?.files, event),
+    handleDrop: (view, event, _slice, moved) => {
+      if (moved) return false;
+      const at = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+      return takeFiles(event.dataTransfer?.files, event, at);
+    },
   },
   extensions: [
     StarterKit.configure({
@@ -147,6 +254,7 @@ const editor = useEditor({
       },
     }),
     ...(reflection ? [Shortcuts] : [mentions()]),
+    ...(props.teamId ? [AttachmentImage] : []),
   ],
   onUpdate: ({ editor: e }) => emit('update:modelValue', e.getHTML()),
 });
@@ -248,6 +356,95 @@ watch([suggestion, selectedIndex], () => {
     dom.removeAttribute('aria-activedescendant');
   }
 });
+
+// --- Images -------------------------------------------------------------------
+
+const fileInput = ref<HTMLInputElement | null>(null);
+const imageErrorId = `image-error-${uid}`;
+/** Uploads in flight. */
+const uploads = ref(0);
+/** The last upload's error, as a `richText.image.errors` key. */
+const imageError = ref<string | null>(null);
+const IMAGE_ERRORS = [
+  'image_too_large',
+  'unsupported_image_type',
+  'invalid_image',
+  'image_dimensions_too_large',
+  'too_many_requests',
+  'too_many_pending_attachments',
+  'too_many_images',
+];
+
+watch(
+  () => uploads.value > 0,
+  (busy) => emit('uploading', busy),
+);
+
+function imageCount(e: Editor): number {
+  let count = 0;
+  e.state.doc.descendants((node) => {
+    if (node.type.name === 'attachmentImage') count += 1;
+  });
+  return count;
+}
+
+/**
+ * Uploads the image files of a paste or drop, if any, and inserts them at
+ * `at` (default: the selection). Returns whether the event was handled.
+ */
+function takeFiles(list: FileList | undefined, event: Event, at?: number): boolean {
+  const files = Array.from(list ?? []).filter((f) => f.type.startsWith('image/'));
+  if (!props.teamId || props.readonly || files.length === 0) return false;
+  event.preventDefault();
+  void insertImages(files, at);
+  return true;
+}
+
+async function insertImages(files: File[], at?: number): Promise<void> {
+  const e = editor.value;
+  const teamId = props.teamId;
+  if (!e || !teamId) return;
+  imageError.value = null;
+  if (imageCount(e) + uploads.value + files.length > MAX_IMAGES) {
+    imageError.value = 'too_many_images';
+    return;
+  }
+  let position = at;
+  for (const file of files) {
+    uploads.value += 1;
+    try {
+      const image = await uploadAttachment(teamId, file);
+      if (e.isDestroyed) return;
+      const node = {
+        type: 'attachmentImage',
+        attrs: { attachmentId: image.id, alt: '', width: image.width, height: image.height },
+      };
+      const chain = e.chain().focus();
+      if (position !== undefined && position <= e.state.doc.content.size) {
+        chain.insertContentAt(position, node).run();
+        position += 1;
+      } else {
+        chain.insertContent(node).run();
+      }
+    } catch (err) {
+      const code = errorCode(err);
+      imageError.value = IMAGE_ERRORS.includes(code) ? code : 'unknown';
+    } finally {
+      uploads.value -= 1;
+    }
+  }
+}
+
+function chooseImages(): void {
+  fileInput.value?.click();
+}
+
+function onFiles(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  input.value = '';
+  if (files.length > 0) void insertImages(files);
+}
 
 // --- Link field -------------------------------------------------------------
 
@@ -383,7 +580,36 @@ onBeforeUnmount(() => {
           <AppIcon name="code" :size="16" />
         </button>
       </template>
+      <template v-if="teamId">
+        <button
+          type="button"
+          class="rte-btn"
+          :aria-label="t('richText.image.add')"
+          :aria-describedby="imageError ? imageErrorId : undefined"
+          :disabled="readonly"
+          @mousedown.prevent
+          @click="chooseImages"
+        >
+          <AppIcon name="image" :size="16" />
+        </button>
+        <input
+          ref="fileInput"
+          type="file"
+          class="rte-file"
+          :accept="ACCEPTED_TYPES.join(',')"
+          multiple
+          tabindex="-1"
+          aria-hidden="true"
+          @change="onFiles"
+        />
+        <span v-if="uploads > 0" class="rte-status" role="status">
+          {{ t('richText.image.uploading') }}
+        </span>
+      </template>
     </div>
+    <p v-if="imageError" :id="imageErrorId" class="rte-image-error" role="alert">
+      {{ t(`richText.image.errors.${imageError}`) }}
+    </p>
 
     <form
       v-if="linkOpen"
@@ -544,6 +770,46 @@ onBeforeUnmount(() => {
 
 .rte-area {
   position: relative;
+}
+
+.rte-file {
+  display: none;
+}
+
+.rte-status {
+  align-self: center;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.rte-image-error {
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.rte-area :deep(.rte-image) {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  max-height: 200px;
+  margin: 4px 0;
+  vertical-align: bottom;
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+}
+
+.rte-area :deep(.rte-image.ProseMirror-selectednode) {
+  outline: 2px solid var(--accent);
+}
+
+.rte-area :deep(.rte-image--broken) {
+  min-width: 44px;
+  min-height: 44px;
+  border: 1px dashed var(--line);
+  background: var(--well);
 }
 
 .rte-placeholder {

@@ -10,6 +10,69 @@
     "version": "v1"
   },
   "paths": {
+    "/api/v1/attachments/{attachment_id}": {
+      "get": {
+        "tags": [
+          "attachments"
+        ],
+        "summary": "An image, as WebP, for team members who uploaded it or can see an item\nreferencing it. Attachments never change, so it is cached as immutable.",
+        "operationId": "get_attachment",
+        "parameters": [
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "description": "The attachment",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image bytes",
+            "content": {
+              "image/webp": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid access token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`attachment_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/auth/config": {
       "get": {
         "tags": [
@@ -2292,6 +2355,120 @@
         ]
       }
     },
+    "/api/v1/teams/{team_id}/attachments": {
+      "post": {
+        "tags": [
+          "attachments"
+        ],
+        "summary": "Uploads an image for a reflection or task of the team. The image is\ndecoded and re-encoded as WebP: only its pixels (and frames) are kept.",
+        "operationId": "upload_attachment",
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "description": "The team",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "A PNG, JPEG, GIF or WebP image of at most 5 MB",
+          "content": {
+            "image/*": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The stored image",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_image` or `image_dimensions_too_large`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid access token",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`team_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`image_too_large`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "`unsupported_image_type`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`too_many_requests` or `too_many_pending_attachments`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/teams/{team_id}/invitations": {
       "get": {
         "tags": [
@@ -3167,6 +3344,38 @@
   },
   "components": {
     "schemas": {
+      "AttachmentDto": {
+        "type": "object",
+        "description": "An uploaded image, converted to WebP. Rich text references it as\n`<img data-attachment-id=\"{id}\">`.",
+        "required": [
+          "id",
+          "contentType",
+          "width",
+          "height",
+          "animated"
+        ],
+        "properties": {
+          "animated": {
+            "type": "boolean"
+          },
+          "contentType": {
+            "type": "string",
+            "description": "Always `image/webp`."
+          },
+          "height": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "width": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
       "AuthConfig": {
         "type": "object",
         "description": "Which sign-in methods the sign-in page offers.",

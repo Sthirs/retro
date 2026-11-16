@@ -1,5 +1,6 @@
 //! SeaORM entities. Schema lives in the `migration` crate.
 
+pub mod attachment;
 pub mod greeting;
 pub mod icebreaker_question;
 pub mod invitation;

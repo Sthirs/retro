@@ -13,10 +13,15 @@ export type OpenEditor =
 
 const KEY = 'retro.reflectDrafts';
 
-/** Whether markup holds any text a reader would see. */
-export function hasText(html: string): boolean {
-  const text = new DOMParser().parseFromString(html, 'text/html').body.textContent ?? '';
-  return text.replace(/\u00a0/g, ' ').trim() !== '';
+/** Whether markup holds anything a reader would see: text or an uploaded image. */
+export function hasContent(html: string): boolean {
+  // A parsed document is inert: its images are never fetched.
+  const body = new DOMParser().parseFromString(html, 'text/html').body;
+  const text = body.textContent ?? '';
+  return (
+    text.replace(/\u00a0/g, ' ').trim() !== '' ||
+    body.querySelector('img[data-attachment-id]') !== null
+  );
 }
 
 /**
@@ -60,7 +65,7 @@ export const useReflectDraftsStore = defineStore('reflectDrafts', () => {
         const raw = localStorage.getItem(owner);
         stored = raw ? (JSON.parse(raw) as Partial<Record<ReflectionColumn, string>>) : {};
         const html = drafts.value[column];
-        if (html && hasText(html)) stored[column] = html;
+        if (html && hasContent(html)) stored[column] = html;
         else delete stored[column];
       }
       if (Object.keys(stored).length === 0) localStorage.removeItem(owner);
@@ -72,7 +77,7 @@ export const useReflectDraftsStore = defineStore('reflectDrafts', () => {
 
   /** Columns holding unsent text. */
   const unsent = computed(
-    () => Object.values(drafts.value).filter((html) => html && hasText(html)).length,
+    () => Object.values(drafts.value).filter((html) => html && hasContent(html)).length,
   );
 
   function draft(column: ReflectionColumn): string {

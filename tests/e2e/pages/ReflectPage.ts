@@ -93,6 +93,17 @@ export class ReflectPage extends MeetingRoomPage {
     await expect(this.mine(name).filter({ hasText: text })).toBeVisible();
   }
 
+  /** Adds the image file at `path` to the open composer of a column. */
+  async addImage(name: ColumnName, path: string): Promise<void> {
+    const chooser = this.page.waitForEvent('filechooser');
+    await this.column(name).getByRole('button', { name: 'Add image' }).click();
+    await (await chooser).setFiles(path);
+    await expect(this.column(name).locator('.rte img[data-attachment-id]')).toHaveAttribute(
+      'src',
+      /^blob:/,
+    );
+  }
+
   /** Starts the timer from the popover with a typed duration. */
   async startTimer(duration: string): Promise<void> {
     await this.setTimer.click();

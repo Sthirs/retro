@@ -73,6 +73,7 @@ async fn serve(db: sea_orm::DatabaseConnection, config: Config) -> anyhow::Resul
 
     let addr = config.bind_addr;
     let state = AppState::new(db, config);
+    retro_backend::services::cleanup::start(state.db.clone());
     let hub = state.hub.clone();
     let router = app::router(state);
     let listener = tokio::net::TcpListener::bind(addr).await?;

@@ -20,6 +20,7 @@ import {
   useEditor,
   type AnyExtension,
   type Editor,
+  type EditorEvents,
 } from '@tiptap/vue-3';
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -393,7 +394,8 @@ function imageCount(e: Editor): number {
 
 /**
  * Uploads the image files of a paste or drop, if any, and inserts them at
- * `at` (default: the selection). Returns whether the event was handled.
+ * `at` (default: in place of the selection). Returns whether the event was
+ * handled.
  */
 function takeFiles(list: FileList | undefined, event: Event, at?: number): boolean {
   const files = Array.from(list ?? []).filter((f) => f.type.startsWith('image/'));
@@ -412,34 +414,40 @@ async function insertImages(files: File[], at?: number): Promise<void> {
     imageError.value = 'too_many_images';
     return;
   }
-  let position = at;
+  // The images go where they were pasted, dropped or picked, even if the
+  // text changes while they upload: the position follows every edit
+  // (including each inserted image, so they keep their order).
+  if (at === undefined && !e.state.selection.empty) e.commands.deleteSelection();
+  let position = at ?? e.state.selection.from;
+  const follow = ({ transaction }: EditorEvents['transaction']): void => {
+    position = transaction.mapping.map(position);
+  };
+  e.on('transaction', follow);
   // Uploads run one at a time: reserve every file now, so a paste during
   // the queue cannot pass the limit.
   uploads.value += files.length;
-  for (const [index, file] of files.entries()) {
-    try {
-      const image = await uploadAttachment(teamId, file);
-      if (e.isDestroyed) {
-        uploads.value -= files.length - index - 1;
-        return;
+  try {
+    for (const [index, file] of files.entries()) {
+      try {
+        const image = await uploadAttachment(teamId, file);
+        if (e.isDestroyed) {
+          uploads.value -= files.length - index - 1;
+          return;
+        }
+        const node = {
+          type: 'attachmentImage',
+          attrs: { attachmentId: image.id, alt: '', width: image.width, height: image.height },
+        };
+        e.chain().focus().insertContentAt(Math.min(position, e.state.doc.content.size), node).run();
+      } catch (err) {
+        const code = errorCode(err);
+        imageError.value = IMAGE_ERRORS.includes(code) ? code : 'unknown';
+      } finally {
+        uploads.value -= 1;
       }
-      const node = {
-        type: 'attachmentImage',
-        attrs: { attachmentId: image.id, alt: '', width: image.width, height: image.height },
-      };
-      const chain = e.chain().focus();
-      if (position !== undefined && position <= e.state.doc.content.size) {
-        chain.insertContentAt(position, node).run();
-        position += 1;
-      } else {
-        chain.insertContent(node).run();
-      }
-    } catch (err) {
-      const code = errorCode(err);
-      imageError.value = IMAGE_ERRORS.includes(code) ? code : 'unknown';
-    } finally {
-      uploads.value -= 1;
     }
+  } finally {
+    e.off('transaction', follow);
   }
 }
 

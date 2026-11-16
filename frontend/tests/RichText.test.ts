@@ -583,4 +583,74 @@ describe('rich text images', () => {
     expect(wrapper.find('[role="alert"]').exists()).toBe(false);
     wrapper.unmount();
   });
+
+  it('RichTextEditor inserts a pasted image where it was pasted, whatever is edited meanwhile', async () => {
+    let finish: (v: { id: string; width: number; height: number }) => void = () => {};
+    vi.mocked(uploadAttachment).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const wrapper = mountWithImages('<p>alpha beta</p>');
+    const editor = await editorOf(wrapper);
+    editor.commands.setTextSelection(6); // after "alpha"
+    const file = new File([new Uint8Array([1])], 'shot.png', { type: 'image/png' });
+    editor.view.someProp('handlePaste', (f) =>
+      f(
+        editor.view,
+        { clipboardData: { files: [file] }, preventDefault: vi.fn() } as unknown as ClipboardEvent,
+        editor.state.doc.slice(0),
+      ),
+    );
+    // While it uploads: text is typed before it, then "beta" is selected.
+    editor.commands.insertContentAt(1, 'new ');
+    editor.commands.setTextSelection({ from: 11, to: 15 });
+    expect(editor.state.doc.textBetween(11, 15)).toBe('beta');
+
+    finish({ id: IMG_ID, width: 4, height: 3 });
+    await flushPromises();
+    expect(editor.getHTML()).toBe(
+      `<p>new alpha<img data-attachment-id="${IMG_ID}" alt="" width="4" height="3"> beta</p>`,
+    );
+    wrapper.unmount();
+  });
+
+  it('RichTextEditor inserts dropped images in order where they were dropped', async () => {
+    const pending: ((v: { id: string; width: number; height: number }) => void)[] = [];
+    vi.mocked(uploadAttachment).mockImplementation(
+      () => new Promise((resolve) => pending.push(resolve)),
+    );
+    const wrapper = mountWithImages('<p>alpha beta</p>');
+    const editor = await editorOf(wrapper);
+    editor.view.posAtCoords = () => ({ pos: 6, inside: -1 }); // after "alpha"
+    const files = ['a.png', 'b.png'].map(
+      (name) => new File([new Uint8Array([1])], name, { type: 'image/png' }),
+    );
+    const handled = editor.view.someProp('handleDrop', (f) =>
+      f(
+        editor.view,
+        {
+          dataTransfer: { files },
+          clientX: 0,
+          clientY: 0,
+          preventDefault: vi.fn(),
+        } as unknown as DragEvent,
+        editor.state.doc.slice(0),
+        false,
+      ),
+    );
+    expect(handled).toBe(true);
+    editor.commands.insertContentAt(1, 'new ');
+    const second = `${IMG_ID.slice(0, -1)}2`;
+    pending[0]!({ id: IMG_ID, width: 4, height: 3 });
+    await flushPromises();
+    editor.commands.insertContentAt(1, 'more ');
+    pending[1]!({ id: second, width: 4, height: 3 });
+    await flushPromises();
+    expect(editor.getHTML()).toBe(
+      `<p>more new alpha<img data-attachment-id="${IMG_ID}" alt="" width="4" height="3">` +
+        `<img data-attachment-id="${second}" alt="" width="4" height="3"> beta</p>`,
+    );
+    wrapper.unmount();
+  });
 });

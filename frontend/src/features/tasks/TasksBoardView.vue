@@ -229,6 +229,7 @@ watch(
       open
       :task="editingTask"
       :members="people"
+      :team-id="teamId"
       @close="editingId = null"
     />
     <ConfirmDialog

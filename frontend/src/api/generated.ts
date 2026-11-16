@@ -6,6 +6,19 @@
  * OpenAPI spec version: v1
  */
 import { apiFetch } from './fetcher';
+/**
+ * An uploaded image, converted to WebP. Rich text references it as
+ * `<img data-attachment-id="{id}">`.
+ */
+export interface AttachmentDto {
+  animated: boolean;
+  /** Always `image/webp`. */
+  contentType: string;
+  height: number;
+  id: string;
+  width: number;
+}
+
 export interface SsoConfig {
   buttonText: string;
   enabled: boolean;
@@ -648,6 +661,55 @@ export type ListTasksParams = {
 export type GetPictureParams = {
   /** The `pictureVersion` the caller knows. */
   v?: string;
+};
+
+export type getAttachmentResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type getAttachmentResponse304 = {
+  data: void;
+  status: 304;
+};
+
+export type getAttachmentResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type getAttachmentResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type getAttachmentResponseSuccess = getAttachmentResponse200 & {
+  headers: Headers;
+};
+export type getAttachmentResponseError = (
+  getAttachmentResponse304 | getAttachmentResponse401 | getAttachmentResponse404
+) & {
+  headers: Headers;
+};
+
+export type getAttachmentResponse = getAttachmentResponseSuccess | getAttachmentResponseError;
+
+export const getGetAttachmentUrl = (attachmentId: string) => {
+  return `/api/v1/attachments/${attachmentId}`;
+};
+
+/**
+ * @summary An image, as WebP, for team members who uploaded it or can see an item
+referencing it. Attachments never change, so it is cached as immutable.
+ */
+export const getAttachment = async (
+  attachmentId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<getAttachmentResponse> => {
+  return apiFetch<getAttachmentResponse>(getGetAttachmentUrl(attachmentId), {
+    ...options,
+    method: 'GET',
+  });
 };
 
 export type configResponse200 = {
@@ -2634,6 +2696,98 @@ export const renameTeam = async (
   });
 };
 
+export type uploadAttachmentResponse201 = {
+  data: AttachmentDto;
+  status: 201;
+};
+
+export type uploadAttachmentResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type uploadAttachmentResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type uploadAttachmentResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type uploadAttachmentResponse413 = {
+  data: Problem;
+  status: 413;
+};
+
+export type uploadAttachmentResponse415 = {
+  data: Problem;
+  status: 415;
+};
+
+export type uploadAttachmentResponse429 = {
+  data: Problem;
+  status: 429;
+};
+
+export type uploadAttachmentResponseSuccess = uploadAttachmentResponse201 & {
+  headers: Headers;
+};
+export type uploadAttachmentResponseError = (
+  | uploadAttachmentResponse400
+  | uploadAttachmentResponse401
+  | uploadAttachmentResponse404
+  | uploadAttachmentResponse413
+  | uploadAttachmentResponse415
+  | uploadAttachmentResponse429
+) & {
+  headers: Headers;
+};
+
+export type uploadAttachmentResponse =
+  uploadAttachmentResponseSuccess | uploadAttachmentResponseError;
+
+export const getUploadAttachmentUrl = (teamId: string) => {
+  return `/api/v1/teams/${teamId}/attachments`;
+};
+
+/**
+ * @summary Uploads an image for a reflection or task of the team. The image is
+decoded and re-encoded as WebP: only its pixels (and frames) are kept.
+ */
+export const uploadAttachment = async (
+  teamId: string,
+  uploadAttachmentBody: Blob,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<uploadAttachmentResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<uploadAttachmentResponse>(getUploadAttachmentUrl(teamId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'image/*', ...getHeaders(options?.headers) },
+    body: uploadAttachmentBody,
+  });
+};
+
 export type listInvitationsResponse200 = {
   data: InvitationDto[];
   status: 200;
@@ -3213,6 +3367,11 @@ export type getPictureResponse302 = {
   status: 302;
 };
 
+export type getPictureResponse304 = {
+  data: void;
+  status: 304;
+};
+
 export type getPictureResponse401 = {
   data: Problem;
   status: 401;
@@ -3227,7 +3386,7 @@ export type getPictureResponseSuccess = getPictureResponse200 & {
   headers: Headers;
 };
 export type getPictureResponseError = (
-  getPictureResponse302 | getPictureResponse401 | getPictureResponse404
+  getPictureResponse302 | getPictureResponse304 | getPictureResponse401 | getPictureResponse404
 ) & {
   headers: Headers;
 };

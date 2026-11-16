@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { expect, test, type Browser, type Page, type Request } from "@playwright/test";
 
 import { createTeam, deleteTeam, seedTask, startMeeting, userIdOf } from "../api";
@@ -13,6 +15,8 @@ import { TeamSettingsPage } from "../pages/TeamSettingsPage";
 const TEAM = "Tasks E2E";
 const ERIN = USERS.erin.username;
 const FINN = USERS.finn.username;
+
+const GIF = path.join(__dirname, "..", "assets", "anim.gif");
 
 const PIN = "Pin it";
 const STUCK = "Erin stuck item";
@@ -276,6 +280,39 @@ test.describe("tasks board", () => {
     await expect(tasks.card("Live one")).toBeVisible();
     await finnTasks.moveWithKeyboard("Live one", "Done");
     await expect(tasks.cards("Done")).toHaveCount(1);
+    await finn.context().close();
+  });
+
+  test("images: a GIF added to a task is shown, as WebP, to the whole team", async ({
+    page,
+    browser,
+  }) => {
+    await seedTask(ERIN, teamId, { status: "active", content: "<p>Look at this</p>" });
+    const finn = await finnJoins(page, browser);
+    const tasks = new TasksPage(page);
+    await tasks.goto(teamId);
+
+    const served = page.waitForResponse(
+      (res) => /\/api\/v1\/attachments\/[0-9a-f-]+$/.test(new URL(res.url()).pathname),
+    );
+    await tasks.addImage("Look at this", GIF);
+    const image = tasks.images("Look at this");
+    await expect(image).toHaveAttribute("src", /^blob:/);
+    await expect(image).toHaveAttribute("width", "48");
+    await expect(image).toHaveAttribute("height", "32");
+    // Converted on upload, and served so that it cannot be sniffed or run.
+    const headers = (await served).headers();
+    expect(headers["content-type"]).toBe("image/webp");
+    expect(headers["x-content-type-options"]).toBe("nosniff");
+    expect(headers["content-security-policy"]).toBe("default-src 'none'; sandbox");
+    await expect
+      .poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth))
+      .toBe(48);
+
+    // Finn, another member, sees it too.
+    const finnTasks = new TasksPage(finn);
+    await finnTasks.goto(teamId);
+    await expect(finnTasks.images("Look at this")).toHaveAttribute("src", /^blob:/);
     await finn.context().close();
   });
 

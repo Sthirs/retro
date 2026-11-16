@@ -91,6 +91,18 @@ impl TestApp {
         .await
     }
 
+    /// A GET revalidating a cached response by its `ETag`.
+    pub async fn get_if_none_match(&self, path: &str, token: &str, etag: &str) -> TestResponse {
+        self.send(
+            Request::get(path)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::IF_NONE_MATCH, etag)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+    }
+
     pub async fn post_json(&self, path: &str, body: Value) -> TestResponse {
         self.send(
             Request::post(path)

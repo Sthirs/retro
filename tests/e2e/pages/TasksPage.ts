@@ -169,6 +169,32 @@ export class TasksPage {
     await expect(this.editDialog).toBeHidden();
   }
 
+  /**
+   * Adds the image file at `path` to a task through the edit dialog's file
+   * picker, and saves once it has been uploaded and shown in the editor.
+   */
+  async addImage(cardText: string, path: string): Promise<void> {
+    await this.actions(cardText).click();
+    await this.menu.getByRole('menuitem', { name: 'Edit' }).click();
+    await expect(this.editDialog).toBeVisible();
+    await this.editDialog.getByRole('textbox', { name: 'Task' }).click();
+    await this.page.keyboard.press('ControlOrMeta+End');
+    const chooser = this.page.waitForEvent('filechooser');
+    await this.editDialog.getByRole('button', { name: 'Add image' }).click();
+    await (await chooser).setFiles(path);
+    await expect(this.editDialog.locator('img[data-attachment-id]')).toHaveAttribute(
+      'src',
+      /^blob:/,
+    );
+    await this.editDialog.getByRole('button', { name: 'Save' }).click();
+    await expect(this.editDialog).toBeHidden();
+  }
+
+  /** The images of a card, once loaded. */
+  images(cardText: string): Locator {
+    return this.card(cardText).locator('img[data-attachment-id]');
+  }
+
   async delete(cardText: string): Promise<void> {
     await this.actions(cardText).click();
     await this.menu.getByRole('menuitem', { name: 'Delete' }).click();

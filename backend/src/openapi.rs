@@ -70,6 +70,8 @@ use crate::{
         api::reflections::create_reflection,
         api::reflections::update_reflection,
         api::reflections::delete_reflection,
+        api::attachments::upload_attachment,
+        api::attachments::get_attachment,
         api::meetings::get_invite_link,
         api::meetings::regenerate_invite_link,
         api::meetings::accept_meeting_invite,

@@ -57,6 +57,16 @@ pub enum AppError {
     /// An uploaded body is not a supported media type.
     #[error("unsupported media type")]
     UnsupportedMediaType,
+    /// An uploaded image exceeds its size limit, before or after conversion.
+    #[error("image too large")]
+    ImageTooLarge,
+    /// An uploaded image is not a PNG, JPEG, GIF or WebP.
+    #[error("unsupported image type")]
+    UnsupportedImageType,
+    /// A quota is used up, with a stable code such as
+    /// `too_many_pending_attachments`.
+    #[error("limited: {0}")]
+    Limited(&'static str),
     #[error("service unavailable: {0}")]
     Unavailable(String),
     #[error(transparent)]
@@ -103,6 +113,17 @@ impl AppError {
                 "unsupported_picture_type",
                 Some("The picture must be a PNG, JPEG, GIF or WebP image.".into()),
             ),
+            Self::ImageTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "image_too_large",
+                Some("The image must be 5 MB or smaller.".into()),
+            ),
+            Self::UnsupportedImageType => (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "unsupported_image_type",
+                Some("The image must be a PNG, JPEG, GIF or WebP image.".into()),
+            ),
+            Self::Limited(code) => (StatusCode::TOO_MANY_REQUESTS, code, None),
             Self::Unavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "unavailable", None),
             Self::Database(_) | Self::Internal(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal", None)

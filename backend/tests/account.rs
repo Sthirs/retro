@@ -195,6 +195,19 @@ async fn uploads_and_serves_a_picture() {
     assert!(cache.contains("immutable"), "{cache}");
     assert_eq!(res.headers["x-content-type-options"], "nosniff");
 
+    // Revalidation by ETag answers 304 without the bytes, still cacheable.
+    let path = format!("/api/v1/users/{id}/picture?v={}", &sha[..16]);
+    let res = app
+        .get_if_none_match(&path, &alice, &format!("\"{sha}\""))
+        .await;
+    assert_eq!(res.status, 304);
+    assert!(res.body.is_empty());
+    assert_eq!(res.headers["etag"], format!("\"{sha}\"").as_str());
+    assert_eq!(res.headers["cache-control"], cache);
+    let res = app.get_if_none_match(&path, &alice, "\"other\"").await;
+    assert_eq!(res.status, 200);
+    assert_eq!(res.body, PNG);
+
     // Any other version, or none, redirects to the current one, uncached.
     let current = format!("/api/v1/users/{id}/picture?v={}", &sha[..16]);
     for path in [

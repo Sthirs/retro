@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import { expect, test, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
 import {
@@ -18,6 +20,7 @@ import { ReflectPage, secondsLeft } from '../pages/ReflectPage';
 import { SignInPage } from '../pages/SignInPage';
 
 const TEAM = 'Reflect E2E';
+const GIF = path.join(__dirname, '..', 'assets', 'anim.gif');
 const LENA = USERS.lena.username;
 const MILO = USERS.milo.username;
 const NORA = USERS.nora.username;
@@ -249,6 +252,24 @@ test.describe('reflect', () => {
     await expect(lena.mine('Plus')).toContainText('Safe');
     await expect(lena.mine('Plus').locator('img, script, [onclick], [onerror]')).toHaveCount(0);
     expect(dialogs).toBe(0);
+  });
+
+  test('reflections carry images, private to their author during Reflect', async ({ browser }) => {
+    const milo = await open(browser, 'milo');
+    await lena.startWriting('Thanks');
+    await lena.addImage('Thanks', GIF);
+    // An image alone is enough to send.
+    await lena.column('Thanks').getByRole('button', { name: 'Send' }).click();
+
+    const image = lena.mine('Thanks').locator('img[data-attachment-id]');
+    await expect(image).toHaveAttribute('src', /^blob:/);
+    await expect
+      .poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth))
+      .toBe(48);
+
+    // Milo only learns that a reflection exists.
+    await expect(milo.team('Thanks')).toContainText('1 from the team');
+    await expect(milo.page.locator('img[data-attachment-id]')).toHaveCount(0);
   });
 
   test('unsent drafts stay in the browser and are discarded at Group', async ({ browser }) => {

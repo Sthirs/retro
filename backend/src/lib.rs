@@ -7,6 +7,7 @@ pub mod config;
 pub mod domain;
 pub mod entities;
 pub mod error;
+pub mod hash;
 pub mod openapi;
 pub mod seed;
 pub mod services;

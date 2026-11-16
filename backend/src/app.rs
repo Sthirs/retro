@@ -16,7 +16,10 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::{api, domain::pictures::PICTURE_MAX_BYTES, openapi, state::AppState};
+use crate::{
+    api, domain::pictures::PICTURE_MAX_BYTES, openapi, services::images::MAX_UPLOAD_BYTES,
+    state::AppState,
+};
 
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
@@ -60,6 +63,13 @@ pub fn router(state: AppState) -> Router {
             get(api::teams::get_join_link).post(api::teams::update_join_link),
         )
         .route("/teams/{team_id}/tasks", get(api::tasks::list_tasks))
+        // One byte over the limit, so the handler (not axum) rejects an
+        // oversize body with problem JSON.
+        .route(
+            "/teams/{team_id}/attachments",
+            post(api::attachments::upload_attachment)
+                .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES + 1)),
+        )
         .route(
             "/tasks/{task_id}",
             patch(api::tasks::update_task).delete(api::tasks::delete_task),
@@ -161,11 +171,15 @@ pub fn router(state: AppState) -> Router {
             HeaderValue::from_static("no-store"),
         ));
 
-    // Picture bytes are immutable per `pictureVersion`, so the handler sets its
-    // own `Cache-Control` on success. Error responses (401, 404) get `no-store`
+    // Picture bytes are immutable per `pictureVersion`, and attachments never
+    // change, so these handlers set their own `Cache-Control` on success. Error responses (401, 404) get `no-store`
     // like every other `/api/v1` response.
     let pictures = Router::new()
         .route("/users/{user_id}/picture", get(api::me::get_picture))
+        .route(
+            "/attachments/{attachment_id}",
+            get(api::attachments::get_attachment),
+        )
         .layer(SetResponseHeaderLayer::if_not_present(
             header::CACHE_CONTROL,
             HeaderValue::from_static("no-store"),

@@ -247,14 +247,13 @@ The individual meeting phases cannot be replayed.
 
 - Four columns: **Plus**, **Delta**, **Ideas**, **Thanks**.
 - Each participant writes **reflections**. Each reflection belongs to exactly one column.
-- Reflection content is **rich text**: bold, italic, strikethrough, links, bullet lists, inline code, and pasted images. Pasted images are uploaded to the backend, stored in PostgreSQL (§13), and referenced by attachment ID. Content is stored as sanitized HTML (or editor JSON) and **sanitized on the server** against an allow-list.
+- Reflection content is **rich text**: bold, italic, strikethrough, links, bullet lists, inline code, and images (static or animated, e.g. GIFs). Images are pasted, dropped or picked from a file, uploaded to the backend, converted to WebP, stored in PostgreSQL (§13), and referenced by attachment ID (at most 10 per reflection). An image uploaded for a reflection is visible only to its uploader until the reflections are revealed (Group). Content is stored as sanitized HTML (or editor JSON) and **sanitized on the server** against an allow-list.
 - Lifecycle of a reflection:
   1. **draft** — being written, only on the author's screen;
   2. **confirmed** — sent by the author.
 
   A draft never leaves the author's browser: it is kept there (so it survives a reload) and reaches the server only when sent. Once sent, a reflection **cannot be un-sent** (returned to draft). Until the Group phase starts, the author can still **edit** it, **move** it to another column, or **delete** it. After that, reflections are immutable.
 - Reflections are written only during the Reflect phase, by participants of the meeting.
-- *Interim:* until image attachments ship, reflection content is rich text without images (bold, italic, strikethrough, links, bullet lists, inline code); pasted images are a long-term goal (see ADR-0010's follow-ups).
 - **Privacy during Reflect**:
   - each participant sees only their own reflections in full;
   - for other participants' reflections, everyone sees **only the count per column** (e.g. *"4 from team"*) and how many are **being written** in each column (*"1 being written"*). A reflection is being written while its author has an editor open on it: a new one, or a sent one they are editing;
@@ -293,7 +292,6 @@ The individual meeting phases cannot be replayed.
 - **Center**: **one group at a time** — the group title and all its reflections (rich text, anonymous, with column label).
 - **Reactions**: participants can add emoji reactions to each reflection. Multiple different reactions per reflection are allowed, and a user can add several different emojis to the same reflection (one of each kind). Counts are shown per emoji and reacting is a toggle.
 - **Right panel — Tasks**: participants create tasks linked to the current group. Each task has rich text (same editor as reflections, including pasted images) with **@mentions** of team members, plus its author and creation time. New tasks start in the **Active** column of the board.
-  - *Interim:* until image attachments ship, task text is plain rich text (bold, italic, links, mentions); pasted images are a long-term goal (see ADR-0010's follow-ups).
 - **Navigation**: the facilitator moves to the **next** or **previous** group. Everyone follows the facilitator's current group. A participant can preview other groups locally without affecting the others.
 - After the last group, the facilitator is prompted to **End meeting**.
 
@@ -308,7 +306,6 @@ The individual meeting phases cannot be replayed.
 - Task card:
   - creation date (and source meeting, as a link);
   - rich text (including images), which can contain **@mentions** of team members (rendered as chips; mentioned users can filter "my tasks"). Mentions do **not** trigger notifications;
-    - *Interim:* until image attachments ship, task text is plain rich text (bold, italic, links, mentions); images are a long-term goal (see ADR-0010's follow-ups).
   - author at the bottom (avatar + name).
 - Cards can be **dragged and dropped** between columns and reordered within a column. Any team member can move cards.
 - Changes are broadcast in real time to anyone viewing the board (§11).
@@ -496,8 +493,12 @@ tasks(id, team_id, meeting_id NULL, group_id NULL, author_id → users,
 
 task_mentions(task_id, user_id)  PK(task_id, user_id)
 
-attachments(id, team_id → teams, meeting_id NULL → meetings, uploader_id → users,
-            content_type, size_bytes, sha256, data BYTEA, created_at)
+attachments(id, team_id → teams, uploader_id → users,  -- uploader never exposed
+            content_type,                            -- always 'image/webp'
+            animated, width, height, size_bytes, sha256, data BYTEA, created_at)
+
+reflection_attachments(reflection_id, attachment_id)  PK(reflection_id, attachment_id)
+task_attachments(task_id, attachment_id)              PK(task_id, attachment_id)
 
 icebreaker_questions(id, text, active)
 greetings(id, language, lang_code, text, pronunciation)
@@ -506,7 +507,11 @@ greetings(id, language, lang_code, text, pronunciation)
 Notes:
 
 - When Vote starts, every ungrouped card is wrapped in an implicit single-card group, so votes always reference groups.
-- **Images** pasted into reflections or tasks are stored **only in PostgreSQL** (`attachments.data BYTEA`). There is no object storage. Uploads are limited to 5 MB and to the image types PNG, JPEG, GIF and WebP. The backend serves them through `GET /attachments/{id}` with membership checks and long-lived `Cache-Control: private, immutable` headers. Attachments not referenced by any reflection or task are removed by a periodic cleanup job.
+- **Images** pasted into reflections or tasks are stored **only in PostgreSQL** (`attachments.data BYTEA`). There is no object storage. Uploads are limited to 5 MB and to the image types PNG, JPEG, GIF and WebP (detected from the bytes, never from the declared type; SVG is refused).
+  - Every upload is **fully decoded and re-encoded as WebP** ([ADR-0013](adr/0013-image-attachments.md)): animated GIF and WebP stay animated, JPEG and lossy WebP become lossy WebP, PNG, GIF and lossless WebP become lossless WebP. Only pixels survive: metadata (EXIF, GPS, ICC, XMP, comments) and any trailing bytes are dropped, and a JPEG's EXIF orientation is applied first. Limits: 4096 px per side, 16.7 megapixels per frame, 500 frames, 100 megapixels over all frames, 10 MB after conversion.
+  - Rich text references an image as `<img data-attachment-id="…" alt="…" width="…" height="…">`, never by URL. The server derives `reflection_attachments` / `task_attachments` from it on save (at most 10 images per content). A saved item may reference only attachments of its own team that it already referenced or that the saving user uploaded; any other reference is rejected with 400 `attachment_not_found`.
+  - The backend serves them through `GET /attachments/{id}` to team members who uploaded the image or can see an item referencing it: a task, or a reflection whose meeting has left the Reflect phase. Successful responses are `image/webp` with long-lived `Cache-Control: private, immutable` headers.
+  - A user can upload at most 60 images per hour and hold at most 50 attachments not referenced by any reflection or task. Unreferenced attachments older than 24 hours are removed by a periodic cleanup job.
 - **Cascade deletion**: every team-scoped table references `teams` (directly or through `meetings`) with `ON DELETE CASCADE`, so deleting a team removes all of its data (§5.1).
 - Seed data (50 greetings, each "Hello" in a different language with its pronunciation, and 50 icebreaker questions) is loaded by a migration. A new meeting takes one of each at random.
 
@@ -584,8 +589,8 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/meetings/{id}/reflections` | Create a draft/confirmed reflection |
 | PATCH | `/reflections/{rid}` | Edit content/column/status (author, before Group) |
 | DELETE | `/reflections/{rid}` | Delete (author, before Group) |
-| POST | `/teams/{teamId}/attachments` | Upload a pasted image (reflection or task) |
-| GET | `/attachments/{aid}` | Download an image (members only) |
+| POST | `/teams/{teamId}/attachments` | Upload an image (raw body, PNG, JPEG, GIF or WebP, ≤ 5 MB) for a reflection or task; answers 201 `{ id, contentType, width, height, animated }`. Errors: 400 `invalid_image` / `image_dimensions_too_large`, 413 `image_too_large`, 415 `unsupported_image_type`, 429 `too_many_requests` / `too_many_pending_attachments` |
+| GET | `/attachments/{aid}` | Download an image as WebP (members who can see it, §13) |
 | POST | `/meetings/{id}/groups` | Create a group from two cards |
 | PATCH | `/groups/{gid}` | Rename a group |
 | PUT | `/reflections/{rid}/group` | Move a card into a group, out of a group, or reposition it |
@@ -821,7 +826,7 @@ Images and the Helm chart are pushed to the registry when a release is published
 
 - **Real-time latency**: events delivered to participants within 300 ms (p95) under normal load.
 - **Scale target**: meetings of up to 50 participants, 500 concurrent meetings per deployment.
-- **Security**: OWASP ASVS L1 baseline; server-side sanitization of rich text; CSP headers on the frontend; rate limiting on sign-in, invitation and join endpoints; every `/api/v1` response carries `Cache-Control: no-store`, since responses hold tokens (access, refresh, invitation and join links), except successful image responses (`GET /users/{id}/picture` and, later, `GET /attachments/{id}`), which are served `private, immutable` and keyed by version, and carry `X-Content-Type-Options: nosniff` (their error responses stay `no-store`); size/type limits on uploads (default 5 MB, images only).
+- **Security**: OWASP ASVS L1 baseline; server-side sanitization of rich text; CSP headers on the frontend; rate limiting on sign-in, invitation and join endpoints; every `/api/v1` response carries `Cache-Control: no-store`, since responses hold tokens (access, refresh, invitation and join links), except successful image responses (`GET /users/{id}/picture` and `GET /attachments/{id}`), which are served `private, immutable` and keyed by version, and carry `X-Content-Type-Options: nosniff` (their error responses stay `no-store`); attachment responses also carry `Content-Security-Policy: default-src 'none'; sandbox`, `Content-Disposition: inline` and `Cross-Origin-Resource-Policy: same-origin`; size/type limits on uploads (default 5 MB, images only); attachments are decoded and re-encoded as WebP, untrusted image bytes are parsed only by memory-safe (Rust) decoders, and uploads are rate limited (§13).
 - **Privacy**: reflection authorship is never exposed through the API or WS. Logs never contain reflection content or tokens.
 - **Accessibility**: WCAG 2.1 AA. Every drag-and-drop interaction has a keyboard alternative (e.g. a "Move to…" menu).
 - **Browser support**: latest two versions of Chrome, Firefox, Safari and Edge.

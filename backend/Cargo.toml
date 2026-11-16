@@ -29,6 +29,15 @@ axum-extra = { version = "0.12.6", features = ["cookie", "cookie-private", "cook
 ammonia = "4.2.5"
 base64 = "0.23.1"
 clap = { version = "4.6.7", features = ["derive", "env"] }
+# Image attachments (ADR-0013): untrusted bytes are decoded only by these
+# pure-Rust decoders; libwebp (bundled, statically linked) only encodes.
+image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+# Already used by `image`; read directly for what it does not expose: whether
+# a WebP is lossy, and a GIF's NETSCAPE repeat count (`image` merges "absent"
+# with "forever").
+gif = { version = "0.14.2", default-features = false, features = ["std"] }
+image-webp = { version = "0.2.4", default-features = false }
+webp-animation = { version = "0.10.0", default-features = false, features = ["static"] }
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
 metrics = "0.24"

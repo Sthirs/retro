@@ -10,7 +10,11 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
-    domain::{ordering::key_between, rich_text, teams},
+    domain::{
+        attachments::{self, Owner},
+        ordering::key_between,
+        rich_text, teams,
+    },
     entities::{
         task::{self, TaskStatus},
         task_mention,
@@ -174,6 +178,7 @@ pub async fn insert_from(
         .map(|t| t.position);
     let position = key_between(last.as_deref(), None)
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("cannot order after the last task")))?;
+    let html = attachments::resolve(&txn, team_id, author_id, None, &content).await?;
 
     let now = OffsetDateTime::now_utc();
     let task = task::ActiveModel {
@@ -182,7 +187,7 @@ pub async fn insert_from(
         meeting_id: Set(None),
         group_id: Set(None),
         author_id: Set(author_id),
-        content: Set(content.html),
+        content: Set(html),
         status: Set(status),
         position: Set(position),
         created_at: Set(now),
@@ -192,6 +197,7 @@ pub async fn insert_from(
     .await?;
 
     insert_mentions(&txn, team_id, task.id, content.mention_ids).await?;
+    attachments::set_references(&txn, Owner::Task(task.id), &content.attachment_ids).await?;
     publish(&txn, &task, "task.created", client).await?;
 
     txn.commit().await?;
@@ -412,10 +418,12 @@ pub async fn edit(
     let txn = db.begin().await?;
     let task = lock_task(&txn, task_id, actor).await?;
     let content = rich_text::sanitize(raw_content)?;
+    let owner = Owner::Task(task.id);
+    let html = attachments::resolve(&txn, task.team_id, actor, Some(owner), &content).await?;
 
     let edited = task::ActiveModel {
         id: Set(task.id),
-        content: Set(content.html),
+        content: Set(html),
         updated_at: Set(OffsetDateTime::now_utc()),
         ..Default::default()
     }
@@ -426,13 +434,15 @@ pub async fn edit(
         .exec(&txn)
         .await?;
     insert_mentions(&txn, task.team_id, task.id, content.mention_ids).await?;
+    attachments::set_references(&txn, owner, &content.attachment_ids).await?;
     publish(&txn, &edited, "task.updated", client).await?;
     txn.commit().await?;
 
     view(db, edited).await
 }
 
-/// Deletes a task and its mentions. Any team member may delete any task
+/// Deletes a task, its mentions and its attachment references (the images
+/// themselves go with the next cleanup). Any team member may delete any task
 /// (spec §10); a non-member gets `task_not_found`.
 pub async fn delete(
     db: &(impl TransactionTrait + ConnectionTrait),

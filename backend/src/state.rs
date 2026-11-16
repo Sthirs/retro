@@ -16,6 +16,8 @@ use crate::{
 const TOKEN_FAILURE_LIMIT: u32 = 20;
 /// Invitations a user may create in an hour.
 const INVITATION_LIMIT: u32 = 100;
+/// Images a user may upload in an hour (spec §13).
+const UPLOAD_LIMIT: u32 = 60;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -27,6 +29,8 @@ pub struct AppState {
     pub token_limiter: Arc<RateLimiter>,
     /// Invitations created, per user (spec §20).
     pub invite_limiter: Arc<RateLimiter>,
+    /// Image uploads, per user (spec §13).
+    pub upload_limiter: Arc<RateLimiter>,
     /// Encrypts short-lived cookies (OIDC login state).
     pub cookie_key: Key,
     /// Real-time fan-out and presence (spec §11, ADR-0011).
@@ -60,6 +64,10 @@ impl AppState {
             )),
             invite_limiter: Arc::new(RateLimiter::new(
                 INVITATION_LIMIT,
+                std::time::Duration::from_secs(3600),
+            )),
+            upload_limiter: Arc::new(RateLimiter::new(
+                UPLOAD_LIMIT,
                 std::time::Duration::from_secs(3600),
             )),
             cookie_key,

@@ -82,7 +82,13 @@ pub fn to_webp(bytes: &[u8]) -> Result<Webp, ImageError> {
     }
     let webp = match sniff_image_type(bytes).ok_or(ImageError::Unsupported)? {
         "image/png" => {
-            let decoder = limited(PngDecoder::new(Cursor::new(bytes)).map_err(invalid)?)?;
+            // The limits go in at construction: the png reader parses the
+            // header (and its compressed iCCP profile) there, and
+            // `set_limits` does not reach it afterwards.
+            let decoder = limited(
+                PngDecoder::with_limits(Cursor::new(bytes), decode_limits())
+                    .map_err(decode_error)?,
+            )?;
             still(
                 DynamicImage::from_decoder(decoder).map_err(invalid)?,
                 Still::Lossless,
@@ -97,10 +103,12 @@ pub fn to_webp(bytes: &[u8]) -> Result<Webp, ImageError> {
             still(image, Still::Lossy)
         }
         "image/gif" => {
+            let loop_count = gif_scan(bytes)?;
             let decoder = limited(GifDecoder::new(Cursor::new(bytes)).map_err(invalid)?)?;
-            animation(decoder, Still::Lossless, gif_loop_count(bytes)?)
+            animation(decoder, Still::Lossless, loop_count)
         }
         "image/webp" => {
+            check_vp8_sizes(bytes)?;
             let decoder = limited(WebPDecoder::new(Cursor::new(bytes)).map_err(invalid)?)?;
             let kind = webp_kind(bytes)?;
             if decoder.has_animation() {
@@ -126,17 +134,31 @@ fn invalid(_: image::ImageError) -> ImageError {
     ImageError::Invalid
 }
 
+/// Like [`invalid`], but a decoder refusing its limits is
+/// [`ImageError::DimensionsTooLarge`].
+fn decode_error(e: image::ImageError) -> ImageError {
+    match e {
+        image::ImageError::Limits(_) => ImageError::DimensionsTooLarge,
+        _ => ImageError::Invalid,
+    }
+}
+
+/// The limits every decoder runs under.
+fn decode_limits() -> Limits {
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    limits.max_alloc = Some(MAX_ALLOC);
+    limits
+}
+
 /// Checks the header's dimensions, then caps the decoder's allocations. Only
 /// the header has been read so far: no pixel buffer exists yet.
 fn limited<D: ImageDecoder>(mut decoder: D) -> Result<D, ImageError> {
     let (width, height) = decoder.dimensions();
     check_frame(width, height)?;
-    let mut limits = Limits::default();
-    limits.max_image_width = Some(MAX_SIDE);
-    limits.max_image_height = Some(MAX_SIDE);
-    limits.max_alloc = Some(MAX_ALLOC);
     decoder
-        .set_limits(limits)
+        .set_limits(decode_limits())
         .map_err(|_| ImageError::DimensionsTooLarge)?;
     Ok(decoder)
 }
@@ -166,17 +188,122 @@ fn webp_kind(bytes: &[u8]) -> Result<Still, ImageError> {
     })
 }
 
-/// The WebP loop count (plays n times, 0 = forever) of a GIF. GIF counts
-/// *repeats*: NETSCAPE n plays n + 1 times, 0 forever, and a GIF without
-/// the block plays once.
-fn gif_loop_count(bytes: &[u8]) -> Result<i32, ImageError> {
-    let decoder = gif::DecodeOptions::new()
+/// Reads a GIF's frame descriptors without decoding their pixels, and
+/// returns its WebP loop count (plays n times, 0 = forever).
+///
+/// Each frame is decoded at its own size, whatever the canvas, so the
+/// descriptors' pixels count against [`MAX_TOTAL_PIXELS`]: a tiny canvas
+/// cannot hide frames of millions of pixels.
+///
+/// GIF counts *repeats*: NETSCAPE n plays n + 1 times, 0 forever, and a GIF
+/// without the block plays once.
+fn gif_scan(bytes: &[u8]) -> Result<i32, ImageError> {
+    let mut options = gif::DecodeOptions::new();
+    options.skip_frame_decoding(true);
+    let mut decoder = options
         .read_info(Cursor::new(bytes))
         .map_err(|_| ImageError::Invalid)?;
+    let (mut frames, mut pixels) = (0usize, 0u64);
+    // `next_frame_info` reads only the descriptor; the next call skips the
+    // frame's LZW data without buffering it.
+    while let Some(frame) = decoder.next_frame_info().map_err(|_| ImageError::Invalid)? {
+        frames += 1;
+        pixels += u64::from(frame.width) * u64::from(frame.height);
+        if frames > MAX_FRAMES || pixels > MAX_TOTAL_PIXELS {
+            return Err(ImageError::DimensionsTooLarge);
+        }
+    }
     Ok(match decoder.repeat() {
         gif::Repeat::Infinite => 0,
         gif::Repeat::Finite(n) => (i32::from(n) + 1).min(i32::from(u16::MAX)),
     })
+}
+
+/// Checks that every lossy (`VP8 `) bitstream of an extended-format WebP
+/// has the size of the canvas or animation frame holding it.
+///
+/// The decoder allocates a bitstream's buffers at the size its own header
+/// claims (up to 16 383 × 16 383) and compares it with the canvas only
+/// afterwards: a tiny canvas could otherwise announce a huge frame.
+/// Lossless (`VP8L`) bitstreams are compared before decoding; a simple-format
+/// file has no other size than its bitstream's, which [`limited`] checks.
+fn check_vp8_sizes(bytes: &[u8]) -> Result<(), ImageError> {
+    if bytes.get(12..16) != Some(b"VP8X") {
+        return Ok(());
+    }
+    // Bytes after the RIFF size are not part of the file (and are dropped).
+    let riff_size = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize;
+    let body = bytes
+        .get(12..bytes.len().min(8usize.saturating_add(riff_size)))
+        .ok_or(ImageError::Invalid)?;
+    let chunks = riff_chunks(body)?;
+    let vp8x = chunks.first().ok_or(ImageError::Invalid)?.1;
+    let canvas = (
+        read_u24(vp8x, 4).ok_or(ImageError::Invalid)? + 1,
+        read_u24(vp8x, 7).ok_or(ImageError::Invalid)? + 1,
+    );
+    for &(id, payload) in &chunks {
+        match id {
+            b"VP8 " => check_vp8(payload, canvas)?,
+            b"ANMF" => {
+                let frame = (
+                    read_u24(payload, 6).ok_or(ImageError::Invalid)? + 1,
+                    read_u24(payload, 9).ok_or(ImageError::Invalid)? + 1,
+                );
+                let inner = payload.get(16..).ok_or(ImageError::Invalid)?;
+                for (id, payload) in riff_chunks(inner)? {
+                    if id == b"VP8 " {
+                        check_vp8(payload, frame)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// A RIFF chunk: its fourcc and payload.
+type Chunk<'a> = (&'a [u8; 4], &'a [u8]);
+
+/// The chunks of a RIFF body, padded to even sizes.
+fn riff_chunks(mut body: &[u8]) -> Result<Vec<Chunk<'_>>, ImageError> {
+    let mut chunks = Vec::new();
+    while !body.is_empty() {
+        let id: &[u8; 4] = body
+            .get(..4)
+            .and_then(|id| id.try_into().ok())
+            .ok_or(ImageError::Invalid)?;
+        let size = body
+            .get(4..8)
+            .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]) as usize)
+            .ok_or(ImageError::Invalid)?;
+        let payload = body.get(8..8 + size).ok_or(ImageError::Invalid)?;
+        chunks.push((id, payload));
+        // A missing final pad byte is tolerated, like decoders do.
+        body = body.get(8 + size + size % 2..).unwrap_or_default();
+    }
+    Ok(chunks)
+}
+
+fn read_u24(bytes: &[u8], at: usize) -> Option<u32> {
+    let b = bytes.get(at..at + 3)?;
+    Some(u32::from(b[0]) | u32::from(b[1]) << 8 | u32::from(b[2]) << 16)
+}
+
+/// Compares a VP8 key frame header (frame tag, start code, 14-bit width and
+/// height) with the expected size.
+fn check_vp8(payload: &[u8], (width, height): (u32, u32)) -> Result<(), ImageError> {
+    let header = payload.get(..10).ok_or(ImageError::Invalid)?;
+    if header[3..6] != [0x9d, 0x01, 0x2a] {
+        return Err(ImageError::Invalid);
+    }
+    let w = u32::from(u16::from_le_bytes([header[6], header[7]]) & 0x3FFF);
+    let h = u32::from(u16::from_le_bytes([header[8], header[9]]) & 0x3FFF);
+    if (w, h) != (width, height) {
+        return Err(ImageError::Invalid);
+    }
+    Ok(())
 }
 
 fn config(kind: Still) -> EncodingConfig {
@@ -637,6 +764,51 @@ mod tests {
             to_webp(&png_bytes).unwrap_err(),
             ImageError::DimensionsTooLarge | ImageError::Invalid
         ));
+    }
+
+    fn find(haystack: &[u8], needle: &[u8]) -> usize {
+        haystack
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .unwrap()
+    }
+
+    #[test]
+    fn rejects_a_vp8_frame_larger_than_its_canvas() {
+        let lossy = still(DynamicImage::ImageRgba8(pattern(16, 16, 3)), Still::Lossy)
+            .unwrap()
+            .data;
+        assert_eq!(&lossy[12..16], b"VP8 ");
+        // The same frame in a canvas of its size converts.
+        assert!(to_webp(&with_exif(&lossy, 16, 16, b"MM\0*")).is_ok());
+        // A 1 × 1 canvas announcing it: rejected before decoding.
+        let bomb = with_exif(&lossy, 1, 1, b"MM\0*");
+        assert_eq!(to_webp(&bomb).unwrap_err(), ImageError::Invalid);
+    }
+
+    #[test]
+    fn rejects_an_animation_frame_whose_vp8_is_larger_than_the_frame() {
+        let mut bytes = lossy_animation();
+        // ANMF payload: x, y, width - 1, height - 1 (24 bits each), ...
+        let payload = find(&bytes, b"ANMF") + 8;
+        assert_ne!(&bytes[payload + 6..payload + 12], &[0; 6]);
+        bytes[payload + 6..payload + 12].copy_from_slice(&[0; 6]);
+        assert_eq!(to_webp(&bytes).unwrap_err(), ImageError::Invalid);
+    }
+
+    #[test]
+    fn counts_gif_frames_at_their_own_size() {
+        // A 1 × 1 screen whose frames announce 4096 × 4096 each: the canvas
+        // budget would see 7 pixels, the decoder 117 million.
+        let mut bytes = gif_repeating(7, 1, 1, None);
+        let descriptor = [0x2C, 0, 0, 0, 0, 1, 0, 1, 0];
+        let mut at = 0;
+        for _ in 0..7 {
+            at += find(&bytes[at..], &descriptor);
+            bytes[at + 5..at + 9].copy_from_slice(&[0x00, 0x10, 0x00, 0x10]);
+            at += descriptor.len();
+        }
+        assert_eq!(to_webp(&bytes).unwrap_err(), ImageError::DimensionsTooLarge);
     }
 
     #[test]

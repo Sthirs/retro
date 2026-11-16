@@ -361,7 +361,10 @@ watch([suggestion, selectedIndex], () => {
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const imageErrorId = `image-error-${uid}`;
-/** Uploads in flight. */
+/**
+ * Images accepted for upload and not inserted yet: in flight or waiting in
+ * the queue. Counted against the image limit.
+ */
 const uploads = ref(0);
 /** The last upload's error, as a `richText.image.errors` key. */
 const imageError = ref<string | null>(null);
@@ -410,11 +413,16 @@ async function insertImages(files: File[], at?: number): Promise<void> {
     return;
   }
   let position = at;
-  for (const file of files) {
-    uploads.value += 1;
+  // Uploads run one at a time: reserve every file now, so a paste during
+  // the queue cannot pass the limit.
+  uploads.value += files.length;
+  for (const [index, file] of files.entries()) {
     try {
       const image = await uploadAttachment(teamId, file);
-      if (e.isDestroyed) return;
+      if (e.isDestroyed) {
+        uploads.value -= files.length - index - 1;
+        return;
+      }
       const node = {
         type: 'attachmentImage',
         attrs: { attachmentId: image.id, alt: '', width: image.width, height: image.height },

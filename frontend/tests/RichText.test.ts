@@ -549,4 +549,38 @@ describe('rich text images', () => {
     expect(wrapper.get('[role="alert"]').text()).toBe('At most 10 images per text.');
     wrapper.unmount();
   });
+
+  it('RichTextEditor counts queued uploads against the 10-image limit', async () => {
+    vi.mocked(uploadAttachment).mockReturnValue(new Promise(() => {}));
+    const wrapper = mountWithImages('<p>x</p>');
+    const editor = await editorOf(wrapper);
+    const paste = (count: number) =>
+      editor.view.someProp('handlePaste', (f) =>
+        f(
+          editor.view,
+          {
+            clipboardData: {
+              files: Array.from(
+                { length: count },
+                (_, i) => new File([new Uint8Array([i])], `${i}.png`, { type: 'image/png' }),
+              ),
+            },
+            preventDefault: vi.fn(),
+          } as unknown as ClipboardEvent,
+          editor.state.doc.slice(0),
+        ),
+      );
+    paste(8);
+    await flushPromises();
+    // Only the first of the 8 is uploading; the other 7 wait.
+    expect(uploadAttachment).toHaveBeenCalledTimes(1);
+    paste(5);
+    await flushPromises();
+    expect(uploadAttachment).toHaveBeenCalledTimes(1);
+    expect(wrapper.get('[role="alert"]').text()).toBe('At most 10 images per text.');
+    paste(2);
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
 });

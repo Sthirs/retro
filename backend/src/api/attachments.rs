@@ -2,9 +2,9 @@
 
 use axum::{
     Json,
-    body::{Body, Bytes},
+    body::Bytes,
     extract::{Path, State, rejection::BytesRejection},
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::Response,
 };
 use serde::Serialize;
@@ -12,7 +12,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
-    api::check_limit,
+    api::{check_limit, images::immutable_image},
     auth::CurrentUser,
     domain::attachments,
     entities::attachment,
@@ -97,6 +97,7 @@ pub async fn upload_attachment(
     params(("attachment_id" = Uuid, Path, description = "The attachment")),
     responses(
         (status = 200, body = Vec<u8>, content_type = "image/webp", description = "The image bytes"),
+        (status = 304, description = "`If-None-Match` matches the `ETag`: the cached image is current"),
         (status = 401, body = Problem, content_type = "application/problem+json", description = "Missing or invalid access token"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "`attachment_not_found`"),
     )
@@ -105,23 +106,17 @@ pub async fn get_attachment(
     State(state): State<AppState>,
     CurrentUser(viewer): CurrentUser,
     Path(attachment_id): Path<Uuid>,
+    request: HeaderMap,
 ) -> AppResult<Response> {
     let attachment = attachments::attachment_for(&state.db, viewer.id, attachment_id).await?;
-    let etag = HeaderValue::from_str(&format!("\"{}\"", attachment.sha256))
-        .map_err(|e| anyhow::anyhow!("stored attachment hash: {e}"))?;
-    let mut response = Response::new(Body::from(attachment.data));
+    let mut response = immutable_image(
+        &request,
+        &attachment.sha256,
+        // Never the stored type: only WebP is ever written, and only WebP is served.
+        HeaderValue::from_static("image/webp"),
+        attachment.data,
+    )?;
     let headers = response.headers_mut();
-    // Never the stored type: only WebP is ever written, and only WebP is served.
-    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/webp"));
-    headers.insert(header::ETAG, etag);
-    headers.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("private, max-age=31536000, immutable"),
-    );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
     // Opened directly, the response can run nothing and load nothing.
     headers.insert(
         header::CONTENT_SECURITY_POLICY,

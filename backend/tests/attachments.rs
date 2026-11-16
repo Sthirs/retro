@@ -173,6 +173,24 @@ async fn uploads_are_converted_to_webp_and_served_safely() {
         "{cache}"
     );
 
+    // Revalidation by ETag answers 304 without the bytes, still cacheable.
+    let etag = res.headers["etag"].to_str().unwrap().to_owned();
+    let path = format!("/api/v1/attachments/{id}");
+    let res = app.get_if_none_match(&path, &alice, &etag).await;
+    assert_eq!(res.status, 304);
+    assert!(res.body.is_empty());
+    assert_eq!(res.headers["etag"], etag.as_str());
+    assert_eq!(res.headers["cache-control"], cache);
+    // Only for someone who may see the image.
+    let res = app
+        .get_if_none_match(
+            &format!("/api/v1/attachments/{}", Uuid::now_v7()),
+            &alice,
+            &etag,
+        )
+        .await;
+    assert_eq!(res.status, 404);
+
     // Errors stay uncached.
     let res = fetch(&app, &alice, &Uuid::now_v7().to_string()).await;
     assert_eq!(res.status, 404);

@@ -45,6 +45,9 @@
               }
             }
           },
+          "304": {
+            "description": "`If-None-Match` matches the `ETag`: the cached image is current"
+          },
           "401": {
             "description": "Missing or invalid access token",
             "content": {
@@ -3245,6 +3248,9 @@
           },
           "302": {
             "description": "`v` is missing or not the current version: `Location` is the current version's URL"
+          },
+          "304": {
+            "description": "`If-None-Match` matches the `ETag`: the cached image is current"
           },
           "401": {
             "description": "Missing or invalid access token",

@@ -668,6 +668,11 @@ export type getAttachmentResponse200 = {
   status: 200;
 };
 
+export type getAttachmentResponse304 = {
+  data: void;
+  status: 304;
+};
+
 export type getAttachmentResponse401 = {
   data: Problem;
   status: 401;
@@ -681,7 +686,9 @@ export type getAttachmentResponse404 = {
 export type getAttachmentResponseSuccess = getAttachmentResponse200 & {
   headers: Headers;
 };
-export type getAttachmentResponseError = (getAttachmentResponse401 | getAttachmentResponse404) & {
+export type getAttachmentResponseError = (
+  getAttachmentResponse304 | getAttachmentResponse401 | getAttachmentResponse404
+) & {
   headers: Headers;
 };
 
@@ -3360,6 +3367,11 @@ export type getPictureResponse302 = {
   status: 302;
 };
 
+export type getPictureResponse304 = {
+  data: void;
+  status: 304;
+};
+
 export type getPictureResponse401 = {
   data: Problem;
   status: 401;
@@ -3374,7 +3386,7 @@ export type getPictureResponseSuccess = getPictureResponse200 & {
   headers: Headers;
 };
 export type getPictureResponseError = (
-  getPictureResponse302 | getPictureResponse401 | getPictureResponse404
+  getPictureResponse302 | getPictureResponse304 | getPictureResponse401 | getPictureResponse404
 ) & {
   headers: Headers;
 };

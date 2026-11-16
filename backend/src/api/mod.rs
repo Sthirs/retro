@@ -5,6 +5,7 @@ pub mod auth;
 pub mod client_id;
 pub mod dev;
 pub mod health;
+mod images;
 pub mod invitations;
 pub mod join;
 pub mod me;

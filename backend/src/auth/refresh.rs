@@ -9,7 +9,6 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Set,
     TransactionSession, TransactionTrait, sea_query::Expr,
 };
-use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
@@ -50,10 +49,7 @@ fn classify(token: &refresh_token::Model, now: OffsetDateTime, grace_seconds: i6
 }
 
 pub fn hash_token(token: &str) -> String {
-    Sha256::digest(token.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    crate::hash::sha256_hex(token.as_bytes())
 }
 
 fn ttl(config: &Config, persistent: bool) -> Duration {

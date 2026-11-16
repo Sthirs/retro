@@ -4,13 +4,13 @@ use sea_orm::{
     ActiveModelTrait, ConnectionTrait, DbBackend, EntityTrait, Set, Statement, TransactionSession,
     TransactionTrait,
 };
-use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::{
     entities::{user, user_picture},
     error::AppError,
+    hash::sha256_hex,
 };
 
 /// Largest accepted picture, in bytes.
@@ -39,10 +39,6 @@ pub fn version_of(sha256: &str) -> &str {
     &sha256[..VERSION_LEN.min(sha256.len())]
 }
 
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 /// Stores `bytes` as the user's picture and points `users.picture_version`
 /// at it, in one transaction. Fails with `picture_too_large` or
 /// `unsupported_picture_type`.
@@ -55,7 +51,7 @@ pub async fn set_picture(
         return Err(AppError::PayloadTooLarge);
     }
     let content_type = sniff_image_type(&bytes).ok_or(AppError::UnsupportedMediaType)?;
-    let sha256 = hex(&Sha256::digest(&bytes));
+    let sha256 = sha256_hex(&bytes);
     let version = version_of(&sha256).to_owned();
     let size = i32::try_from(bytes.len()).map_err(|_| AppError::PayloadTooLarge)?;
 

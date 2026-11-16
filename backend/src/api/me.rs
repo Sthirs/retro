@@ -4,7 +4,7 @@ use axum::{
     Json,
     body::{Body, Bytes},
     extract::{Path, Query, State, rejection::BytesRejection},
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::Response,
 };
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
@@ -14,7 +14,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
-    api::{UserDto, invitations::PendingInvitationDto, teams::TeamDto},
+    api::{UserDto, images::immutable_image, invitations::PendingInvitationDto, teams::TeamDto},
     auth::CurrentUser,
     domain::{invitations, pictures, teams, users},
     entities::user_identity,
@@ -192,6 +192,7 @@ pub struct PictureQuery {
     responses(
         (status = 200, body = Vec<u8>, content_type = "image/*", description = "The image bytes, when `v` is the current version"),
         (status = 302, description = "`v` is missing or not the current version: `Location` is the current version's URL"),
+        (status = 304, description = "`If-None-Match` matches the `ETag`: the cached image is current"),
         (status = 401, body = Problem, content_type = "application/problem+json", description = "Missing or invalid access token"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "`picture_not_found`"),
     )
@@ -201,6 +202,7 @@ pub async fn get_picture(
     CurrentUser(viewer): CurrentUser,
     Path(user_id): Path<Uuid>,
     Query(query): Query<PictureQuery>,
+    request: HeaderMap,
 ) -> AppResult<Response> {
     let picture = pictures::picture_for(&state.db, viewer.id, user_id).await?;
     let version = pictures::version_of(&picture.sha256);
@@ -216,19 +218,5 @@ pub async fn get_picture(
     }
     let content_type = HeaderValue::from_str(&picture.content_type)
         .map_err(|e| anyhow::anyhow!("stored picture content type: {e}"))?;
-    let etag = HeaderValue::from_str(&format!("\"{}\"", picture.sha256))
-        .map_err(|e| anyhow::anyhow!("stored picture hash: {e}"))?;
-    let mut response = Response::new(Body::from(picture.data));
-    let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, content_type);
-    headers.insert(header::ETAG, etag);
-    headers.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("private, max-age=31536000, immutable"),
-    );
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    Ok(response)
+    immutable_image(&request, &picture.sha256, content_type, picture.data)
 }

@@ -7,7 +7,6 @@ use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, EntityTrait, QueryFilter,
     QuerySelect, Set, Statement, TransactionSession, TransactionTrait, Value,
 };
-use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
@@ -16,6 +15,7 @@ use crate::{
     domain::{rich_text, teams},
     entities::attachment,
     error::AppError,
+    hash::sha256_hex,
     services::images::{self, ImageError},
 };
 
@@ -56,10 +56,6 @@ impl From<ImageError> for AppError {
             ImageError::TooLarge => AppError::ImageTooLarge,
         }
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Runs the CPU-bound `job` on the blocking pool, at most [`CONVERSIONS`] at
@@ -127,7 +123,7 @@ pub async fn upload(
         width: Set(to_i32(webp.width)?),
         height: Set(to_i32(webp.height)?),
         size_bytes: Set(size),
-        sha256: Set(hex(&Sha256::digest(&webp.data))),
+        sha256: Set(sha256_hex(&webp.data)),
         data: Set(webp.data),
         created_at: Set(OffsetDateTime::now_utc()),
     }

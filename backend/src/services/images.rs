@@ -98,17 +98,18 @@ pub fn to_webp(bytes: &[u8]) -> Result<Webp, ImageError> {
         }
         "image/gif" => {
             let decoder = limited(GifDecoder::new(Cursor::new(bytes)).map_err(invalid)?)?;
-            animation(decoder, Still::Lossless)
+            animation(decoder, Still::Lossless, gif_loop_count(bytes)?)
         }
         "image/webp" => {
             let decoder = limited(WebPDecoder::new(Cursor::new(bytes)).map_err(invalid)?)?;
-            let kind = if is_lossless_webp(bytes) {
-                Still::Lossless
-            } else {
-                Still::Lossy
-            };
+            let kind = webp_kind(bytes)?;
             if decoder.has_animation() {
-                animation(decoder, kind)
+                // WebP loop counts already mean "plays n times, 0 = forever".
+                let loop_count = match decoder.loop_count() {
+                    LoopCount::Infinite => 0,
+                    LoopCount::Finite(n) => i32::try_from(n.get()).unwrap_or(0),
+                };
+                animation(decoder, kind, loop_count)
             } else {
                 still(DynamicImage::from_decoder(decoder).map_err(invalid)?, kind)
             }
@@ -153,9 +154,29 @@ fn check_frame(width: u32, height: u32) -> Result<(), ImageError> {
     Ok(())
 }
 
-/// True for a simple-format lossless WebP (`VP8L` as its only chunk).
-fn is_lossless_webp(bytes: &[u8]) -> bool {
-    bytes.get(12..16) == Some(b"VP8L")
+/// Lossless when every image in the file is `VP8L`, in the simple or the
+/// extended format (animations, or stills with EXIF, ICC or XMP chunks).
+fn webp_kind(bytes: &[u8]) -> Result<Still, ImageError> {
+    let mut decoder =
+        image_webp::WebPDecoder::new(Cursor::new(bytes)).map_err(|_| ImageError::Invalid)?;
+    Ok(if decoder.is_lossy() {
+        Still::Lossy
+    } else {
+        Still::Lossless
+    })
+}
+
+/// The WebP loop count (plays n times, 0 = forever) of a GIF. GIF counts
+/// *repeats*: NETSCAPE n plays n + 1 times, 0 forever, and a GIF without
+/// the block plays once.
+fn gif_loop_count(bytes: &[u8]) -> Result<i32, ImageError> {
+    let decoder = gif::DecodeOptions::new()
+        .read_info(Cursor::new(bytes))
+        .map_err(|_| ImageError::Invalid)?;
+    Ok(match decoder.repeat() {
+        gif::Repeat::Infinite => 0,
+        gif::Repeat::Finite(n) => (i32::from(n) + 1).min(i32::from(u16::MAX)),
+    })
 }
 
 fn config(kind: Still) -> EncodingConfig {
@@ -205,11 +226,11 @@ fn still(image: DynamicImage, kind: Still) -> Result<Webp, ImageError> {
 
 /// Re-encodes an animation frame by frame, so only a few frames are in
 /// memory at once. Frames arrive composited onto the full canvas.
-fn animation<'a, D: AnimationDecoder<'a>>(decoder: D, kind: Still) -> Result<Webp, ImageError> {
-    let loop_count = match decoder.loop_count() {
-        LoopCount::Infinite => 0,
-        LoopCount::Finite(n) => i32::try_from(n.get()).unwrap_or(0),
-    };
+fn animation<'a, D: AnimationDecoder<'a>>(
+    decoder: D,
+    kind: Still,
+    loop_count: i32,
+) -> Result<Webp, ImageError> {
     let mut frames = decoder.into_frames();
     let next = |frames: &mut image::Frames<'a>| -> Result<Option<(RgbaImage, u32)>, ImageError> {
         match frames.next() {
@@ -327,10 +348,16 @@ mod tests {
     }
 
     fn gif(frames: usize, width: u32, height: u32) -> Vec<u8> {
+        gif_repeating(frames, width, height, Some(Repeat::Infinite))
+    }
+
+    fn gif_repeating(frames: usize, width: u32, height: u32, repeat: Option<Repeat>) -> Vec<u8> {
         let mut out = Vec::new();
         {
             let mut encoder = GifEncoder::new(&mut out);
-            encoder.set_repeat(Repeat::Infinite).unwrap();
+            if let Some(repeat) = repeat {
+                encoder.set_repeat(repeat).unwrap();
+            }
             for i in 0..frames {
                 encoder
                     .encode_frame(Frame::from_parts(
@@ -353,6 +380,66 @@ mod tests {
 
     fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         haystack.windows(needle.len()).any(|w| w == needle)
+    }
+
+    fn lossy(webp: &[u8]) -> bool {
+        image_webp::WebPDecoder::new(Cursor::new(webp))
+            .unwrap()
+            .is_lossy()
+    }
+
+    fn loops(webp: &Webp) -> image_webp::LoopCount {
+        image_webp::WebPDecoder::new(Cursor::new(&webp.data[..]))
+            .unwrap()
+            .loop_count()
+    }
+
+    fn lossless_still(width: u32, height: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        WebPEncoder::new_lossless(&mut out)
+            .write_image(
+                &pattern(width, height, 7),
+                width,
+                height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        out
+    }
+
+    /// A simple-format WebP rewritten in the extended format, with an EXIF
+    /// chunk after the image.
+    fn with_exif(simple: &[u8], width: u32, height: u32, exif: &[u8]) -> Vec<u8> {
+        let mut vp8x = vec![0x08, 0, 0, 0]; // EXIF flag
+        vp8x.extend_from_slice(&(width - 1).to_le_bytes()[..3]);
+        vp8x.extend_from_slice(&(height - 1).to_le_bytes()[..3]);
+        let mut chunks = Vec::new();
+        for (fourcc, payload) in [(&b"VP8X"[..], &vp8x[..]), (b"EXIF", exif)] {
+            chunks.extend_from_slice(fourcc);
+            chunks.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            chunks.extend_from_slice(payload);
+            if payload.len() % 2 == 1 {
+                chunks.push(0);
+            }
+            if fourcc == b"VP8X" {
+                chunks.extend_from_slice(&simple[12..]);
+            }
+        }
+        let mut out = b"RIFF".to_vec();
+        out.extend_from_slice(&(4 + chunks.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"WEBP");
+        out.extend_from_slice(&chunks);
+        out
+    }
+
+    fn lossy_animation() -> Vec<u8> {
+        let mut encoder = encoder(8, 8, 0, EncodingConfig::new_lossy(50.0)).unwrap();
+        for i in 0..2 {
+            encoder
+                .add_frame(&pattern(8, 8, i * 90), i32::from(i) * 100)
+                .unwrap();
+        }
+        encoder.finalize(200).unwrap().to_vec()
     }
 
     #[test]
@@ -442,6 +529,48 @@ mod tests {
             decode(&again).into_frames().collect_frames().unwrap().len(),
             2
         );
+    }
+
+    #[test]
+    fn lossless_webp_in_the_extended_format_stays_lossless() {
+        let exif = with_exif(&lossless_still(4, 4), 4, 4, b"MM\0*SECRET");
+        assert_eq!(&exif[12..16], b"VP8X");
+        assert!(!lossy(&exif));
+        let out = to_webp(&exif).unwrap();
+        assert!(!out.animated);
+        assert!(!lossy(&out.data));
+        assert!(!contains(&out.data, b"SECRET"));
+
+        let animated = to_webp(&gif(2, 4, 4)).unwrap();
+        assert!(animated.animated && !lossy(&animated.data));
+        let again = to_webp(&animated.data).unwrap();
+        assert!(again.animated);
+        assert!(!lossy(&again.data));
+    }
+
+    #[test]
+    fn lossy_webp_animations_stay_lossy() {
+        let bytes = lossy_animation();
+        assert!(lossy(&bytes));
+        let out = to_webp(&bytes).unwrap();
+        assert!(out.animated);
+        assert!(lossy(&out.data));
+    }
+
+    #[test]
+    fn gif_repeats_become_webp_play_counts() {
+        use image_webp::LoopCount::{Forever, Times};
+        let plays = |n: u16| Times(std::num::NonZeroU16::new(n).unwrap());
+        let convert = |repeat| to_webp(&gif_repeating(2, 2, 2, repeat)).unwrap();
+        // No NETSCAPE block: browsers play it once.
+        assert_eq!(loops(&convert(None)), plays(1));
+        // NETSCAPE 1: one repeat, two plays.
+        assert_eq!(loops(&convert(Some(Repeat::Finite(1)))), plays(2));
+        assert_eq!(loops(&convert(Some(Repeat::Infinite))), Forever);
+
+        // WebP loop counts are kept as they are.
+        let twice = convert(Some(Repeat::Finite(1)));
+        assert_eq!(loops(&to_webp(&twice.data).unwrap()), plays(2));
     }
 
     #[test]

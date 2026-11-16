@@ -64,6 +64,7 @@ async function save(): Promise<void> {
       :members="members"
       :team-id="teamId"
       :label="t('tasks.editLabel')"
+      :readonly="busy"
       @uploading="uploading = $event"
     />
     <AppAlert v-if="error">{{ error }}</AppAlert>

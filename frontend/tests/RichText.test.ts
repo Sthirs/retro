@@ -263,6 +263,26 @@ describe('RichTextEditor', () => {
     wrapper.unmount();
   });
 
+  it('RichTextEditor locks formatting and links while readonly', async () => {
+    const wrapper = mountEditor('<p>x</p>');
+    const editor = await editorOf(wrapper);
+    editor.commands.selectAll();
+    await wrapper.get('button[aria-label="Link"]').trigger('click');
+    await wrapper.get('input[type="text"]').setValue('https://example.com');
+    await wrapper.setProps({ readonly: true });
+
+    for (const label of ['Bold', 'Italic', 'Link']) {
+      expect(wrapper.get(`button[aria-label="${label}"]`).attributes('disabled')).toBeDefined();
+    }
+    expect(wrapper.get('button[type="submit"]').attributes('disabled')).toBeDefined();
+    await wrapper.get('form').trigger('submit');
+    expect(editor.getHTML()).toBe('<p>x</p>');
+
+    await wrapper.setProps({ readonly: false });
+    expect(wrapper.get('button[aria-label="Bold"]').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
   it('RichTextEditor toggles bold', async () => {
     const wrapper = mountEditor('<p>x</p>');
     const editor = await editorOf(wrapper);
@@ -650,6 +670,63 @@ describe('rich text images', () => {
     expect(editor.getHTML()).toBe(
       `<p>more new alpha<img data-attachment-id="${IMG_ID}" alt="" width="4" height="3">` +
         `<img data-attachment-id="${second}" alt="" width="4" height="3"> beta</p>`,
+    );
+    wrapper.unmount();
+  });
+
+  function pasteInto(editor: Editor, files: File[]): void {
+    editor.view.someProp('handlePaste', (f) =>
+      f(
+        editor.view,
+        { clipboardData: { files }, preventDefault: vi.fn() } as unknown as ClipboardEvent,
+        editor.state.doc.slice(0),
+      ),
+    );
+  }
+
+  it('RichTextEditor keeps the selected text when the image replacing it is refused', async () => {
+    let refuse: (e: unknown) => void = () => {};
+    vi.mocked(uploadAttachment).mockReturnValue(
+      new Promise((_, reject) => {
+        refuse = reject;
+      }),
+    );
+    const wrapper = mountWithImages('<p>alpha beta</p>');
+    const editor = await editorOf(wrapper);
+    editor.commands.setTextSelection({ from: 7, to: 11 }); // "beta"
+    pasteInto(editor, [new File([new Uint8Array([1])], 'big.png', { type: 'image/png' })]);
+    expect(editor.getHTML()).toBe('<p>alpha beta</p>');
+
+    refuse(new ApiError(413, 'image_too_large'));
+    await flushPromises();
+    expect(editor.getHTML()).toBe('<p>alpha beta</p>');
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('RichTextEditor replaces the selected text with the images once they upload', async () => {
+    const pending: ((v: { id: string; width: number; height: number }) => void)[] = [];
+    vi.mocked(uploadAttachment).mockImplementation(
+      () => new Promise((resolve) => pending.push(resolve)),
+    );
+    const wrapper = mountWithImages('<p>alpha beta</p>');
+    const editor = await editorOf(wrapper);
+    editor.commands.setTextSelection({ from: 7, to: 11 }); // "beta"
+    const files = ['a.png', 'b.png'].map(
+      (name) => new File([new Uint8Array([1])], name, { type: 'image/png' }),
+    );
+    pasteInto(editor, files);
+    // Typed before the selection while it uploads.
+    editor.commands.insertContentAt(1, 'new ');
+
+    const second = `${IMG_ID.slice(0, -1)}2`;
+    pending[0]!({ id: IMG_ID, width: 4, height: 3 });
+    await flushPromises();
+    pending[1]!({ id: second, width: 4, height: 3 });
+    await flushPromises();
+    expect(editor.getHTML()).toBe(
+      `<p>new alpha <img data-attachment-id="${IMG_ID}" alt="" width="4" height="3">` +
+        `<img data-attachment-id="${second}" alt="" width="4" height="3"></p>`,
     );
     wrapper.unmount();
   });

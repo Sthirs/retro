@@ -415,12 +415,14 @@ async function insertImages(files: File[], at?: number): Promise<void> {
     return;
   }
   // The images go where they were pasted, dropped or picked, even if the
-  // text changes while they upload: the position follows every edit
-  // (including each inserted image, so they keep their order).
-  if (at === undefined && !e.state.selection.empty) e.commands.deleteSelection();
-  let position = at ?? e.state.selection.from;
+  // text changes while they upload: the range follows every edit (including
+  // each inserted image, so they keep their order). A selection is replaced
+  // only by the first image that uploads, so a refused upload keeps it.
+  let from = at ?? e.state.selection.from;
+  let to = at ?? e.state.selection.to;
   const follow = ({ transaction }: EditorEvents['transaction']): void => {
-    position = transaction.mapping.map(position);
+    from = transaction.mapping.map(from, 1);
+    to = Math.max(from, transaction.mapping.map(to, -1));
   };
   e.on('transaction', follow);
   // Uploads run one at a time: reserve every file now, so a paste during
@@ -438,7 +440,13 @@ async function insertImages(files: File[], at?: number): Promise<void> {
           type: 'attachmentImage',
           attrs: { attachmentId: image.id, alt: '', width: image.width, height: image.height },
         };
-        e.chain().focus().insertContentAt(Math.min(position, e.state.doc.content.size), node).run();
+        const size = e.state.doc.content.size;
+        e.chain()
+          .focus()
+          .insertContentAt({ from: Math.min(from, size), to: Math.min(to, size) }, node)
+          .run();
+        // The next image goes right after this one (`to` is mapped to its end).
+        from = to;
       } catch (err) {
         const code = errorCode(err);
         imageError.value = IMAGE_ERRORS.includes(code) ? code : 'unknown';
@@ -501,7 +509,8 @@ function normaliseUrl(raw: string): string {
 
 function applyLink(): void {
   const e = editor.value;
-  if (!e) return;
+  // A save in progress has captured the text: nothing may change it.
+  if (!e || props.readonly) return;
   const href = normaliseUrl(linkUrl.value);
   if (href !== '' && !isAllowedScheme(href)) {
     linkError.value = true;
@@ -536,6 +545,7 @@ onBeforeUnmount(() => {
         class="rte-btn"
         :aria-label="t('richText.bold')"
         :aria-pressed="editor?.isActive('bold') ?? false"
+        :disabled="readonly"
         @mousedown.prevent
         @click="editor?.chain().focus().toggleBold().run()"
       >
@@ -546,6 +556,7 @@ onBeforeUnmount(() => {
         class="rte-btn"
         :aria-label="t('richText.italic')"
         :aria-pressed="editor?.isActive('italic') ?? false"
+        :disabled="readonly"
         @mousedown.prevent
         @click="editor?.chain().focus().toggleItalic().run()"
       >
@@ -557,6 +568,7 @@ onBeforeUnmount(() => {
         class="rte-btn"
         :aria-label="t('richText.strike')"
         :aria-pressed="editor?.isActive('strike') ?? false"
+        :disabled="readonly"
         @mousedown.prevent
         @click="editor?.chain().focus().toggleStrike().run()"
       >
@@ -569,6 +581,7 @@ onBeforeUnmount(() => {
         :aria-label="t('richText.link')"
         :aria-pressed="linkActive"
         :aria-expanded="linkOpen"
+        :disabled="readonly"
         @mousedown.prevent
         @click="toggleLink"
       >
@@ -580,6 +593,7 @@ onBeforeUnmount(() => {
           class="rte-btn"
           :aria-label="t('richText.bulletList')"
           :aria-pressed="editor?.isActive('bulletList') ?? false"
+          :disabled="readonly"
           @mousedown.prevent
           @click="editor?.chain().focus().toggleBulletList().run()"
         >
@@ -590,6 +604,7 @@ onBeforeUnmount(() => {
           class="rte-btn"
           :aria-label="t('richText.code')"
           :aria-pressed="editor?.isActive('code') ?? false"
+          :disabled="readonly"
           @mousedown.prevent
           @click="editor?.chain().focus().toggleCode().run()"
         >
@@ -650,7 +665,7 @@ onBeforeUnmount(() => {
       <p v-if="linkError" :id="errorId" class="rte-link-error" role="alert">
         {{ t('richText.linkInvalid') }}
       </p>
-      <button type="submit" class="rte-link-btn rte-link-apply">
+      <button type="submit" class="rte-link-btn rte-link-apply" :disabled="readonly">
         {{ t('richText.linkApply') }}
       </button>
       <button type="button" class="rte-link-btn" @click="closeLink(true)">
@@ -723,8 +738,15 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.rte-btn:hover {
+.rte-btn:hover:not(:disabled) {
   color: var(--text);
+}
+
+/* Locked while a save runs. */
+.rte-btn:disabled,
+.rte-link-btn:disabled {
+  cursor: progress;
+  opacity: 0.75;
 }
 
 .rte-btn[aria-pressed='true'] {

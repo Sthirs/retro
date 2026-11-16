@@ -1,4 +1,5 @@
-//! Meetings (spec §8, §9.1, §14.3) and the WebSocket ticket (spec §3.3).
+//! Meetings (spec §8, §9.1, §14.3): lifecycle, icebreaker, timer and ready
+//! flags; and the WebSocket ticket (spec §3.3).
 
 use std::collections::HashSet;
 
@@ -15,14 +16,19 @@ use uuid::Uuid;
 use crate::{
     api::{PersonDto, check_limit, record_token_failure},
     auth::CurrentUser,
-    domain::meetings::{self, MeetingView, Participant},
+    domain::{
+        meetings::{self, MeetingView, Participant},
+        reflections::{self, ReflectionCountsDto, ReflectionsSnapshot},
+        timer::{Timer, TimerAction},
+    },
     entities::{
         meeting::{MeetingPhase, MeetingStatus},
+        reflection::ReflectionColumn,
         team_member::Role,
     },
     error::{AppError, AppResult, Problem},
     state::AppState,
-    ws::ticket,
+    ws::{WritingCounts, WritingDto, ticket},
 };
 
 /// A participant of a meeting.
@@ -37,17 +43,20 @@ pub struct ParticipantDto {
     pub role: Option<Role>,
     /// Connected to the meeting room right now.
     pub online: bool,
+    /// Pressed Ready in the current phase.
+    pub ready: bool,
 }
 
 fn participants(view: &MeetingView, online: &HashSet<Uuid>) -> Vec<ParticipantDto> {
     view.participants
         .iter()
-        .map(|Participant { user, role }| ParticipantDto {
+        .map(|Participant { user, role, ready }| ParticipantDto {
             id: user.id,
             display_name: user.display_name.clone(),
             picture_version: user.picture_version.clone(),
             role: *role,
             online: online.contains(&user.id),
+            ready: *ready,
         })
         .collect()
 }
@@ -117,6 +126,24 @@ pub struct IcebreakerDto {
     pub index: i32,
 }
 
+/// A reflection, as its viewer may see it: never who wrote it.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReflectionDto {
+    pub id: Uuid,
+    pub column: ReflectionColumn,
+    /// Sanitized rich text (HTML).
+    pub content: String,
+    /// Written by the viewer.
+    pub mine: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub updated_at: OffsetDateTime,
+}
+
 /// Everything the meeting room shows (spec §14.3 `GET /meetings/{id}/state`).
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -137,6 +164,15 @@ pub struct MeetingStateDto {
     pub question: String,
     pub icebreaker: IcebreakerDto,
     pub task_count: i64,
+    /// The countdown, if the facilitator set one.
+    pub timer: Option<Timer>,
+    /// During Reflect the caller's own reflections; from Group on, everyone's
+    /// (anonymous).
+    pub reflections: Vec<ReflectionDto>,
+    /// Sent reflections per column, everyone's.
+    pub reflection_counts: ReflectionCountsDto,
+    /// Reflections being written right now, per column.
+    pub writing: WritingDto,
     /// Last event `seq` included in this snapshot on `meeting:{id}`.
     pub seq: i64,
     #[serde(with = "time::serde::rfc3339")]
@@ -151,9 +187,15 @@ pub struct MeetingStateDto {
 }
 
 impl MeetingStateDto {
-    fn new(view: MeetingView, online: &HashSet<Uuid>) -> Self {
+    fn new(
+        view: MeetingView,
+        online: &HashSet<Uuid>,
+        reflections: ReflectionsSnapshot,
+        writing: WritingCounts,
+    ) -> Self {
         let participants = participants(&view, online);
         let m = view.meeting;
+        let timer = Timer::from_json(m.timer_state.as_ref());
         Self {
             id: m.id,
             team_id: m.team_id,
@@ -180,6 +222,21 @@ impl MeetingStateDto {
                 index: m.icebreaker_index,
             },
             task_count: view.task_count,
+            timer,
+            reflections: reflections
+                .reflections
+                .into_iter()
+                .map(|r| ReflectionDto {
+                    id: r.model.id,
+                    column: r.model.column,
+                    content: r.model.content,
+                    mine: r.mine,
+                    created_at: r.model.created_at,
+                    updated_at: r.model.updated_at,
+                })
+                .collect(),
+            reflection_counts: reflections.counts.into(),
+            writing: writing.into(),
             seq: m.event_seq,
             created_at: m.created_at,
             ended_at: m.ended_at,
@@ -189,10 +246,21 @@ impl MeetingStateDto {
 }
 
 /// The meeting's current state, as `actor` sees it.
-async fn state_of(state: &AppState, meeting_id: Uuid, actor: Uuid) -> AppResult<MeetingStateDto> {
+pub(crate) async fn state_of(
+    state: &AppState,
+    meeting_id: Uuid,
+    actor: Uuid,
+) -> AppResult<MeetingStateDto> {
     let view = meetings::view(&state.db, meeting_id, actor).await?;
+    let reflections = reflections::snapshot(&state.db, &view.meeting, actor).await?;
     let online = state.hub.online(meeting_id);
-    Ok(MeetingStateDto::new(view, &online))
+    // An ended meeting has no editors open, whatever sockets still say.
+    let writing = if view.meeting.status == MeetingStatus::Active {
+        state.hub.writing(meeting_id)
+    } else {
+        WritingCounts::default()
+    };
+    Ok(MeetingStateDto::new(view, &online, reflections, writing))
 }
 
 #[derive(Debug, Deserialize, IntoParams)]
@@ -412,6 +480,64 @@ pub async fn next_phase(
     Path(meeting_id): Path<Uuid>,
 ) -> AppResult<Json<MeetingStateDto>> {
     meetings::next_phase(&state.db, meeting_id, user.id).await?;
+    Ok(Json(state_of(&state, meeting_id, user.id).await?))
+}
+
+/// Sets, pauses, resumes, extends or stops the timer (facilitator, any phase).
+#[utoipa::path(
+    put,
+    path = "/api/v1/meetings/{meeting_id}/timer",
+    tag = "meetings",
+    security(("bearer" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Meeting id")),
+    request_body = TimerAction,
+    responses(
+        (status = 200, body = MeetingStateDto, description = "The meeting, with its timer"),
+        (status = 400, body = Problem, content_type = "application/problem+json", description = "`invalid_duration`: start outside 1 s–99:59, or add outside 1 s–1 h"),
+        (status = 403, body = Problem, content_type = "application/problem+json", description = "`not_facilitator`"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`meeting_not_found`"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`meeting_ended`, or `no_timer` (pause, resume or add with no timer set)"),
+    )
+)]
+pub async fn set_timer(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(meeting_id): Path<Uuid>,
+    Json(body): Json<TimerAction>,
+) -> AppResult<Json<MeetingStateDto>> {
+    meetings::set_timer(&state.db, meeting_id, user.id, body).await?;
+    Ok(Json(state_of(&state, meeting_id, user.id).await?))
+}
+
+/// The caller's ready flag.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetReadyRequest {
+    pub ready: bool,
+}
+
+/// Sets the caller's own ready flag (participants, in Reflect, Group and Vote).
+#[utoipa::path(
+    put,
+    path = "/api/v1/meetings/{meeting_id}/ready",
+    tag = "meetings",
+    security(("bearer" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Meeting id")),
+    request_body = SetReadyRequest,
+    responses(
+        (status = 200, body = MeetingStateDto, description = "The meeting"),
+        (status = 403, body = Problem, content_type = "application/problem+json", description = "`not_participant`"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`meeting_not_found`"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`meeting_ended`, or `wrong_phase` (no Ready in this phase)"),
+    )
+)]
+pub async fn set_ready(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(meeting_id): Path<Uuid>,
+    Json(body): Json<SetReadyRequest>,
+) -> AppResult<Json<MeetingStateDto>> {
+    meetings::set_ready(&state.db, meeting_id, user.id, body.ready).await?;
     Ok(Json(state_of(&state, meeting_id, user.id).await?))
 }
 

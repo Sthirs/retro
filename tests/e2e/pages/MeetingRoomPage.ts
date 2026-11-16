@@ -17,7 +17,7 @@ export class MeetingRoomPage {
   /** The banner shown while the real-time connection is lost. */
   readonly reconnecting: Locator;
 
-  constructor(private readonly page: Page) {
+  constructor(readonly page: Page) {
     this.phase = page.getByRole('heading', { level: 1 });
     this.sidebar = page.getByRole('navigation', { name: 'Meeting phases' });
     this.queue = page.getByRole('list', { name: 'Icebreaker progress' });

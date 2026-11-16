@@ -1,5 +1,6 @@
-//! Sanitising of task rich text (a restricted HTML subset) and extraction of
-//! the user mentions it contains.
+//! Sanitising of rich text (a restricted HTML subset, ADR-0010) and
+//! extraction of the user mentions it contains. Tasks and reflections each
+//! have their own allow-list ([`Profile`]).
 
 use std::collections::{HashMap, HashSet};
 
@@ -14,6 +15,25 @@ pub const CONTENT_MAX_CHARS: usize = 10_000;
 /// without being parsed.
 const RAW_MAX_CHARS: usize = 4 * CONTENT_MAX_CHARS;
 
+/// Which content is sanitized: decides the allow-list and the error code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Profile {
+    /// Tasks (spec §9.5): formatting, links and mentions.
+    Task,
+    /// Reflections (spec §9.2): formatting, strikethrough, links, bullet
+    /// lists and inline code; no mentions.
+    Reflection,
+}
+
+impl Profile {
+    fn invalid(self) -> AppError {
+        AppError::Invalid(match self {
+            Self::Task => "invalid_task_content",
+            Self::Reflection => "invalid_reflection_content",
+        })
+    }
+}
+
 /// Sanitized rich text together with the users it mentions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sanitized {
@@ -22,35 +42,48 @@ pub struct Sanitized {
     pub mention_ids: Vec<Uuid>,
 }
 
-/// Sanitizes `raw`, rejecting blank or overlong content with
+/// Sanitizes task content, rejecting blank or overlong content with
 /// `invalid_task_content`.
 pub fn sanitize(raw: &str) -> Result<Sanitized, AppError> {
+    sanitize_as(raw, Profile::Task)
+}
+
+/// Sanitizes `raw` with the allow-list of `profile`, rejecting blank or
+/// overlong content with the profile's error code.
+pub fn sanitize_as(raw: &str, profile: Profile) -> Result<Sanitized, AppError> {
     // Cheap guard so huge bodies are never parsed. The cap is generous: markup
     // that sanitizes away may still push valid text past `CONTENT_MAX_CHARS`.
     if raw.chars().count() > RAW_MAX_CHARS {
-        return Err(AppError::Invalid("invalid_task_content"));
+        return Err(profile.invalid());
     }
-    let cleaned = allowlist().clean(raw).to_string();
+    let cleaned = allowlist(profile).clean(raw).to_string();
     let (html, mention_ids) = normalize_spans(&cleaned);
 
     if html.chars().count() > CONTENT_MAX_CHARS || visible_text(&html).trim().is_empty() {
-        return Err(AppError::Invalid("invalid_task_content"));
+        return Err(profile.invalid());
     }
     Ok(Sanitized { html, mention_ids })
 }
 
-/// The ammonia allowlist: formatting, links and mention spans.
-fn allowlist() -> ammonia::Builder<'static> {
+/// The ammonia allowlist of a profile.
+fn allowlist(profile: Profile) -> ammonia::Builder<'static> {
     let mut builder = ammonia::Builder::empty();
-    builder
-        .tags(HashSet::from(["p", "br", "strong", "em", "a", "span"]))
-        .tag_attributes(HashMap::from([
-            ("a", HashSet::from(["href"])),
-            (
+    let mut attributes = HashMap::from([("a", HashSet::from(["href"]))]);
+    let tags = match profile {
+        Profile::Task => {
+            attributes.insert(
                 "span",
                 HashSet::from(["data-type", "data-id", "data-label"]),
-            ),
-        ]))
+            );
+            HashSet::from(["p", "br", "strong", "em", "a", "span"])
+        }
+        Profile::Reflection => {
+            HashSet::from(["p", "br", "strong", "em", "s", "a", "ul", "li", "code"])
+        }
+    };
+    builder
+        .tags(tags)
+        .tag_attributes(attributes)
         .url_schemes(HashSet::from(["http", "https", "mailto"]))
         // Only absolute links: `/x`, `//host/x` and `example.com` would resolve
         // against the app's own origin or an attacker's.
@@ -341,5 +374,38 @@ mod tests {
         let out = sanitize(&raw).unwrap();
         assert!(out.mention_ids.is_empty());
         assert_eq!(out.html.matches("<span").count(), 1);
+    }
+
+    #[test]
+    fn reflections_keep_their_extra_formatting() {
+        let raw = "<p><s>old</s> <code>x()</code></p><ul><li><p>one</p></li></ul>";
+        let out = sanitize_as(raw, Profile::Reflection).unwrap();
+        assert_eq!(out.html, raw);
+        // Tasks do not allow it.
+        let task = sanitize(raw).unwrap();
+        assert!(!task.html.contains("<s>") && !task.html.contains("<ul>"));
+    }
+
+    #[test]
+    fn reflections_drop_mentions_scripts_and_images() {
+        let id = Uuid::now_v7();
+        let raw = format!(
+            r#"<p>hi <span data-type="mention" data-id="{id}" data-label="Bo">@Bo</span><img src="x" onerror="alert(1)"><script>alert(1)</script></p>"#
+        );
+        let out = sanitize_as(&raw, Profile::Reflection).unwrap();
+        assert_eq!(out.html, "<p>hi @Bo</p>");
+        assert!(out.mention_ids.is_empty());
+    }
+
+    #[test]
+    fn reflections_have_their_own_error_code() {
+        assert!(matches!(
+            sanitize_as("<p> </p>", Profile::Reflection),
+            Err(AppError::Invalid("invalid_reflection_content"))
+        ));
+        assert!(matches!(
+            sanitize_as(&"a".repeat(CONTENT_MAX_CHARS + 1), Profile::Reflection),
+            Err(AppError::Invalid("invalid_reflection_content"))
+        ));
     }
 }

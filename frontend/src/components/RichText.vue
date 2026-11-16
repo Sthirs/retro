@@ -48,4 +48,15 @@ const safeHtml = computed(() => sanitizeRichText(props.html));
   padding: 0 6px;
   font-weight: 600;
 }
+.rich-text :deep(ul) {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.rich-text :deep(code) {
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  background: var(--well);
+  font-size: 0.93em;
+}
 </style>

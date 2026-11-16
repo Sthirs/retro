@@ -103,7 +103,9 @@ describe('Meeting room', () => {
     await button(wrapper, 'Next: Reflect')!.trigger('click');
     await flushPromises();
     expect(wrapper.get('h1').text()).toBe('Reflect');
-    expect(wrapper.text()).toContain('The Reflect phase is on its way');
+    const columns = wrapper.findAll('section[aria-label]').map((c) => c.attributes('aria-label'));
+    expect(columns).toEqual(expect.arrayContaining(['Plus', 'Delta', 'Ideas', 'Thanks']));
+    expect(button(wrapper, 'Next: Group')).toBeTruthy();
   });
 
   it.each([

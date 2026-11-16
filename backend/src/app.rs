@@ -123,6 +123,22 @@ pub fn router(state: AppState) -> Router {
             post(api::meetings::end_meeting),
         )
         .route(
+            "/meetings/{meeting_id}/timer",
+            put(api::meetings::set_timer),
+        )
+        .route(
+            "/meetings/{meeting_id}/ready",
+            put(api::meetings::set_ready),
+        )
+        .route(
+            "/meetings/{meeting_id}/reflections",
+            post(api::reflections::create_reflection),
+        )
+        .route(
+            "/reflections/{reflection_id}",
+            patch(api::reflections::update_reflection).delete(api::reflections::delete_reflection),
+        )
+        .route(
             "/meetings/{meeting_id}/invite-link",
             get(api::meetings::get_invite_link).post(api::meetings::regenerate_invite_link),
         )

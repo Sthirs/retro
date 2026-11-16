@@ -84,6 +84,23 @@ pub const DEV_USERS: &[DevUser] = &[
         email: "kai@retro.local",
         display_name: "Kai Russo",
     },
+    // Also password only. The end-to-end reflect spec owns these three: lena
+    // facilitates, milo writes, nora joins late and takes over as an admin.
+    DevUser {
+        username: "lena",
+        email: "lena@retro.local",
+        display_name: "Lena Fontana",
+    },
+    DevUser {
+        username: "milo",
+        email: "milo@retro.local",
+        display_name: "Milo Testa",
+    },
+    DevUser {
+        username: "nora",
+        email: "nora@retro.local",
+        display_name: "Nora Pellegrini",
+    },
 ];
 
 /// Creates the dev users, or resets their name and password. Idempotent.

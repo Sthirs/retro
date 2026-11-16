@@ -162,7 +162,7 @@ describe('meeting store', () => {
     expect(store.meeting!.title).toBe('Renamed');
   });
 
-  it('ignores a resync snapshot older than the events applied meanwhile', async () => {
+  it('applies the events that landed during a resync on top of its snapshot', async () => {
     let answer: (() => void) | null = null;
     const { store, fetchMock } = await opened();
     fetchMock.mockImplementationOnce((async () => {

@@ -10,18 +10,20 @@ import {
   Role,
   type MeetingStateDto,
   type ParticipantDto,
+  type ReflectionColumn,
+  type Timer,
+  type TimerAction,
 } from '@/api/client';
+import { isOwnEvent } from '@/api/clientId';
 import type { RealtimeEvent } from '@/api/realtime';
 import { useSessionStore } from '@/stores/session';
 
 export const PHASES = Object.values(MeetingPhase);
 
-/** A notice for everyone in the room, e.g. a new facilitator. */
-export interface MeetingNotice {
-  kind: 'facilitator';
-  userId: string;
-  name: string;
-}
+/** A notice in the room: a new facilitator, or this tab's drafts discarded. */
+export type MeetingNotice =
+  | { kind: 'facilitator'; userId: string; name: string }
+  | { kind: 'draftsDiscarded'; count: number };
 
 /**
  * The meeting room's state (spec §15.4): a snapshot from the server, kept up
@@ -41,6 +43,14 @@ export const useMeetingStore = defineStore('meeting', () => {
   /** Events that arrived before the snapshot. */
   let queued: RealtimeEvent[] = [];
   /**
+   * Events applied while a snapshot request (a reload or an action) is on its
+   * way, one log per request: the snapshot may predate them, so they are
+   * applied again on top of it.
+   */
+  const logs = new Set<RealtimeEvent[]>();
+  /** Set while a log is applied again, so other logs do not record it twice. */
+  let replaying = false;
+  /**
    * Who is in the room, participant or not yet: presence can arrive before
    * the participant's join, so it is kept apart and applied to participants.
    */
@@ -52,6 +62,24 @@ export const useMeetingStore = defineStore('meeting', () => {
   let loadSeq = 0;
   /** A resync asked for while `open()` was loading: run once it is done. */
   let resyncWanted = false;
+  /** Optimistic actions waiting for the server's answer. */
+  let optimisticInFlight = 0;
+  /**
+   * Server time minus local time, in ms, from the last `serverNow` seen: the
+   * timer counts down on server time, whatever the local clock says.
+   */
+  const clockOffset = ref(0);
+
+  function syncClock(serverNow: unknown): void {
+    if (typeof serverNow !== 'string') return;
+    const at = Date.parse(serverNow);
+    if (!Number.isNaN(at)) clockOffset.value = at - Date.now();
+  }
+
+  /** The current server time, in ms since the epoch. */
+  function serverTime(): number {
+    return Date.now() + clockOffset.value;
+  }
 
   const me = computed(() => session.user?.id ?? null);
   const isFacilitator = computed(() => !!me.value && meeting.value?.facilitatorId === me.value);
@@ -85,6 +113,20 @@ export const useMeetingStore = defineStore('meeting', () => {
   const previousSpeaker = computed(() => speakers.value[speakerIndex.value - 1] ?? null);
   const isLastSpeaker = computed(() => speakerIndex.value >= speakers.value.length - 1);
 
+  const participants = computed(() => meeting.value?.participants ?? []);
+  const readyCount = computed(() => participants.value.filter((p) => p.ready).length);
+  const iAmReady = computed(
+    () => participants.value.find((p) => p.id === me.value)?.ready ?? false,
+  );
+  /** Ready is pressed in Reflect, Group and Vote (spec §8.2). */
+  const hasReady = computed(() => {
+    const phase = meeting.value?.phase;
+    return (
+      phase === MeetingPhase.reflect || phase === MeetingPhase.group || phase === MeetingPhase.vote
+    );
+  });
+  const myReflections = computed(() => (meeting.value?.reflections ?? []).filter((r) => r.mine));
+
   function reset(): void {
     loadSeq++;
     meeting.value = null;
@@ -103,13 +145,38 @@ export const useMeetingStore = defineStore('meeting', () => {
     () => reset(),
   );
 
-  /** Takes a snapshot from the server unless ours is newer. */
-  function accept(state: MeetingStateDto): void {
+  /** Runs a request for a snapshot, logging the events applied meanwhile. */
+  async function logged<T>(call: () => Promise<T>): Promise<{ res: T; log: RealtimeEvent[] }> {
+    const log: RealtimeEvent[] = [];
+    logs.add(log);
+    try {
+      return { res: await call(), log };
+    } finally {
+      logs.delete(log);
+    }
+  }
+
+  /**
+   * Takes a snapshot from the server, then applies again the events of `log`
+   * (those that arrived while it was on its way) it may predate: sequenced
+   * events past its `seq`, and every unsequenced one (writing, presence),
+   * which is newer than what the snapshot holds.
+   */
+  function accept(state: MeetingStateDto, log: RealtimeEvent[] = []): void {
     if (state.id !== meetingId.value) return;
-    if (meeting.value && meeting.value.seq > state.seq) return;
+    const seen = meeting.value?.seq ?? 0;
     meeting.value = state;
     online = new Set(state.onlineIds);
     markOnline();
+    syncClock(state.serverNow);
+    replaying = true;
+    try {
+      for (const event of log) apply(event);
+    } finally {
+      replaying = false;
+    }
+    // The log should bring it back to every event seen; reload if it did not.
+    if (meeting.value && meeting.value.seq < seen) void resync();
   }
 
   /** Opens a meeting: joins it while it runs, then loads its state. */
@@ -146,8 +213,9 @@ export const useMeetingStore = defineStore('meeting', () => {
   }
 
   /**
-   * Reloads the snapshot (after a gap, a subscription or a reconnect). While
-   * `open()` is loading it waits for it, so the open still completes.
+   * Reloads the snapshot (after a gap, a subscription, a reconnect or a new
+   * phase). While `open()` is loading it waits for it, so the open still
+   * completes.
    */
   async function resync(): Promise<void> {
     const id = meetingId.value;
@@ -158,11 +226,10 @@ export const useMeetingStore = defineStore('meeting', () => {
     }
     const seq = ++loadSeq;
     try {
-      const res = await api.getMeetingState(id);
+      const { res, log } = await logged(() => api.getMeetingState(id));
       if (res.status !== 200) throw apiError(res);
       if (seq !== loadSeq) return;
-      // Not older than the events applied while it was on its way.
-      accept(res.data);
+      accept(res.data, log);
     } catch (e) {
       if (seq === loadSeq) loadError.value = errorCode(e);
     }
@@ -200,6 +267,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       }
       m.seq = event.seq;
     }
+    if (!replaying) for (const log of logs) log.push(event);
     const p = event.payload;
     switch (event.type) {
       case 'participant.joined': {
@@ -224,6 +292,29 @@ export const useMeetingStore = defineStore('meeting', () => {
       }
       case 'phase.changed':
         m.phase = p.phase as MeetingStateDto['phase'];
+        // Ready flags reset with every phase; the snapshot of the new phase
+        // (e.g. every reflection, from Group on) comes from the server.
+        for (const participant of m.participants) participant.ready = false;
+        void resync();
+        break;
+      case 'timer.updated':
+        syncClock(p.serverNow);
+        m.timer = (p.timer as Timer | null) ?? null;
+        break;
+      case 'ready.changed': {
+        const participant = m.participants.find((x) => x.id === p.userId);
+        if (participant) participant.ready = p.ready as boolean;
+        break;
+      }
+      case 'reflection.count_changed':
+        m.reflectionCounts = p.counts as MeetingStateDto['reflectionCounts'];
+        break;
+      case 'reflection.writing':
+        m.writing = p.counts as MeetingStateDto['writing'];
+        break;
+      case 'reflection.changed':
+        // Another tab of ours changed one of our reflections.
+        if (!isOwnEvent(p)) void resync();
         break;
       case 'icebreaker.person_changed':
         m.icebreaker.index = p.index as number;
@@ -245,26 +336,33 @@ export const useMeetingStore = defineStore('meeting', () => {
   ): Promise<boolean> {
     const before = meeting.value ? structuredClone(toRaw(meeting.value)) : null;
     actionError.value = null;
-    optimistic?.();
+    if (optimistic) {
+      optimisticInFlight++;
+      optimistic();
+    }
     try {
-      const res = await call();
-      if (res.status !== 200) throw apiError(res);
-      accept(res.data as MeetingStateDto);
+      const { res, log } = await logged(call);
+      if (res.status !== 200 && res.status !== 201) throw apiError(res);
+      accept(res.data as MeetingStateDto, log);
       return true;
     } catch (e) {
       if (optimistic && before) undo(before);
       actionError.value = errorCode(e);
       return false;
+    } finally {
+      if (optimistic) optimisticInFlight--;
     }
   }
 
   /**
    * Takes back a refused optimistic change. If events moved the meeting on
    * meanwhile (or another one is open), `before` is out of date: reload.
+   * So it is while another optimistic action is pending: `before` may hold,
+   * or lack, that action's change.
    */
   function undo(before: MeetingStateDto): void {
     const now = meeting.value;
-    if (now && now.id === before.id && now.seq === before.seq) {
+    if (now && now.id === before.id && now.seq === before.seq && optimisticInFlight === 1) {
       meeting.value = before;
       // Presence carries no seq: keep the current one.
       markOnline();
@@ -321,6 +419,46 @@ export const useMeetingStore = defineStore('meeting', () => {
     return act(() => api.endMeeting(id));
   }
 
+  function setTimer(action: TimerAction): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(() => api.setTimer(id, action));
+  }
+
+  function setReady(ready: boolean): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(
+      () => api.setReady(id, { ready }),
+      () => {
+        const mine = meeting.value!.participants.find((p) => p.id === me.value);
+        if (mine) mine.ready = ready;
+      },
+    );
+  }
+
+  function createReflection(column: ReflectionColumn, content: string): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(() => api.createReflection(id, { column, content }));
+  }
+
+  function updateReflection(
+    reflectionId: string,
+    change: { column?: ReflectionColumn; content?: string },
+  ): Promise<boolean> {
+    return act(() => api.updateReflection(reflectionId, change));
+  }
+
+  function deleteReflection(reflectionId: string): Promise<boolean> {
+    return act(
+      () => api.deleteReflection(reflectionId),
+      () => {
+        const m = meeting.value!;
+        const gone = m.reflections.find((r) => r.id === reflectionId);
+        m.reflections = m.reflections.filter((r) => r.id !== reflectionId);
+        if (gone) m.reflectionCounts[gone.column] -= 1;
+      },
+    );
+  }
+
   return {
     meeting,
     meetingId,
@@ -342,6 +480,12 @@ export const useMeetingStore = defineStore('meeting', () => {
     nextSpeaker,
     previousSpeaker,
     isLastSpeaker,
+    readyCount,
+    iAmReady,
+    hasReady,
+    myReflections,
+    clockOffset,
+    serverTime,
     open,
     resync,
     apply,
@@ -352,5 +496,10 @@ export const useMeetingStore = defineStore('meeting', () => {
     rename,
     setFacilitator,
     end,
+    setTimer,
+    setReady,
+    createReflection,
+    updateReflection,
+    deleteReflection,
   };
 });

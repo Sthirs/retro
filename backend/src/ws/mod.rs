@@ -7,12 +7,12 @@
 //! those notifications and forwards them to its own sockets.
 
 mod channel;
-mod hub;
+pub(crate) mod hub;
 mod socket;
 pub mod ticket;
 
 pub use channel::Channel;
-pub use hub::{AccessChange, Hub};
+pub use hub::{AccessChange, ColumnWritingDto, Hub, WritingCounts, WritingDto, WritingMode};
 pub use socket::ws_handler;
 
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement};
@@ -29,9 +29,14 @@ pub(crate) struct Notification {
     pub channel: String,
     #[serde(rename = "type")]
     pub kind: String,
-    /// Per-channel sequence number; `None` for ephemeral events (presence).
+    /// Per-channel sequence number; `None` for ephemeral events (presence)
+    /// and user-targeted ones.
     pub seq: Option<i64>,
     pub payload: Value,
+    /// Only this user's sockets receive the event (ADR-0012); never sent to
+    /// clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<Uuid>,
 }
 
 /// Publishes an event on `channel`. Call it inside the transaction that makes
@@ -48,6 +53,26 @@ pub async fn publish(
         kind: kind.to_owned(),
         seq,
         payload,
+        user: None,
+    };
+    notify(db, &notification).await
+}
+
+/// Publishes an event on a meeting's channel for `user`'s sockets only
+/// (ADR-0012). It carries no `seq`: the other subscribers never see it.
+pub async fn publish_user(
+    db: &impl ConnectionTrait,
+    meeting_id: Uuid,
+    user: Uuid,
+    kind: &str,
+    payload: Value,
+) -> Result<(), DbErr> {
+    let notification = Notification {
+        channel: Channel::Meeting(meeting_id).to_string(),
+        kind: kind.to_owned(),
+        seq: None,
+        payload,
+        user: Some(user),
     };
     notify(db, &notification).await
 }

@@ -14,7 +14,9 @@ export interface FakeRoute {
 }
 
 /** Routes `fetch` calls by "METHOD path" to canned responses (JSON, or a `Blob` body as is). */
-export function mockFetch(routes: Record<string, FakeRoute | (() => FakeRoute)>) {
+export function mockFetch(
+  routes: Record<string, FakeRoute | (() => FakeRoute | Promise<FakeRoute>)>,
+) {
   const calls: { method: string; path: string; body: unknown; headers: Headers }[] = [];
   const fetchMock = vi.fn(async (input: Request) => {
     const url = new URL(input.url);
@@ -35,7 +37,7 @@ export function mockFetch(routes: Record<string, FakeRoute | (() => FakeRoute)>)
       headers: input.headers,
     });
     const route = routes[key];
-    const resolved = typeof route === 'function' ? route() : route;
+    const resolved = typeof route === 'function' ? await route() : route;
     if (!resolved) return new Response(null, { status: 404 });
     if (resolved.body instanceof Blob) {
       return new Response(resolved.body, {
@@ -162,7 +164,7 @@ export class MockWebSocket {
   static instances: MockWebSocket[] = [];
 
   readyState = MockWebSocket.CONNECTING;
-  sent: { type: string; channel: string }[] = [];
+  sent: { type: string; channel: string; [key: string]: unknown }[] = [];
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: (() => void) | null = null;
@@ -240,6 +242,7 @@ export const participant = (user: typeof ALICE, overrides: Record<string, unknow
   pictureVersion: null,
   role: 'member',
   online: true,
+  ready: false,
   ...overrides,
 });
 
@@ -258,6 +261,15 @@ export const meetingState = (overrides: Record<string, unknown> = {}) => ({
   question: "What's a small thing that made your week better?",
   icebreaker: { order: [ALICE.id, BOB.id], index: 0 },
   taskCount: 0,
+  timer: null,
+  reflections: [],
+  reflectionCounts: { plus: 0, delta: 0, ideas: 0, thanks: 0 },
+  writing: {
+    plus: { new: 0, edit: 0 },
+    delta: { new: 0, edit: 0 },
+    ideas: { new: 0, edit: 0 },
+    thanks: { new: 0, edit: 0 },
+  },
   seq: 2,
   createdAt: '2026-11-10T17:02:00Z',
   endedAt: null,

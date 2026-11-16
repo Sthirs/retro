@@ -23,9 +23,12 @@ import MeetingSidebar from '@/features/meetings/MeetingSidebar.vue';
 import PhaseHeader from '@/features/meetings/PhaseHeader.vue';
 import ReconnectingBanner from '@/features/meetings/ReconnectingBanner.vue';
 import TransferDialog from '@/features/meetings/TransferDialog.vue';
+import TimesUpToast from '@/features/meetings/footer/TimesUpToast.vue';
 import IcebreakerPhase from '@/features/meetings/phases/IcebreakerPhase.vue';
 import PhasePlaceholder from '@/features/meetings/phases/PhasePlaceholder.vue';
+import ReflectPhase from '@/features/meetings/reflect/ReflectPhase.vue';
 import { useMeetingStore } from '@/stores/meeting';
+import { useReflectDraftsStore } from '@/stores/reflectDrafts';
 import { useSessionStore } from '@/stores/session';
 
 const { t } = useI18n();
@@ -33,6 +36,8 @@ const errorText = useErrorText();
 const route = useRoute();
 const store = useMeetingStore();
 const session = useSessionStore();
+// Created with the room, so drafts follow the meeting even outside Reflect.
+useReflectDraftsStore();
 
 const meetingId = computed(() => String(route.params.meetingId));
 const teamId = computed(() => String(route.params.teamId));
@@ -75,17 +80,21 @@ watch(
   },
 );
 
-/** "Marco Bianchi is now the facilitator", for a few seconds. */
+/** "Marco Bianchi is now the facilitator" (or drafts discarded), for a few seconds. */
 const noticeText = ref('');
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 watch(
   () => store.notice,
   (notice) => {
     if (!notice) return;
-    noticeText.value =
-      notice.userId === session.user?.id
-        ? t('meetingRoom.youFacilitate')
-        : t('meetingRoom.facilitatorChanged', { name: notice.name });
+    if (notice.kind === 'draftsDiscarded') {
+      noticeText.value = t('reflect.draftsDiscarded', notice.count);
+    } else {
+      noticeText.value =
+        notice.userId === session.user?.id
+          ? t('meetingRoom.youFacilitate')
+          : t('meetingRoom.facilitatorChanged', { name: notice.name });
+    }
     clearTimeout(noticeTimer);
     noticeTimer = setTimeout(() => (noticeText.value = ''), 6000);
   },
@@ -118,6 +127,7 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
         <AppAlert v-if="store.actionError">{{ errorText(store.actionError) }}</AppAlert>
         <div class="room__phase">
           <IcebreakerPhase v-if="meeting.phase === MeetingPhase.icebreaker" />
+          <ReflectPhase v-else-if="meeting.phase === MeetingPhase.reflect" />
           <PhasePlaceholder v-else />
         </div>
       </main>
@@ -126,6 +136,7 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
     <div class="notice" role="status">
       <p v-if="noticeText" class="notice__toast">{{ noticeText }}</p>
     </div>
+    <TimesUpToast />
     <TransferDialog :open="transferOpen" @close="transferOpen = false" />
     <EndMeetingDialog :open="endOpen" @close="endOpen = false" />
   </div>

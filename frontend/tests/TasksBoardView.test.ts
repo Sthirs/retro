@@ -831,7 +831,7 @@ describe('Tasks board', () => {
       const editor = wrapper.findComponent(RichTextEditor);
       expect(editor.props('label')).toBe('Task');
       expect(editor.props('modelValue')).toBe('<p>a1</p>');
-      expect(editor.props('members').map((m: { id: string }) => m.id)).toEqual([ALICE.id, BOB.id]);
+      expect(editor.props('members')!.map((m: { id: string }) => m.id)).toEqual([ALICE.id, BOB.id]);
 
       editor.vm.$emit('update:modelValue', '<p>Rewritten</p>');
       await flushPromises();

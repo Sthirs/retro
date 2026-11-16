@@ -8,8 +8,10 @@ use utoipa::{
 
 use crate::{
     api,
+    domain::timer::TimerStatus,
     entities::{
         meeting::{MeetingPhase, MeetingStatus},
+        reflection::ReflectionColumn,
         task::TaskStatus,
     },
     error::Problem,
@@ -63,12 +65,24 @@ use crate::{
         api::meetings::next_phase,
         api::meetings::set_facilitator,
         api::meetings::end_meeting,
+        api::meetings::set_timer,
+        api::meetings::set_ready,
+        api::reflections::create_reflection,
+        api::reflections::update_reflection,
+        api::reflections::delete_reflection,
         api::meetings::get_invite_link,
         api::meetings::regenerate_invite_link,
         api::meetings::accept_meeting_invite,
         api::meetings::ws_ticket,
     ),
-    components(schemas(Problem, TaskStatus, MeetingStatus, MeetingPhase)),
+    components(schemas(
+        Problem,
+        TaskStatus,
+        MeetingStatus,
+        MeetingPhase,
+        ReflectionColumn,
+        TimerStatus
+    )),
     modifiers(&BearerAuth),
 )]
 pub struct ApiDoc;

@@ -4,9 +4,11 @@ pub mod invitations;
 pub mod meetings;
 pub mod ordering;
 pub mod pictures;
+pub mod reflections;
 pub mod rich_text;
 pub mod tasks;
 pub mod teams;
+pub mod timer;
 pub mod users;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};

@@ -168,4 +168,78 @@ describe('RealtimeClient', () => {
     // Nothing is acknowledged yet, so there is nothing to resync.
     expect(seen).toEqual([]);
   });
+
+  it('sends the writing state once subscribed, and again after a reconnect', async () => {
+    const rt = client();
+    rt.subscribe('meeting:1', () => undefined);
+    // Before the acknowledgement it is only remembered.
+    rt.setWriting('meeting:1', { column: 'delta', mode: 'new' });
+    await flushPromises();
+    const socket = MockWebSocket.last!;
+    socket.open();
+    socket.emit({ type: 'subscribed', channel: 'meeting:1' });
+    expect(socket.sent).toEqual([
+      { type: 'subscribe', channel: 'meeting:1' },
+      { type: 'writing', channel: 'meeting:1', column: 'delta', mode: 'new' },
+    ]);
+    // The same state is not sent twice; a change is sent at once.
+    rt.setWriting('meeting:1', { column: 'delta', mode: 'new' });
+    rt.setWriting('meeting:1', { column: 'plus', mode: 'edit' });
+    expect(socket.sent.at(-1)).toEqual({
+      type: 'writing',
+      channel: 'meeting:1',
+      column: 'plus',
+      mode: 'edit',
+    });
+    expect(socket.sent).toHaveLength(3);
+
+    socket.drop();
+    await vi.advanceTimersByTimeAsync(2000);
+    const again = MockWebSocket.last!;
+    expect(again).not.toBe(socket);
+    again.open();
+    again.emit({ type: 'subscribed', channel: 'meeting:1' });
+    expect(again.sent.at(-1)).toEqual({
+      type: 'writing',
+      channel: 'meeting:1',
+      column: 'plus',
+      mode: 'edit',
+    });
+
+    rt.setWriting('meeting:1', null);
+    expect(again.sent.at(-1)).toEqual({ type: 'writing', channel: 'meeting:1', column: null });
+  });
+
+  it('holds writing changes past the rate limit, then sends the latest', async () => {
+    const rt = client();
+    rt.subscribe('meeting:1', () => undefined);
+    await flushPromises();
+    const socket = MockWebSocket.last!;
+    socket.open();
+    socket.emit({ type: 'subscribed', channel: 'meeting:1' });
+    // Twelve quick toggles that end with the editor closed.
+    for (let i = 0; i < 12; i++) {
+      rt.setWriting('meeting:1', i % 2 === 0 ? { column: 'plus', mode: 'new' } : null);
+    }
+    const writes = () => socket.sent.filter((m) => m.type === 'writing');
+    expect(writes()).toHaveLength(8);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(writes()).toHaveLength(9);
+    expect(writes().at(-1)).toEqual({ type: 'writing', channel: 'meeting:1', column: null });
+  });
+
+  it('keeps a refused writing message away from the channel listeners', async () => {
+    const rt = client();
+    const seen: RealtimeEvent[] = [];
+    rt.subscribe('meeting:1', (e) => seen.push(e));
+    await flushPromises();
+    const socket = MockWebSocket.last!;
+    socket.open();
+    socket.emit({ type: 'subscribed', channel: 'meeting:1' });
+    socket.emit({ type: 'error', channel: 'meeting:1', payload: { code: 'not_writable' } });
+    socket.emit({ type: 'error', channel: 'meeting:1', payload: { code: 'not_subscribed' } });
+    expect(seen.map((e) => e.type)).toEqual(['resync']);
+    socket.emit({ type: 'error', channel: 'meeting:1', payload: { code: 'team_not_found' } });
+    expect(seen.map((e) => e.type)).toEqual(['resync', 'error']);
+  });
 });

@@ -220,8 +220,12 @@ The individual meeting phases cannot be replayed.
 - Header: meeting title, team name and date, current phase with a stepper showing all five phases, facilitator name, participant avatars with presence, and an **Invite** button that copies the meeting invite link (§6.3).
 - Facilitator controls: **Next** (person/group/phase depending on context), **Timer**, **Settings** (e.g. votes), **Transfer facilitator**, **End meeting**.
 - Team admins who are not the facilitator see a **Take over facilitation** action.
-- **Ready** button at the bottom for participants (used in Reflect, Group and Vote). The facilitator sees a counter such as *"4 / 6 ready"* and who is ready. Ready states reset when the phase changes.
-- **Timer** (facilitator): set a duration, start, pause, add time, stop. All participants see the same countdown, which is computed from server time. When it expires, a non-blocking notification appears; it does not advance the phase automatically.
+- **Ready** button at the bottom for participants (used in Reflect, Group and Vote; refused in the other phases). The facilitator sees a counter such as *"4 / 6 ready"* (out of all participants) and who is ready; the others see who is facilitating. Ready states reset when the phase changes.
+- **Timer** (facilitator), in any phase:
+  - set a duration (presets of 3, 5, 10 or 15 minutes, or a custom `mm:ss` from 1 second to 99:59) and start it;
+  - pause and resume it, add one minute (also after it ran out, which restarts the countdown from now), and stop it.
+
+  All participants see the same countdown, which is computed from server time. The timer carries over when the phase changes, until the facilitator stops it. When it reaches zero, everyone gets a non-blocking, dismissible notice (*"Time's up. Giulia decides when to move on."*); it never advances the phase.
 
 ---
 
@@ -248,15 +252,17 @@ The individual meeting phases cannot be replayed.
   1. **draft** — being written, only on the author's screen;
   2. **confirmed** — sent by the author.
 
-  Once sent, a reflection **cannot be un-sent** (returned to draft). Until the Group phase starts, the author can still **edit** it, **move** it to another column, or **delete** it. After that, reflections are immutable.
+  A draft never leaves the author's browser: it is kept there (so it survives a reload) and reaches the server only when sent. Once sent, a reflection **cannot be un-sent** (returned to draft). Until the Group phase starts, the author can still **edit** it, **move** it to another column, or **delete** it. After that, reflections are immutable.
+- Reflections are written only during the Reflect phase, by participants of the meeting.
+- *Interim:* until image attachments ship, reflection content is rich text without images (bold, italic, strikethrough, links, bullet lists, inline code); pasted images are a long-term goal (see ADR-0010's follow-ups).
 - **Privacy during Reflect**:
   - each participant sees only their own reflections in full;
-  - for other participants' reflections, everyone sees **only the count per column** (e.g. *"3 hidden reflections"*) and **typing indicators** (*"someone is writing in Delta"*);
+  - for other participants' reflections, everyone sees **only the count per column** (e.g. *"4 from team"*) and how many are **being written** in each column (*"1 being written"*). A reflection is being written while its author has an editor open on it: a new one, or a sent one they are editing;
   - the server never sends another user's reflection content to a client during this phase.
 - **Anonymity**: reflections are anonymous to everyone, including the facilitator, in every phase. The author ID is stored only so that authors can edit their own reflections. The API never exposes it to other users.
 - The facilitator can set a **timer** (§8.2).
 - Participants press **Ready** when done. The facilitator sees the ready count.
-- When the facilitator moves to Group, unconfirmed drafts are discarded. The UI warns authors who still have drafts open.
+- When the facilitator moves to Group, drafts are discarded. The bottom bar warns authors who still have unsent drafts (*"1 unsent draft"*).
 
 ### 9.3 Group
 
@@ -325,7 +331,7 @@ The individual meeting phases cannot be replayed.
 - The server checks team membership before accepting any subscription. When a member leaves or is removed, or the team is deleted, the server ends that user's subscriptions to the team's channels (the team channel and its meetings' channels) at once, with an `error` message on each; a former member receives nothing more.
 - Messages are JSON: `{ "type": string, "channel": string, "seq": number, "payload": object }`. Errors have the same shape: `{ "type": "error", "channel", "seq": null, "payload": { "code" } }`.
 - Every message carries a per-channel `seq`. After a reconnect, the client either resyncs by fetching the full state (`GET /meetings/{id}/state`) or requests the messages after the last `seq` it saw.
-- Client → server **ephemeral** messages (typing, drag in progress, cursor) go over the WebSocket and are **not persisted**. **State-changing** actions go through the REST API (or WS commands), are validated, persisted, then broadcast.
+- Client → server **ephemeral** messages (writing state, drag in progress, cursor) go over the WebSocket and are **not persisted**. A user's writing state is tied to their socket, so it ends when the socket closes ([ADR-0012](adr/0012-ephemeral-client-messages-and-user-events.md)). **State-changing** actions go through the REST API (or WS commands), are validated, persisted, then broadcast.
 - Protocol details (ticket, subscribe messages, `seq`, presence across replicas): [ADR-0011](adr/0011-realtime-hub.md).
 - Horizontal scaling: when more than one backend replica runs, broadcasts go through **PostgreSQL `LISTEN/NOTIFY`** so that every replica reaches its connected clients (see §11.3).
 
@@ -337,12 +343,12 @@ The individual meeting phases cannot be replayed.
 | `presence.changed` | user, online (on the team channel also the meeting) | meeting + team channel |
 | `facilitator.changed` | new facilitator | all |
 | `phase.changed` | phase | all |
-| `timer.updated` | state, ends_at, server_now | all |
-| `ready.changed` | user, ready, ready_count | all |
+| `timer.updated` | timer (status, endsAt or remainingMs, durationMs; `null` when stopped), serverNow | all |
+| `ready.changed` | userId, ready, readyCount | all |
 | `icebreaker.person_changed` | index | all |
-| `reflection.typing` | column (no author) | all |
-| `reflection.count_changed` | counts per column | all (Reflect) |
-| `reflection.upserted` / `reflection.deleted` | full reflection | author only in Reflect; all from Group onward |
+| `reflection.writing` | per column, how many new and edited reflections are being written (no author; ephemeral, no `seq`) | all |
+| `reflection.count_changed` | sent reflections per column | all |
+| `reflection.changed` | reflection id, `clientId` (no content; the author's other tabs re-read the state) | author only (no `seq`) |
 | `reflections.revealed` | all reflections (anonymous) | all (Group start) |
 | `card.drag_started` / `card.drag_moved` / `card.drag_ended` | card, user, position | all |
 | `group.created` / `group.updated` / `group.deleted` | group, members, name | all |
@@ -368,7 +374,7 @@ What the real-time layer has to do:
 | --- | --- |
 | Fan-out of events between backend replicas | `LISTEN/NOTIFY`. Each replica holds **one** dedicated listener connection and forwards events to its local WebSocket subscribers through in-process Tokio broadcast channels. |
 | Consistency between persisted state and events | `NOTIFY` issued inside the same transaction as the write is delivered **only on commit**, so clients never see events for rolled-back changes. A dedicated broker can't give this guarantee for free. |
-| Ephemeral events (typing, drag in progress, presence) | Throttled on the client (drag position ≤ 10 Hz per dragged card; typing debounced to 1 event / 2 s) and sent through `NOTIFY` without being persisted. |
+| Ephemeral events (writing, drag in progress, presence) | Throttled on the client (drag position ≤ 10 Hz per dragged card; writing state sent only when an editor opens or closes) and on the server (10 messages / s per socket), and sent through `NOTIFY` without being persisted. Each replica announces its own writing counts per meeting, like presence. |
 | Timer | Stored as `ends_at` on the meeting. Clients count down locally. No ticking server process is needed. |
 | Presence | Tracked in memory by the replica holding the socket and broadcast on change. A replica restart causes clients to reconnect and re-announce. |
 | Catch-up after reconnect | Full-state snapshot (`GET /meetings/{id}/state`). No event log retention is needed. |
@@ -469,7 +475,7 @@ meeting_participants(meeting_id, user_id, joined_at, is_ready)
 
 reflections(id, meeting_id, author_id → users,        -- never exposed to other users
             column ENUM('plus','delta','ideas','thanks'),
-            content, status ENUM('draft','confirmed'),
+            content,                                 -- sent reflections only; drafts stay in the browser
             group_id NULL → reflection_groups, position, version,
             created_at, updated_at)
 

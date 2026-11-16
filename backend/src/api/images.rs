@@ -51,9 +51,23 @@ fn etag_matches(request: &HeaderMap, etag: &str) -> bool {
         .get_all(header::IF_NONE_MATCH)
         .iter()
         .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
-        .any(|tag| tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == etag)
+        .any(|value| value.trim() == "*" || entity_tags(value).any(|tag| tag == etag))
+}
+
+/// The entity tags of an `If-None-Match` list (RFC 9110 §8.8.3), quotes
+/// kept and `W/` dropped. A quoted tag may contain commas, so the list is
+/// read tag by tag rather than split; it stops at the first malformed entry
+/// (a `*` is only valid as the whole field).
+fn entity_tags(list: &str) -> impl Iterator<Item = &str> {
+    let mut rest = list;
+    std::iter::from_fn(move || {
+        rest = rest.trim_start_matches([' ', '\t', ',']);
+        let tag = rest.strip_prefix("W/").unwrap_or(rest);
+        let end = tag.strip_prefix('"')?.find('"')? + 2;
+        let (tag, tail) = tag.split_at(end);
+        rest = tail;
+        Some(tag)
+    })
 }
 
 #[cfg(test)]
@@ -75,5 +89,15 @@ mod tests {
         assert!(!matches("\"abcd\""));
         assert!(!matches("abc"));
         assert!(!etag_matches(&HeaderMap::new(), "\"abc\""));
+    }
+
+    #[test]
+    fn if_none_match_keeps_commas_inside_entity_tags() {
+        assert!(!matches("\"x,*,y\""));
+        assert!(matches("\"x,*,y\", \"abc\""));
+        assert!(matches(" W/\"a,b\" ,W/\"abc\""));
+        // `*` is only the whole field, never a list entry.
+        assert!(!matches("\"x\", *"));
+        assert!(!matches("\"abc"));
     }
 }

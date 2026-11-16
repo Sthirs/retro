@@ -11,9 +11,13 @@ use image::{ImageEncoder, Rgba, RgbaImage, codecs::png::PngEncoder};
 use retro_backend::{
     domain::{attachments, tasks},
     entities::{attachment, task::TaskStatus},
+    error::AppError,
     services::images::MAX_UPLOAD_BYTES,
 };
-use sea_orm::{ActiveModelTrait, EntityTrait, PaginatorTrait, Set};
+use sea_orm::{
+    ActiveModelTrait, ConnectionTrait, DbBackend, EntityTrait, PaginatorTrait, Set, Statement,
+    TransactionTrait,
+};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -432,4 +436,133 @@ async fn deleting_the_team_deletes_its_images() {
         .await;
     assert!(res.status == 204 || res.status == 200, "{}", res.text());
     assert_eq!(attachment::Entity::find().count(&app.db).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn cleanup_skips_images_a_save_is_referencing() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let alice_id = user_id(&app, &alice).await;
+    let team = create_team(&app, &alice, "Platform").await;
+    let old = insert_attachment(&app, team, alice_id, time::Duration::hours(25)).await;
+
+    // A save holds the image, not yet committed, while the cleanup runs.
+    let txn = app.db.begin().await.unwrap();
+    let task = tasks::insert(
+        &txn,
+        team,
+        alice_id,
+        TaskStatus::Active,
+        &img(&old.to_string()),
+    )
+    .await
+    .unwrap();
+    let deleted = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        attachments::cleanup(&app.db),
+    )
+    .await
+    .expect("cleanup waits on the save")
+    .unwrap();
+    assert_eq!(deleted, 0);
+    txn.commit().await.unwrap();
+
+    assert!(
+        attachment::Entity::find_by_id(old)
+            .one(&app.db)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(attachments::cleanup(&app.db).await.unwrap(), 0);
+    // The reference row the save inserted survives too.
+    assert!(task.content.contains(&old.to_string()), "{}", task.content);
+    let refs = app
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS n FROM task_attachments WHERE task_id = $1 AND attachment_id = $2",
+            [task.id.into(), old.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refs.try_get::<i64>("", "n").unwrap(), 1);
+    assert_eq!(fetch(&app, &alice, &old.to_string()).await.status, 200);
+}
+
+#[tokio::test]
+async fn parallel_uploads_cannot_pass_the_pending_cap() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let alice_id = user_id(&app, &alice).await;
+    let team = create_team(&app, &alice, "Platform").await;
+    for _ in 1..attachments::MAX_PENDING_PER_USER {
+        insert_attachment(&app, team, alice_id, time::Duration::ZERO).await;
+    }
+
+    let results = futures_util::future::join_all(
+        (0..5).map(|_| attachments::upload(&app.db, team, alice_id, png(1, 1))),
+    )
+    .await;
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    for err in results.into_iter().filter_map(Result::err) {
+        assert!(
+            matches!(err, AppError::Limited("too_many_pending_attachments")),
+            "{err:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn reflection_images_stay_private_when_the_meeting_ends_during_reflect() {
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let bob = app.token_for("bob").await;
+    let team = create_team(&app, &alice, "Platform").await;
+    join(&app, &alice, team, &bob).await;
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/teams/{team}/meetings"),
+            &alice,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    let meeting = res.json()["id"].as_str().unwrap().to_owned();
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/meetings/{meeting}/join"),
+            &bob,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let next = format!("/api/v1/meetings/{meeting}/phase/next");
+    assert_eq!(app.call("POST", &next, &alice, None).await.status, 200);
+
+    let id = uploaded(&app, &bob, team).await;
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/meetings/{meeting}/reflections"),
+            &bob,
+            Some(json!({ "column": "plus", "content": img(&id) })),
+        )
+        .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/meetings/{meeting}/end"),
+            &alice,
+            None,
+        )
+        .await;
+    assert!(res.status < 300, "{}", res.text());
+    assert_eq!(fetch(&app, &alice, &id).await.status, 404);
+    assert_eq!(fetch(&app, &bob, &id).await.status, 200);
 }

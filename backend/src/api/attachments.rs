@@ -83,7 +83,7 @@ pub async fn upload_attachment(
     check_limit(&state.upload_limiter, &key)?;
     // Every attempt counts, failed ones too: conversion costs CPU either way.
     state.upload_limiter.record_failure(&key);
-    let attachment = attachments::upload(&state.db, team_id, user.id, body.to_vec()).await?;
+    let attachment = attachments::upload(&state.db, team_id, user.id, body).await?;
     Ok((StatusCode::CREATED, Json(attachment.into())))
 }
 

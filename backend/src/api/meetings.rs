@@ -17,6 +17,7 @@ use crate::{
     api::{PersonDto, check_limit, record_token_failure},
     auth::CurrentUser,
     domain::{
+        groups::{self, GroupDto},
         meetings::{self, MeetingView, Participant},
         reflections::{self, ReflectionCountsDto, ReflectionsSnapshot},
         timer::{Timer, TimerAction},
@@ -28,7 +29,7 @@ use crate::{
     },
     error::{AppError, AppResult, Problem},
     state::AppState,
-    ws::{WritingCounts, WritingDto, ticket},
+    ws::{DragDto, WritingCounts, WritingDto, ticket},
 };
 
 /// A participant of a meeting.
@@ -74,7 +75,7 @@ pub struct MeetingSummaryDto {
     /// In joining order.
     pub participants: Vec<ParticipantDto>,
     pub task_count: i64,
-    /// Groups formed in the meeting; always 0 until the Group phase exists.
+    /// Groups formed in the meeting.
     pub group_count: i64,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
@@ -96,7 +97,7 @@ impl MeetingSummaryDto {
             facilitator: view.facilitator.into(),
             participants,
             task_count: view.task_count,
-            group_count: 0,
+            group_count: view.group_count,
             created_at: view.meeting.created_at,
             ended_at: view.meeting.ended_at,
         }
@@ -136,6 +137,12 @@ pub struct ReflectionDto {
     pub content: String,
     /// Written by the viewer.
     pub mine: bool,
+    /// Its group (from Group on).
+    pub group_id: Option<Uuid>,
+    /// Place in its column, set when Group starts.
+    pub position: i32,
+    /// Raised by every move between groups.
+    pub version: i32,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub created_at: OffsetDateTime,
@@ -173,6 +180,10 @@ pub struct MeetingStateDto {
     pub reflection_counts: ReflectionCountsDto,
     /// Reflections being written right now, per column.
     pub writing: WritingDto,
+    /// From Group on, the groups, by column and place.
+    pub groups: Vec<GroupDto>,
+    /// Cards being dragged right now, and by whom (Group).
+    pub drags: Vec<DragDto>,
     /// Last event `seq` included in this snapshot on `meeting:{id}`.
     pub seq: i64,
     #[serde(with = "time::serde::rfc3339")]
@@ -192,6 +203,8 @@ impl MeetingStateDto {
         online: &HashSet<Uuid>,
         reflections: ReflectionsSnapshot,
         writing: WritingCounts,
+        groups: Vec<GroupDto>,
+        drags: Vec<DragDto>,
     ) -> Self {
         let participants = participants(&view, online);
         let m = view.meeting;
@@ -231,12 +244,17 @@ impl MeetingStateDto {
                     column: r.model.column,
                     content: r.model.content,
                     mine: r.mine,
+                    group_id: r.model.group_id,
+                    position: r.model.position,
+                    version: r.model.version,
                     created_at: r.model.created_at,
                     updated_at: r.model.updated_at,
                 })
                 .collect(),
             reflection_counts: reflections.counts.into(),
             writing: writing.into(),
+            groups,
+            drags,
             seq: m.event_seq,
             created_at: m.created_at,
             ended_at: m.ended_at,
@@ -255,12 +273,20 @@ pub(crate) async fn state_of(
     let reflections = reflections::snapshot(&state.db, &view.meeting, actor).await?;
     let online = state.hub.online(meeting_id);
     // An ended meeting has no editors open, whatever sockets still say.
-    let writing = if view.meeting.status == MeetingStatus::Active {
-        state.hub.writing(meeting_id)
+    let (writing, drags) = if view.meeting.status == MeetingStatus::Active {
+        (state.hub.writing(meeting_id), state.hub.drags(meeting_id))
     } else {
-        WritingCounts::default()
+        (WritingCounts::default(), Vec::new())
     };
-    Ok(MeetingStateDto::new(view, &online, reflections, writing))
+    let groups = groups::snapshot(&state.db, &view.meeting).await?;
+    Ok(MeetingStateDto::new(
+        view,
+        &online,
+        reflections,
+        writing,
+        groups,
+        drags,
+    ))
 }
 
 #[derive(Debug, Deserialize, IntoParams)]

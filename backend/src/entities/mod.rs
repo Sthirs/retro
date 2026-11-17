@@ -7,6 +7,7 @@ pub mod invitation;
 pub mod meeting;
 pub mod meeting_participant;
 pub mod reflection;
+pub mod reflection_group;
 pub mod refresh_token;
 pub mod task;
 pub mod task_mention;

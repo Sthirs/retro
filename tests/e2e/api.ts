@@ -240,22 +240,20 @@ export async function writeReflection(
   }
 }
 
-/** The meeting state as `login` sees it. */
-export async function meetingState(
-  login: string,
-  meetingId: string,
-): Promise<{
+/** The parts of the meeting state the specs check. */
+export interface MeetingState {
   phase: string;
-  reflections: { content: string; mine: boolean }[];
-}> {
+  reflections: { id: string; content: string; mine: boolean; groupId: string | null }[];
+  groups: { id: string; column: string; name: string }[];
+}
+
+/** The meeting state as `login` sees it. */
+export async function meetingState(login: string, meetingId: string): Promise<MeetingState> {
   const { api } = await signedIn(login);
   try {
     const res = await api.get(`/api/v1/meetings/${meetingId}/state`);
     if (!res.ok()) throw new Error(`state: ${res.status()} ${await res.text()}`);
-    return (await res.json()) as {
-      phase: string;
-      reflections: { content: string; mine: boolean }[];
-    };
+    return (await res.json()) as MeetingState;
   } finally {
     await api.dispose();
   }

@@ -101,6 +101,18 @@ pub const DEV_USERS: &[DevUser] = &[
         email: "nora@retro.local",
         display_name: "Nora Pellegrini",
     },
+    // Also password only. The end-to-end group spec owns these two: omar
+    // facilitates, pia groups cards with him.
+    DevUser {
+        username: "omar",
+        email: "omar@retro.local",
+        display_name: "Omar Ricci",
+    },
+    DevUser {
+        username: "pia",
+        email: "pia@retro.local",
+        display_name: "Pia Longo",
+    },
 ];
 
 /// Creates the dev users, or resets their name and password. Idempotent.

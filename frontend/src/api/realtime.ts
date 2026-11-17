@@ -6,9 +6,10 @@
  * channel gets a `resync` event: whatever its listeners read over REST before
  * that may have missed events published until the acknowledgement.
  *
- * It also carries the tab's ephemeral writing state (ADR-0012), which the
- * server ties to the socket: it is sent again after every acknowledgement, so
- * a reconnect restores it.
+ * It also carries the tab's ephemeral state (ADR-0012): what it is writing
+ * (Reflect) and the card it is dragging (Group). The server ties both to the
+ * socket: they are sent again after every acknowledgement, so a reconnect
+ * restores them.
  */
 import { ref, type Ref } from 'vue';
 
@@ -39,17 +40,23 @@ export interface WritingState {
 export type RealtimeStatus = 'idle' | 'connecting' | 'open' | 'reconnecting';
 
 const MAX_BACKOFF_MS = 30_000;
-/** Error codes that answer a `writing` message, not a subscription (ADR-0012). */
-const WRITING_ERRORS = new Set(['not_subscribed', 'not_writable']);
+/**
+ * Error codes that answer a `writing` or `drag` message, not a subscription
+ * (ADR-0012).
+ */
+const EPHEMERAL_ERRORS = new Set(['not_subscribed', 'not_writable', 'not_draggable']);
 /** How long the socket stays open without subscriptions (page changes resubscribe quickly). */
 const IDLE_CLOSE_MS = 10_000;
 /**
- * Writing messages sent per rolling second. The server drops ephemeral
- * messages past 10 per second and socket (ADR-0012); this stays below it,
+ * Ephemeral messages (writing, drag) sent per rolling second. The server
+ * drops them past 10 per second and socket (ADR-0012); this stays below it,
  * with room for network jitter.
  */
-const WRITING_PER_SECOND = 8;
-const WRITING_WINDOW_MS = 1000;
+const EPHEMERAL_PER_SECOND = 8;
+const EPHEMERAL_WINDOW_MS = 1000;
+
+/** The kinds of ephemeral state a tab tells a meeting channel. */
+type Ephemeral = 'writing' | 'drag';
 
 export class RealtimeClient {
   readonly status: Ref<RealtimeStatus> = ref('idle');
@@ -66,11 +73,13 @@ export class RealtimeClient {
   private ticketFor: number | null = null;
   /** Writing state per meeting channel, re-sent after each acknowledgement. */
   private readonly writing = new Map<string, WritingState>();
-  /** When the socket's recent writing messages were sent. */
-  private writingSentAt: number[] = [];
-  /** Channels whose latest writing state waits for the rate budget. */
-  private readonly writingHeld = new Set<string>();
-  private writingTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The card dragged per meeting channel, re-sent after each acknowledgement. */
+  private readonly dragging = new Map<string, string>();
+  /** When the socket's recent ephemeral messages were sent. */
+  private sentAt: number[] = [];
+  /** Per channel, the ephemeral states whose latest value waits for the rate budget. */
+  private readonly held = new Map<string, Set<Ephemeral>>();
+  private heldTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly ticket: () => Promise<string | null> = fetchTicket,
@@ -101,55 +110,86 @@ export class RealtimeClient {
     if (before?.column === state?.column && before?.mode === state?.mode) return;
     if (state) this.writing.set(channel, state);
     else this.writing.delete(channel);
-    if (this.handlers.has(channel) && !this.awaitingAck.has(channel)) {
-      this.sendWriting(channel, state);
-    }
+    if (this.isLive(channel)) this.sendEphemeral('writing', channel);
   }
 
   /**
-   * Sends the channel's writing state if the rate budget allows; otherwise
-   * holds it, and sends the latest state once the budget frees up.
+   * Tells the meeting `channel` which card this tab is dragging (`null`:
+   * none). Sent at once while the subscription is live, otherwise on its ack.
    */
-  private sendWriting(channel: string, state: WritingState | null): void {
+  setDragging(channel: string, reflectionId: string | null): void {
+    if ((this.dragging.get(channel) ?? null) === reflectionId) return;
+    if (reflectionId) this.dragging.set(channel, reflectionId);
+    else this.dragging.delete(channel);
+    if (this.isLive(channel)) this.sendEphemeral('drag', channel);
+  }
+
+  /** Subscribed and acknowledged: messages on it reach the server's subscription. */
+  private isLive(channel: string): boolean {
+    return this.handlers.has(channel) && !this.awaitingAck.has(channel);
+  }
+
+  /**
+   * Sends the channel's current state of one kind if the rate budget
+   * allows; otherwise holds it, and sends the latest state once the budget
+   * frees up.
+   */
+  private sendEphemeral(kind: Ephemeral, channel: string): void {
     const now = Date.now();
-    this.writingSentAt = this.writingSentAt.filter((t) => now - t < WRITING_WINDOW_MS);
-    if (this.writingSentAt.length >= WRITING_PER_SECOND) {
-      this.writingHeld.add(channel);
-      if (!this.writingTimer) {
-        const wait = this.writingSentAt[0]! + WRITING_WINDOW_MS - now;
-        this.writingTimer = setTimeout(() => this.flushWriting(), wait);
+    this.sentAt = this.sentAt.filter((t) => now - t < EPHEMERAL_WINDOW_MS);
+    if (this.sentAt.length >= EPHEMERAL_PER_SECOND) {
+      let kinds = this.held.get(channel);
+      if (!kinds) {
+        kinds = new Set();
+        this.held.set(channel, kinds);
+      }
+      kinds.add(kind);
+      if (!this.heldTimer) {
+        const wait = this.sentAt[0]! + EPHEMERAL_WINDOW_MS - now;
+        this.heldTimer = setTimeout(() => this.flushHeld(), wait);
       }
       return;
     }
-    this.writingHeld.delete(channel);
-    this.writingSentAt.push(now);
-    this.send({ type: 'writing', channel, column: state?.column ?? null, mode: state?.mode });
-  }
-
-  /** Sends the held writing states, as they are now. */
-  private flushWriting(): void {
-    this.writingTimer = null;
-    for (const channel of [...this.writingHeld]) {
-      this.writingHeld.delete(channel);
-      // A channel waiting for its ack gets its state with the ack.
-      if (this.handlers.has(channel) && !this.awaitingAck.has(channel)) {
-        this.sendWriting(channel, this.writing.get(channel) ?? null);
-      }
+    this.held.get(channel)?.delete(kind);
+    this.sentAt.push(now);
+    if (kind === 'writing') {
+      const state = this.writing.get(channel);
+      this.send({ type: 'writing', channel, column: state?.column ?? null, mode: state?.mode });
+    } else {
+      this.send({ type: 'drag', channel, reflectionId: this.dragging.get(channel) ?? null });
     }
   }
 
-  /** Forgets the held writing states and the rate budget (a new socket). */
-  private resetWriting(): void {
-    if (this.writingTimer) clearTimeout(this.writingTimer);
-    this.writingTimer = null;
-    this.writingHeld.clear();
-    this.writingSentAt = [];
+  /** Sends the held states, as they are now. */
+  private flushHeld(): void {
+    this.heldTimer = null;
+    for (const [channel, kinds] of [...this.held]) {
+      this.held.delete(channel);
+      // A channel waiting for its ack gets its state with the ack.
+      if (!this.isLive(channel)) continue;
+      for (const kind of kinds) this.sendEphemeral(kind, channel);
+    }
+  }
+
+  /** Sends a channel's states after its acknowledgement. */
+  private restoreEphemeral(channel: string): void {
+    if (this.writing.has(channel)) this.sendEphemeral('writing', channel);
+    if (this.dragging.has(channel)) this.sendEphemeral('drag', channel);
+  }
+
+  /** Forgets the held states and the rate budget (a new socket). */
+  private resetEphemeral(): void {
+    if (this.heldTimer) clearTimeout(this.heldTimer);
+    this.heldTimer = null;
+    this.held.clear();
+    this.sentAt = [];
   }
 
   /** Closes the socket and forgets every subscription (sign-out). */
   disconnect(): void {
     this.handlers.clear();
     this.writing.clear();
+    this.dragging.clear();
     this.close();
   }
 
@@ -159,7 +199,8 @@ export class RealtimeClient {
     this.handlers.delete(channel);
     this.awaitingAck.delete(channel);
     this.writing.delete(channel);
-    this.writingHeld.delete(channel);
+    this.dragging.delete(channel);
+    this.held.delete(channel);
     this.send({ type: 'unsubscribe', channel });
     if (this.handlers.size === 0) {
       this.idleTimer = setTimeout(() => this.close(), IDLE_CLOSE_MS);
@@ -170,7 +211,7 @@ export class RealtimeClient {
     this.generation++;
     this.clearIdle();
     this.awaitingAck.clear();
-    this.resetWriting();
+    this.resetEphemeral();
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
     this.socket?.close();
@@ -212,7 +253,7 @@ export class RealtimeClient {
       this.wasOpen = true;
       this.status.value = 'open';
       // A new socket: a fresh rate budget, and every state goes with its ack.
-      this.resetWriting();
+      this.resetEphemeral();
       for (const channel of this.handlers.keys()) this.requestSubscription(channel);
     };
     socket.onmessage = (message) => {
@@ -226,16 +267,15 @@ export class RealtimeClient {
       if (event.type === 'subscribed') {
         // Live from here on: listeners re-read what they may have missed.
         if (this.awaitingAck.delete(event.channel)) {
-          const writing = this.writing.get(event.channel);
-          if (writing) this.sendWriting(event.channel, writing);
+          this.restoreEphemeral(event.channel);
           this.dispatch({ type: 'resync', channel: event.channel, seq: null, payload: {} });
         }
         return;
       }
       if (event.type === 'unsubscribed') return;
       if (event.type === 'error') {
-        // A refused writing message: the subscription itself is fine.
-        if (WRITING_ERRORS.has(event.payload?.code)) return;
+        // A refused writing or drag message: the subscription itself is fine.
+        if (EPHEMERAL_ERRORS.has(event.payload?.code)) return;
         this.awaitingAck.delete(event.channel);
       }
       this.dispatch({ ...event, seq: event.seq ?? null, payload: event.payload ?? {} });

@@ -2,10 +2,11 @@
  * Dev accounts. alice and bob are seeded in the backend and in dex (password or
  * single sign-on) and own the demo teams; the suite never touches them, nor
  * carol, who exists only in dex (single sign-on only). dana, erin, finn, gina,
- * hugo, ivan, jade, kai, lena, milo and nora are seeded in the backend only
- * (password only) and belong to the suite: dana to the account spec, erin and
- * finn to the tasks spec, gina and hugo to the teams spec, ivan, jade and kai to
- * the meetings spec, lena, milo and nora to the reflect spec. See
+ * hugo, ivan, jade, kai, lena, milo, nora, omar and pia are seeded in the
+ * backend only (password only) and belong to the suite: dana to the account
+ * spec, erin and finn to the tasks spec, gina and hugo to the teams spec, ivan,
+ * jade and kai to the meetings spec, lena, milo and nora to the reflect spec,
+ * omar and pia to the group spec. See
  * backend/src/seed.rs and deploy/helm/retro/templates/dev-dex.yaml.
  */
 export const USERS = {
@@ -26,6 +27,8 @@ export const USERS = {
     email: 'nora@retro.local',
     name: 'Nora Pellegrini',
   },
+  omar: { username: 'omar', email: 'omar@retro.local', name: 'Omar Ricci' },
+  pia: { username: 'pia', email: 'pia@retro.local', name: 'Pia Longo' },
   carol: { username: 'carol', email: 'carol@retro.local', name: 'Carol Verdi' },
 } as const;
 

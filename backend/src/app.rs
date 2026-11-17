@@ -149,6 +149,15 @@ pub fn router(state: AppState) -> Router {
             patch(api::reflections::update_reflection).delete(api::reflections::delete_reflection),
         )
         .route(
+            "/meetings/{meeting_id}/groups",
+            post(api::groups::create_group),
+        )
+        .route("/groups/{group_id}", patch(api::groups::rename_group))
+        .route(
+            "/reflections/{reflection_id}/group",
+            put(api::groups::move_card),
+        )
+        .route(
             "/meetings/{meeting_id}/invite-link",
             get(api::meetings::get_invite_link).post(api::meetings::regenerate_invite_link),
         )

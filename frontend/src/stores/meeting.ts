@@ -8,9 +8,11 @@ import {
   MeetingPhase,
   MeetingStatus,
   Role,
+  ReflectionColumn,
+  type GroupDto,
   type MeetingStateDto,
   type ParticipantDto,
-  type ReflectionColumn,
+  type ReflectionDto,
   type Timer,
   type TimerAction,
 } from '@/api/client';
@@ -19,6 +21,38 @@ import type { RealtimeEvent } from '@/api/realtime';
 import { useSessionStore } from '@/stores/session';
 
 export const PHASES = Object.values(MeetingPhase);
+const COLUMNS = Object.values(ReflectionColumn);
+
+/** A card whose group changed, as `group.*` events carry it (spec §11.2). */
+interface CardMove {
+  id: string;
+  groupId: string | null;
+  version: number;
+}
+
+/** What a Group column shows, in order: plain cards and groups (spec §9.3). */
+export type ColumnItem =
+  | { kind: 'card'; card: ReflectionDto }
+  | { kind: 'group'; group: GroupDto; cards: ReflectionDto[] };
+
+/** Cards of a group, in a stable order: by column, then place. */
+function byColumnAndPlace(a: ReflectionDto, b: ReflectionDto): number {
+  return COLUMNS.indexOf(a.column) - COLUMNS.indexOf(b.column) || a.position - b.position;
+}
+
+/**
+ * Takes `card` out of its group locally, dissolving the group if a single
+ * card is left (an optimistic copy of the server's rule).
+ */
+function leaveGroup(m: MeetingStateDto, card: ReflectionDto): void {
+  const old = card.groupId;
+  card.groupId = null;
+  if (!old) return;
+  const left = m.reflections.filter((r) => r.groupId === old);
+  if (left.length > 1) return;
+  for (const r of left) r.groupId = null;
+  m.groups = m.groups.filter((g) => g.id !== old);
+}
 
 /** A notice in the room: a new facilitator, or this tab's drafts discarded. */
 export type MeetingNotice =
@@ -126,6 +160,79 @@ export const useMeetingStore = defineStore('meeting', () => {
     );
   });
   const myReflections = computed(() => (meeting.value?.reflections ?? []).filter((r) => r.mine));
+
+  /** Cards per group id, in a stable order. */
+  const groupCards = computed(() => {
+    const cards = new Map<string, ReflectionDto[]>();
+    for (const r of meeting.value?.reflections ?? []) {
+      if (!r.groupId) continue;
+      const list = cards.get(r.groupId) ?? [];
+      list.push(r);
+      cards.set(r.groupId, list);
+    }
+    for (const list of cards.values()) list.sort(byColumnAndPlace);
+    return cards;
+  });
+
+  /**
+   * What each Group column shows: its ungrouped cards and the groups placed
+   * in it, by place (a group before a card sharing its place).
+   */
+  const columnItems = computed(() => {
+    const items = new Map<ReflectionColumn, ColumnItem[]>(COLUMNS.map((c) => [c, []]));
+    const m = meeting.value;
+    if (!m) return items;
+    const order = new Map<ColumnItem, [number, number]>();
+    for (const card of m.reflections) {
+      if (card.groupId) continue;
+      const item: ColumnItem = { kind: 'card', card };
+      order.set(item, [card.position, 1]);
+      items.get(card.column)!.push(item);
+    }
+    for (const group of m.groups) {
+      const cards = groupCards.value.get(group.id) ?? [];
+      if (cards.length === 0) continue;
+      const item: ColumnItem = { kind: 'group', group, cards };
+      order.set(item, [group.position, 0]);
+      items.get(group.column)!.push(item);
+    }
+    for (const list of items.values()) {
+      list.sort((a, b) => {
+        const [pa, ka] = order.get(a)!;
+        const [pb, kb] = order.get(b)!;
+        return pa - pb || ka - kb;
+      });
+    }
+    return items;
+  });
+
+  /** Who else is dragging each card right now (spec §9.3), by card id. */
+  const draggers = computed(() => {
+    const by = new Map<string, ParticipantDto>();
+    for (const drag of meeting.value?.drags ?? []) {
+      if (drag.userId === me.value) continue;
+      const who = participantsById.value.get(drag.userId);
+      if (who) by.set(drag.reflectionId, who);
+    }
+    return by;
+  });
+
+  /** Applies the cards of a `group.*` event. */
+  function applyMoves(m: MeetingStateDto, moves: CardMove[]): void {
+    for (const move of moves) {
+      const card = m.reflections.find((r) => r.id === move.id);
+      if (!card) continue;
+      card.groupId = move.groupId;
+      card.version = move.version;
+    }
+  }
+
+  /** Adds or updates a group from a `group.*` event. */
+  function upsertGroup(m: MeetingStateDto, group: GroupDto): void {
+    const existing = m.groups.find((g) => g.id === group.id);
+    if (existing) Object.assign(existing, group);
+    else m.groups.push({ ...group });
+  }
 
   function reset(): void {
     loadSeq++;
@@ -312,6 +419,21 @@ export const useMeetingStore = defineStore('meeting', () => {
       case 'reflection.writing':
         m.writing = p.counts as MeetingStateDto['writing'];
         break;
+      case 'card.dragging':
+        m.drags = p.drags as MeetingStateDto['drags'];
+        break;
+      case 'group.created':
+      case 'group.updated':
+        // This tab's own change came back with the answer to its request.
+        if (isOwnEvent(p)) break;
+        upsertGroup(m, p.group as GroupDto);
+        applyMoves(m, p.reflections as CardMove[]);
+        break;
+      case 'group.deleted':
+        if (isOwnEvent(p)) break;
+        m.groups = m.groups.filter((g) => g.id !== (p.group as { id: string }).id);
+        applyMoves(m, p.reflections as CardMove[]);
+        break;
       case 'reflection.changed':
         // Another tab of ours changed one of our reflections.
         if (!isOwnEvent(p)) void resync();
@@ -459,6 +581,66 @@ export const useMeetingStore = defineStore('meeting', () => {
     );
   }
 
+  /**
+   * Drops a card onto another card: a new group of both at the target's
+   * place, or the target's group if it has one (spec §9.3).
+   */
+  function dropOnCard(targetId: string, reflectionId: string): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(
+      () => api.createGroup(id, { targetId, reflectionId }),
+      () => {
+        const m = meeting.value!;
+        const target = m.reflections.find((r) => r.id === targetId);
+        const card = m.reflections.find((r) => r.id === reflectionId);
+        if (!target || !card || target === card) return;
+        if (target.groupId) {
+          if (card.groupId === target.groupId) return;
+          const into = target.groupId;
+          leaveGroup(m, card);
+          card.groupId = into;
+          return;
+        }
+        // A placeholder until the server's answer brings the real group.
+        const group: GroupDto = {
+          id: `pending-${reflectionId}`,
+          column: target.column,
+          position: target.position,
+          name: '',
+        };
+        leaveGroup(m, card);
+        m.groups.push(group);
+        target.groupId = group.id;
+        card.groupId = group.id;
+      },
+    );
+  }
+
+  /** Moves a card into a group, or out of its group with `null`. */
+  function moveToGroup(reflectionId: string, groupId: string | null): Promise<boolean> {
+    return act(
+      () => api.moveCard(reflectionId, { groupId }),
+      () => {
+        const m = meeting.value!;
+        const card = m.reflections.find((r) => r.id === reflectionId);
+        if (!card || card.groupId === groupId) return;
+        leaveGroup(m, card);
+        card.groupId = groupId;
+      },
+    );
+  }
+
+  /** Names a group; empty shows as "Untitled group". */
+  function renameGroup(groupId: string, name: string): Promise<boolean> {
+    return act(
+      () => api.renameGroup(groupId, { name }),
+      () => {
+        const group = meeting.value!.groups.find((g) => g.id === groupId);
+        if (group) group.name = name.trim();
+      },
+    );
+  }
+
   return {
     meeting,
     meetingId,
@@ -484,6 +666,9 @@ export const useMeetingStore = defineStore('meeting', () => {
     iAmReady,
     hasReady,
     myReflections,
+    groupCards,
+    columnItems,
+    draggers,
     clockOffset,
     serverTime,
     open,
@@ -501,5 +686,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     createReflection,
     updateReflection,
     deleteReflection,
+    dropOnCard,
+    moveToGroup,
+    renameGroup,
   };
 });

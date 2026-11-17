@@ -277,6 +277,94 @@
         }
       }
     },
+    "/api/v1/groups/{group_id}": {
+      "patch": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Renames a group (participants, during Group; the last name saved wins).",
+        "operationId": "rename_group",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_group_name`: over 80 characters",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`group_not_found` (also once dissolved)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended` or `wrong_phase` (not Group)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/invitations/{token}": {
       "get": {
         "tags": [
@@ -999,6 +1087,94 @@
           },
           "409": {
             "description": "`meeting_ended`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/groups": {
+      "post": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Drops a card onto another card: groups both, or adds the card to the\ntarget's group if it has one by now (participants, during Group).",
+        "operationId": "create_group",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting, with the cards grouped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`same_reflection`: a card dropped onto itself",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`, or `reflection_not_found` (not a card of this meeting)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended` or `wrong_phase` (not Group)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1861,6 +2037,84 @@
           },
           "409": {
             "description": "`meeting_ended` or `wrong_phase` (reflections are immutable after Reflect)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/reflections/{reflection_id}/group": {
+      "put": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Moves a card into a group, or out of its group (participants, during\nGroup). A group left with one card dissolves.",
+        "operationId": "move_card",
+        "parameters": [
+          {
+            "name": "reflection_id",
+            "in": "path",
+            "description": "Reflection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveCardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`reflection_not_found`, or `group_not_found` (not a group of this meeting, or dissolved)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended` or `wrong_phase` (not Group)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3425,6 +3679,26 @@
           }
         }
       },
+      "CreateGroupRequest": {
+        "type": "object",
+        "description": "A card dropped onto another card.",
+        "required": [
+          "targetId",
+          "reflectionId"
+        ],
+        "properties": {
+          "reflectionId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The card that was dropped."
+          },
+          "targetId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The card it was dropped onto."
+          }
+        }
+      },
       "CreateReflectionRequest": {
         "type": "object",
         "description": "A reflection to send.",
@@ -3439,6 +3713,24 @@
           "content": {
             "type": "string",
             "description": "Rich text (HTML); sanitized by the server."
+          }
+        }
+      },
+      "DragDto": {
+        "type": "object",
+        "description": "A card being dragged, and by whom (snapshot and `card.dragging`; spec\n§9.3).",
+        "required": [
+          "reflectionId",
+          "userId"
+        ],
+        "properties": {
+          "reflectionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -3466,6 +3758,35 @@
           },
           "text": {
             "type": "string"
+          }
+        }
+      },
+      "GroupDto": {
+        "type": "object",
+        "description": "A group as clients see it (snapshot and events).",
+        "required": [
+          "id",
+          "column",
+          "position",
+          "name"
+        ],
+        "properties": {
+          "column": {
+            "$ref": "#/components/schemas/ReflectionColumn",
+            "description": "The column it is shown in: the one of the card it was created on."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "description": "Empty shows as \"Untitled group\"."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Its place in that column, among the ungrouped cards' `position`."
           }
         }
       },
@@ -3804,6 +4125,8 @@
           "reflections",
           "reflectionCounts",
           "writing",
+          "groups",
+          "drags",
           "seq",
           "createdAt",
           "serverNow"
@@ -3812,6 +4135,13 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "drags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DragDto"
+            },
+            "description": "Cards being dragged right now, and by whom (Group)."
           },
           "endedAt": {
             "type": [
@@ -3826,6 +4156,13 @@
           },
           "greeting": {
             "$ref": "#/components/schemas/GreetingDto"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupDto"
+            },
+            "description": "From Group on, the groups, by column and place."
           },
           "icebreaker": {
             "$ref": "#/components/schemas/IcebreakerDto"
@@ -3950,7 +4287,7 @@
           "groupCount": {
             "type": "integer",
             "format": "int64",
-            "description": "Groups formed in the meeting; always 0 until the Group phase exists."
+            "description": "Groups formed in the meeting."
           },
           "id": {
             "type": "string",
@@ -3999,6 +4336,20 @@
           },
           "user": {
             "$ref": "#/components/schemas/UserDto"
+          }
+        }
+      },
+      "MoveCardRequest": {
+        "type": "object",
+        "description": "Where a card goes.",
+        "properties": {
+          "groupId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The group to move it into; `null` takes it out of its group."
           }
         }
       },
@@ -4211,6 +4562,8 @@
           "column",
           "content",
           "mine",
+          "position",
+          "version",
           "createdAt",
           "updatedAt"
         ],
@@ -4226,6 +4579,14 @@
             "type": "string",
             "format": "date-time"
           },
+          "groupId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Its group (from Group on)."
+          },
           "id": {
             "type": "string",
             "format": "uuid"
@@ -4234,9 +4595,32 @@
             "type": "boolean",
             "description": "Written by the viewer."
           },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Place in its column, set when Group starts."
+          },
           "updatedAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Raised by every move between groups."
+          }
+        }
+      },
+      "RenameGroupRequest": {
+        "type": "object",
+        "description": "A group's new name.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "0–80 characters once trimmed; empty shows as \"Untitled group\"."
           }
         }
       },

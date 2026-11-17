@@ -265,16 +265,19 @@ The individual meeting phases cannot be replayed.
 
 ### 9.3 Group
 
-- All confirmed reflections are revealed to everyone, **anonymously**. They start in their original columns, each reflection being an ungrouped card.
+- All confirmed reflections are revealed to everyone, **anonymously**. They start in their original columns, each reflection being an ungrouped card, in the order they were sent.
 - **Drag & drop**:
   - dropping a card onto another card creates a **group** containing both;
   - dropping a card onto a group adds it to the group;
   - dragging a card out of a group removes it from the group. A group left with a single card dissolves back into a plain card;
   - a group can contain reflections from **different columns**. Each card keeps its column color/label.
-- Each group has a **name**, editable by any participant. The default name is empty or "Untitled group".
-- Clicking a group **expands** it to show all its cards. Collapsed, it shows the name, the card count and a stacked preview.
-- **Real-time**: every participant sees moves live, including **who** is dragging which card (cursor/avatar badge on the dragged card). Moves are not anonymous; only reflection authorship is.
-- Concurrency: the server is authoritative. Each card carries a version, and conflicting moves are resolved last-write-wins, with the result broadcast to all clients. A card being dragged by one user shows a soft lock indicator to the others.
+- **Placement**: a group sits in the column, and at the place, of the card it was created on. A card leaving a group goes back to its own column and place. Cards and groups are not reordered, and a whole group cannot be dragged or merged into another.
+- Only **participants** can group cards and rename groups, only during Group while the meeting is active.
+- Each group has a **name** (0–80 characters, trimmed), editable by any participant; the last saved name wins. An empty name is shown as "Untitled group".
+- Clicking a group **expands** it to show all its cards. Collapsed, it shows the name, the card count and a stacked preview. Expanding is local to each viewer.
+- **Keyboard**: every card has a **Move to…** menu listing the existing groups, the other ungrouped cards to start a new group with, and "Remove from group" for a grouped card.
+- **Real-time**: every participant sees moves live, including **who** is dragging which card: the card stays in its place for the others, lifted, with the dragger's avatar badge ("Aisha is moving"). Moves are not anonymous; only reflection authorship is.
+- Concurrency: the server is authoritative. Each card carries a version, raised by every move, and conflicting moves are resolved last-write-wins, with the result broadcast to all clients: a card dropped onto a card that has meanwhile joined a group joins that group. A card being dragged by one user is soft-locked for the others (they cannot pick it up); the server does not enforce the lock.
 - Participants press **Ready**. The facilitator advances to Vote.
 - For voting purposes, an ungrouped card is treated as a group of one.
 
@@ -339,16 +342,15 @@ The individual meeting phases cannot be replayed.
 | `participant.joined` / `participant.left` | user | all |
 | `presence.changed` | user, online (on the team channel also the meeting) | meeting + team channel |
 | `facilitator.changed` | new facilitator | all |
-| `phase.changed` | phase | all |
+| `phase.changed` | phase (clients re-read the state; at Group start this reveals the reflections) | all |
 | `timer.updated` | timer (status, endsAt or remainingMs, durationMs; `null` when stopped), serverNow | all |
 | `ready.changed` | userId, ready, readyCount | all |
 | `icebreaker.person_changed` | index | all |
 | `reflection.writing` | per column, how many new and edited reflections are being written (no author; ephemeral, no `seq`) | all |
 | `reflection.count_changed` | sent reflections per column | all |
 | `reflection.changed` | reflection id, `clientId` (no content; the author's other tabs re-read the state) | author only (no `seq`) |
-| `reflections.revealed` | all reflections (anonymous) | all (Group start) |
-| `card.drag_started` / `card.drag_moved` / `card.drag_ended` | card, user, position | all |
-| `group.created` / `group.updated` / `group.deleted` | group, members, name | all |
+| `card.dragging` | every card being dragged and who drags it (ephemeral, no `seq`) | all |
+| `group.created` / `group.updated` / `group.deleted` | group (id, column, position, name; id only when deleted), the cards whose group changed (id, group id, version), `clientId` | all |
 | `vote.settings_changed` | budget, max_per_group | all |
 | `vote.changed` | the user's own votes | own user; aggregate cast count to the facilitator |
 | `vote.totals_revealed` | totals per group | all (Discuss start) |
@@ -371,7 +373,7 @@ What the real-time layer has to do:
 | --- | --- |
 | Fan-out of events between backend replicas | `LISTEN/NOTIFY`. Each replica holds **one** dedicated listener connection and forwards events to its local WebSocket subscribers through in-process Tokio broadcast channels. |
 | Consistency between persisted state and events | `NOTIFY` issued inside the same transaction as the write is delivered **only on commit**, so clients never see events for rolled-back changes. A dedicated broker can't give this guarantee for free. |
-| Ephemeral events (writing, drag in progress, presence) | Throttled on the client (drag position ≤ 10 Hz per dragged card; writing state sent only when an editor opens or closes) and on the server (10 messages / s per socket), and sent through `NOTIFY` without being persisted. Each replica announces its own writing counts per meeting, like presence. |
+| Ephemeral events (writing, drag in progress, presence) | Throttled on the client (drag state sent only when a card is picked up or dropped; writing state sent only when an editor opens or closes) and on the server (10 messages / s per socket), and sent through `NOTIFY` without being persisted. Each replica announces its own writing counts and dragged cards per meeting, like presence. |
 | Timer | Stored as `ends_at` on the meeting. Clients count down locally. No ticking server process is needed. |
 | Presence | Tracked in memory by the replica holding the socket and broadcast on change. A replica restart causes clients to reconnect and re-announce. |
 | Catch-up after reconnect | Full-state snapshot (`GET /meetings/{id}/state`). No event log retention is needed. |
@@ -384,7 +386,7 @@ Why this is sufficient at the target scale (§20: 500 concurrent meetings × 50 
 
 Constraints and mitigations:
 
-- **8000-byte `NOTIFY` payload limit**: payloads that could exceed it (e.g. `reflections.revealed`, rich-text content) are not sent inline. The notification carries only the event type and entity IDs, and each replica loads the data from the database before pushing it to its clients.
+- **8000-byte `NOTIFY` payload limit**: payloads that could exceed it (e.g. the reflections revealed at Group start, rich-text content) are not sent inline. The notification carries only the event type and entity IDs, and each replica loads the data from the database before pushing it to its clients.
 - **Global notification queue** (8 GB by default): monitored through `pg_notification_queue_usage()`, which is exported as a Prometheus metric. Listener connections must never block.
 - **Connection poolers**: the listener connection must be a direct session connection. Transaction-mode PgBouncer does not support `LISTEN`.
 
@@ -473,10 +475,15 @@ meeting_participants(meeting_id, user_id, joined_at, is_ready)
 reflections(id, meeting_id, author_id → users,        -- never exposed to other users
             column ENUM('plus','delta','ideas','thanks'),
             content,                                 -- sent reflections only; drafts stay in the browser
-            group_id NULL → reflection_groups, position, version,
+            group_id NULL → reflection_groups,
+            position INT,                            -- place in its column, set when Group starts
+            version INT,                             -- raised by every move between groups
             created_at, updated_at)
 
-reflection_groups(id, meeting_id, name, position, created_at, updated_at)
+reflection_groups(id, meeting_id → meetings,
+                  column ENUM('plus','delta','ideas','thanks'), position INT,  -- of the card it was created on
+                  name,                              -- 0–80 characters, '' = "Untitled group"
+                  created_at, updated_at)
 
 votes(meeting_id, user_id, group_id, count)
     PK(meeting_id, user_id, group_id), CHECK(count BETWEEN 0 AND 3*)
@@ -591,13 +598,15 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | DELETE | `/reflections/{rid}` | Delete (author, before Group) |
 | POST | `/teams/{teamId}/attachments` | Upload an image (raw body, PNG, JPEG, GIF or WebP, ≤ 5 MB) for a reflection or task; answers 201 `{ id, contentType, width, height, animated }`. Errors: 400 `invalid_image` / `image_dimensions_too_large`, 413 `image_too_large`, 415 `unsupported_image_type`, 429 `too_many_requests` / `too_many_pending_attachments` |
 | GET | `/attachments/{aid}` | Download an image as WebP (members who can see it, §13) |
-| POST | `/meetings/{id}/groups` | Create a group from two cards |
-| PATCH | `/groups/{gid}` | Rename a group |
-| PUT | `/reflections/{rid}/group` | Move a card into a group, out of a group, or reposition it |
+| POST | `/meetings/{id}/groups` | `{ targetId, reflectionId }`: drop a card onto another card, creating a group of both (or joining the target's group if it has one) |
+| PATCH | `/groups/{gid}` | `{ name }`: rename a group |
+| PUT | `/reflections/{rid}/group` | `{ groupId \| null }`: move a card into a group, or out of its group |
 | PUT | `/groups/{gid}/vote` | `{ "delta": +1 \| -1 }` |
 | PUT | `/reflections/{rid}/reactions/{emoji}` | Add a reaction |
 | DELETE | `/reflections/{rid}/reactions/{emoji}` | Remove a reaction |
 | PUT | `/meetings/{id}/discuss/current` | Set the current group (facilitator) |
+
+The group endpoints are open to participants during Group (409 `wrong_phase`, `meeting_ended`, 403 `not_participant`) and answer with the meeting state. Unknown or foreign ids give 404 `reflection_not_found` / `group_not_found`; a card dropped onto itself gives 400 `same_reflection`, and a name over 80 characters 400 `invalid_group_name`.
 
 ### 14.5 Tasks
 

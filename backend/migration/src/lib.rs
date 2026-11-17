@@ -11,6 +11,7 @@ mod m20261115_000001_meetings;
 mod m20261115_000002_icebreaker_back;
 mod m20261116_000001_reflections;
 mod m20261117_000001_attachments;
+mod m20261118_000001_groups;
 
 pub struct Migrator;
 
@@ -27,6 +28,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261115_000002_icebreaker_back::Migration),
             Box::new(m20261116_000001_reflections::Migration),
             Box::new(m20261117_000001_attachments::Migration),
+            Box::new(m20261118_000001_groups::Migration),
         ]
     }
 }

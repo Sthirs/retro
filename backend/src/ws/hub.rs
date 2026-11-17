@@ -2,7 +2,7 @@
 //! out to local sockets; tracks presence across replicas (ADR-0011).
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -29,6 +29,10 @@ const MISSED_HEARTBEATS: u32 = 3;
 const WRITING_CHANGED: &str = "writing.changed";
 /// The cluster-wide writing counts, as clients get them.
 const REFLECTION_WRITING: &str = "reflection.writing";
+/// A replica's dragged cards in a meeting (internal, ADR-0012).
+const DRAGGING_CHANGED: &str = "dragging.changed";
+/// The cluster-wide dragged cards, as clients get them.
+const CARD_DRAGGING: &str = "card.dragging";
 const MEMBER_REMOVED: &str = "member.removed";
 const TEAM_DELETED: &str = "team.deleted";
 /// Access changes buffered per socket; one that lags re-checks everything.
@@ -125,6 +129,28 @@ impl From<WritingCounts> for WritingDto {
     }
 }
 
+/// Cards being dragged in a meeting: card → the user dragging it.
+pub type Drags = BTreeMap<Uuid, Uuid>;
+
+/// A card being dragged, and by whom (snapshot and `card.dragging`; spec
+/// §9.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DragDto {
+    pub reflection_id: Uuid,
+    pub user_id: Uuid,
+}
+
+fn drag_list(drags: &Drags) -> Vec<DragDto> {
+    drags
+        .iter()
+        .map(|(&reflection_id, &user_id)| DragDto {
+            reflection_id,
+            user_id,
+        })
+        .collect()
+}
+
 /// A message on its way to a channel's local subscribers: the serialized
 /// event, and the only user who may receive it (ADR-0012).
 #[derive(Debug, Clone)]
@@ -140,6 +166,8 @@ struct Expired {
     offline: Vec<Change>,
     /// Meetings whose writing totals changed, with the new totals.
     writing: Vec<(Uuid, WritingCounts)>,
+    /// Meetings whose dragged cards changed, with the cards now dragged.
+    drags: Vec<(Uuid, Drags)>,
 }
 
 /// Who is online in which meeting, as this replica sees the cluster:
@@ -151,6 +179,8 @@ struct Online {
     meetings: HashMap<Uuid, HashMap<Uuid, Presence>>,
     /// Writing counts: meeting → replica → that replica's counts.
     writing: HashMap<Uuid, HashMap<Uuid, WritingCounts>>,
+    /// Dragged cards: meeting → replica → that replica's dragged cards.
+    drags: HashMap<Uuid, HashMap<Uuid, Drags>>,
     seen: HashMap<Uuid, Instant>,
     /// Replicas forgotten for their silence: if one speaks again, every
     /// replica is asked to re-announce.
@@ -211,6 +241,41 @@ impl Online {
             self.writing.remove(&meeting);
         }
         let after = self.writing(meeting);
+        (before != after).then_some(after)
+    }
+
+    /// The cards dragged in a meeting, on any replica. Two replicas
+    /// dragging one card (a race the soft lock does not prevent) show one
+    /// dragger.
+    fn drags(&self, meeting: Uuid) -> Drags {
+        let mut replicas: Vec<_> = self
+            .drags
+            .get(&meeting)
+            .into_iter()
+            .flat_map(|r| r.iter())
+            .collect();
+        replicas.sort_by_key(|(replica, _)| **replica);
+        let mut total = Drags::new();
+        for (_, drags) in replicas {
+            total.extend(drags.iter().map(|(&card, &user)| (card, user)));
+        }
+        total
+    }
+
+    /// Folds in a replica's dragged cards for a meeting; returns the cards
+    /// now dragged when they changed.
+    fn set_drags(&mut self, meeting: Uuid, replica: Uuid, drags: Drags) -> Option<Drags> {
+        let before = self.drags(meeting);
+        let replicas = self.drags.entry(meeting).or_default();
+        if drags.is_empty() {
+            replicas.remove(&replica);
+        } else {
+            replicas.insert(replica, drags);
+        }
+        if replicas.is_empty() {
+            self.drags.remove(&meeting);
+        }
+        let after = self.drags(meeting);
         (before != after).then_some(after)
     }
 
@@ -296,19 +361,41 @@ impl Online {
                 writing.push((meeting, after));
             }
         }
-        Expired { offline, writing }
+        let mut drags = Vec::new();
+        let meetings: Vec<Uuid> = self.drags.keys().copied().collect();
+        for meeting in meetings {
+            let before = self.drags(meeting);
+            if let Some(replicas) = self.drags.get_mut(&meeting) {
+                replicas.retain(|replica, _| !gone.contains(replica));
+                if replicas.is_empty() {
+                    self.drags.remove(&meeting);
+                }
+            }
+            let after = self.drags(meeting);
+            if after != before {
+                drags.push((meeting, after));
+            }
+        }
+        Expired {
+            offline,
+            writing,
+            drags,
+        }
     }
 
     /// Starts over from this replica's own sockets (the others are asked
     /// again): after a listener reconnect even our own announcements may have
     /// been missed.
-    fn reset(&mut self, me: Uuid, sockets: &Sockets, writers: &HashMap<Uuid, WritingCounts>) {
+    fn reset(&mut self, me: Uuid, local: &Local) {
         *self = Self::default();
-        for (&(meeting, user), &(team, _)) in sockets {
+        for (&(meeting, user), &(team, _)) in &local.sockets {
             self.apply(meeting, team, user, me, true);
         }
-        for (&meeting, &counts) in writers {
+        for (&meeting, &counts) in &local.writers {
             self.set_writing(meeting, me, counts);
+        }
+        for &meeting in local.draggers.keys() {
+            self.set_drags(meeting, me, local.drags(meeting));
         }
     }
 }
@@ -327,8 +414,25 @@ struct Local {
     writers: HashMap<Uuid, WritingCounts>,
     /// Meetings whose writing counts could not be published.
     pending_writing: HashSet<Uuid>,
+    /// This replica's dragged cards per meeting, one (card, user) entry per
+    /// dragging socket (ADR-0012).
+    draggers: HashMap<Uuid, Vec<(Uuid, Uuid)>>,
+    /// Meetings whose dragged cards could not be published.
+    pending_drags: HashSet<Uuid>,
     /// Shutting down: this replica has said goodbye; sockets no longer count.
     closing: bool,
+}
+
+impl Local {
+    /// This replica's dragged cards in a meeting.
+    fn drags(&self, meeting: Uuid) -> Drags {
+        self.draggers
+            .get(&meeting)
+            .into_iter()
+            .flatten()
+            .copied()
+            .collect()
+    }
 }
 
 pub struct Hub {
@@ -403,6 +507,74 @@ impl Hub {
             .lock()
             .expect("hub presence")
             .writing(meeting_id)
+    }
+
+    /// The cards being dragged in a meeting, on any replica.
+    pub fn drags(&self, meeting_id: Uuid) -> Vec<DragDto> {
+        drag_list(&self.online.lock().expect("hub presence").drags(meeting_id))
+    }
+
+    /// A socket of `user` stopped dragging card `from` and/or started
+    /// dragging card `to` in a meeting (`None`: no card).
+    pub async fn set_dragging(
+        &self,
+        meeting_id: Uuid,
+        user: Uuid,
+        from: Option<Uuid>,
+        to: Option<Uuid>,
+    ) {
+        if from == to {
+            return;
+        }
+        let mut local = self.local.lock().await;
+        if local.closing {
+            return;
+        }
+        let draggers = local.draggers.entry(meeting_id).or_default();
+        if let Some(card) = from
+            && let Some(i) = draggers.iter().position(|&d| d == (card, user))
+        {
+            draggers.swap_remove(i);
+        }
+        if let Some(card) = to {
+            draggers.push((card, user));
+        }
+        self.announce_drags(&mut local, meeting_id).await;
+    }
+
+    /// Publishes this replica's dragged cards for a meeting (absolute, like
+    /// writing counts); retried on the next heartbeat when it fails.
+    async fn announce_drags(&self, local: &mut Local, meeting_id: Uuid) {
+        let drags = local.drags(meeting_id);
+        if drags.is_empty() {
+            local.draggers.remove(&meeting_id);
+        }
+        if self.publish_drags(meeting_id, &drags).await {
+            local.pending_drags.remove(&meeting_id);
+        } else {
+            local.pending_drags.insert(meeting_id);
+        }
+    }
+
+    async fn publish_drags(&self, meeting_id: Uuid, drags: &Drags) -> bool {
+        let notification = Notification {
+            channel: Channel::Meeting(meeting_id).to_string(),
+            kind: DRAGGING_CHANGED.into(),
+            seq: None,
+            payload: json!({
+                "meetingId": meeting_id,
+                "replica": self.replica,
+                "drags": drag_list(drags),
+            }),
+            user: None,
+        };
+        match notify(&self.db, &notification).await {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, "cannot publish drag state");
+                false
+            }
+        }
     }
 
     /// A socket's writing state in a meeting went from `from` to `to`
@@ -521,6 +693,10 @@ impl Hub {
         for meeting in std::mem::take(&mut local.writers).into_keys() {
             self.publish_writing(meeting, NO_WRITING).await;
         }
+        local.pending_drags.clear();
+        for meeting in std::mem::take(&mut local.draggers).into_keys() {
+            self.publish_drags(meeting, &Drags::new()).await;
+        }
     }
 
     /// Publishes a socket count transition; one that cannot be published is
@@ -588,6 +764,10 @@ impl Hub {
         for meeting in writers {
             self.announce_writing(&mut local, meeting).await;
         }
+        let draggers: Vec<Uuid> = local.draggers.keys().copied().collect();
+        for meeting in draggers {
+            self.announce_drags(&mut local, meeting).await;
+        }
     }
 
     /// Publishes the announcements that failed, as the sockets now stand: a
@@ -602,6 +782,10 @@ impl Hub {
         let pending: Vec<Uuid> = local.pending_writing.iter().copied().collect();
         for meeting in pending {
             self.announce_writing(&mut local, meeting).await;
+        }
+        let pending: Vec<Uuid> = local.pending_drags.iter().copied().collect();
+        for meeting in pending {
+            self.announce_drags(&mut local, meeting).await;
         }
     }
 
@@ -642,6 +826,9 @@ impl Hub {
             for (meeting, counts) in expired.writing {
                 self.send_writing(meeting, &counts);
             }
+            for (meeting, drags) in expired.drags {
+                self.send_drags(meeting, &drags);
+            }
             drop(online);
         }
     }
@@ -681,11 +868,10 @@ impl Hub {
         let _ = self.access.send(AccessChange::Unknown);
         {
             let local = self.local.lock().await;
-            self.online.lock().expect("hub presence").reset(
-                self.replica,
-                &local.sockets,
-                &local.writers,
-            );
+            self.online
+                .lock()
+                .expect("hub presence")
+                .reset(self.replica, &local);
         }
         let channels: Vec<String> = {
             let channels = self.channels.lock().expect("hub channels");
@@ -740,6 +926,7 @@ impl Hub {
             PRESENCE_SYNC => self.announce_local().await,
             PRESENCE_CHANGED => self.presence_changed(&notification).await,
             WRITING_CHANGED => self.writing_changed(&notification).await,
+            DRAGGING_CHANGED => self.dragging_changed(&notification).await,
             PRESENCE_ALIVE => {
                 if let Some(replica) = uuid_field(&notification.payload, "replica") {
                     self.heard_from(replica).await;
@@ -798,6 +985,40 @@ impl Hub {
         if let Some(total) = view.set_writing(meeting, replica, counts) {
             self.send_writing(meeting, &total);
         }
+    }
+
+    /// Folds a replica's dragged cards into the cluster view, and tells
+    /// clients when a meeting's dragged cards changed.
+    async fn dragging_changed(&self, notification: &Notification) {
+        let p = &notification.payload;
+        let (Some(meeting), Some(replica), Some(drags)) = (
+            uuid_field(p, "meetingId"),
+            uuid_field(p, "replica"),
+            p.get("drags")
+                .and_then(|v| serde_json::from_value::<Vec<DragDto>>(v.clone()).ok()),
+        ) else {
+            return;
+        };
+        self.heard_from(replica).await;
+        let drags: Drags = drags
+            .into_iter()
+            .map(|d| (d.reflection_id, d.user_id))
+            .collect();
+        let mut view = self.online.lock().expect("hub presence");
+        if let Some(now) = view.set_drags(meeting, replica, drags) {
+            self.send_drags(meeting, &now);
+        }
+    }
+
+    /// Tells local clients which cards are being dragged.
+    fn send_drags(&self, meeting: Uuid, drags: &Drags) {
+        self.send(&Notification {
+            channel: Channel::Meeting(meeting).to_string(),
+            kind: CARD_DRAGGING.into(),
+            seq: None,
+            payload: json!({ "drags": drag_list(drags) }),
+            user: None,
+        });
     }
 
     /// Tells local clients how many reflections are being written.
@@ -907,8 +1128,11 @@ mod tests {
         online.apply(meeting, team, both, theirs, true);
         // Its "offline" was missed while the listener was down.
         online.apply(meeting, team, stale, mine, true);
-        let sockets = Sockets::from([((meeting, me), (team, 1)), ((meeting, both), (team, 2))]);
-        online.reset(mine, &sockets, &HashMap::new());
+        let local = Local {
+            sockets: Sockets::from([((meeting, me), (team, 1)), ((meeting, both), (team, 2))]),
+            ..Local::default()
+        };
+        online.reset(mine, &local);
         assert_eq!(online.users(meeting), HashSet::from([me, both]));
         // `both` now depends on this replica alone.
         assert!(online.apply(meeting, team, both, mine, false));
@@ -1014,7 +1238,11 @@ mod tests {
             counts(ReflectionColumn::Ideas, WritingMode::New, 1),
         );
         let ours = counts(ReflectionColumn::Thanks, WritingMode::New, 2);
-        online.reset(me, &Sockets::new(), &HashMap::from([(other, ours)]));
+        let local = Local {
+            writers: HashMap::from([(other, ours)]),
+            ..Local::default()
+        };
+        online.reset(me, &local);
         assert_eq!(online.writing(meeting), NO_WRITING);
         assert_eq!(online.writing(other), ours);
     }
@@ -1030,6 +1258,65 @@ mod tests {
         assert_eq!(json["delta"], json!({ "new": 0, "edit": 1 }));
         assert_eq!(json["plus"], json!({ "new": 0, "edit": 0 }));
         assert_eq!(json.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn dragged_cards_add_up_across_replicas() {
+        let [meeting, a, b, one, two, kai, jade] = ids();
+        let mut online = Online::default();
+        let first = Drags::from([(one, kai)]);
+        assert_eq!(
+            online.set_drags(meeting, a, first.clone()),
+            Some(first.clone())
+        );
+        let both = Drags::from([(one, kai), (two, jade)]);
+        assert_eq!(
+            online.set_drags(meeting, b, Drags::from([(two, jade)])),
+            Some(both.clone())
+        );
+        // Absolute: repeating an announcement changes nothing.
+        assert_eq!(online.set_drags(meeting, a, first), None);
+        assert_eq!(drag_list(&online.drags(meeting)).len(), 2);
+        online.set_drags(meeting, a, Drags::new());
+        online.set_drags(meeting, b, Drags::new());
+        assert!(online.drags(meeting).is_empty());
+        assert!(online.drags.is_empty());
+    }
+
+    #[test]
+    fn a_silent_replica_stops_dragging() {
+        let [meeting, me, dead, mine, theirs, kai, jade] = ids();
+        let silence = Duration::from_secs(45);
+        let start = Instant::now();
+        let mut online = Online::default();
+        online.touch(me, start);
+        online.touch(dead, start);
+        online.set_drags(meeting, me, Drags::from([(mine, kai)]));
+        online.set_drags(meeting, dead, Drags::from([(theirs, jade)]));
+        let expired = online.expire(start + silence * 2, silence, me);
+        assert_eq!(expired.drags, vec![(meeting, Drags::from([(mine, kai)]))]);
+    }
+
+    #[test]
+    fn reconnecting_keeps_only_our_own_drags() {
+        let [meeting, me, them, mine, theirs, kai, jade] = ids();
+        let mut online = Online::default();
+        online.set_drags(meeting, them, Drags::from([(theirs, jade)]));
+        let local = Local {
+            draggers: HashMap::from([(meeting, vec![(mine, kai)])]),
+            ..Local::default()
+        };
+        online.reset(me, &local);
+        assert_eq!(online.drags(meeting), Drags::from([(mine, kai)]));
+    }
+
+    #[test]
+    fn drags_serialize_in_camel_case() {
+        let [card, user] = ids();
+        assert_eq!(
+            serde_json::to_value(drag_list(&Drags::from([(card, user)]))).unwrap(),
+            json!([{ "reflectionId": card, "userId": user }])
+        );
     }
 
     fn event(channel: &str, kind: &str, payload: serde_json::Value) -> Notification {

@@ -170,6 +170,29 @@ test.describe('group', () => {
     await expect(pia.column('Ideas')).toContainText(QUARANTINE);
   });
 
+  test('Move to… keeps the focused destination in view in a short window', async ({ page }) => {
+    // Too short for the panel's four destinations, wherever the card sits.
+    await page.setViewportSize({ width: 1280, height: 200 });
+    await omar.moveTo(QUARANTINE).focus();
+    // The resize and scroll just queued would close the menu (as they should):
+    // let them fire first.
+    await page.evaluate(
+      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+    );
+    await page.keyboard.press('Enter');
+    const menu = page.getByRole('menu', { name: 'Move to…' });
+    const items = menu.getByRole('menuitem');
+    await expect(items.first()).toBeFocused();
+    // The panel scrolls, not the page.
+    expect(await menu.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+    await page.keyboard.press('End');
+    await expect(items.last()).toBeFocused();
+    await expect(items.last()).toBeInViewport({ ratio: 1 });
+    await page.keyboard.press('Home');
+    await expect(items.first()).toBeInViewport({ ratio: 1 });
+    await expect(menu).toBeVisible();
+  });
+
   test('the Group screen works in the dark theme', async ({ browser }) => {
     const pia = await open(browser, 'pia', 'dark');
     await omar.moveWithKeyboard(QUARANTINE, SLOW);

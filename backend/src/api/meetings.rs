@@ -8,6 +8,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
+use sea_orm::{AccessMode, IsolationLevel, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
@@ -263,14 +264,24 @@ impl MeetingStateDto {
     }
 }
 
-/// The meeting's current state, as `actor` sees it.
+/// The meeting's current state, as `actor` sees it. Its reads share one
+/// snapshot, so cards never point at a group a concurrent change removed.
 pub(crate) async fn state_of(
     state: &AppState,
     meeting_id: Uuid,
     actor: Uuid,
 ) -> AppResult<MeetingStateDto> {
-    let view = meetings::view(&state.db, meeting_id, actor).await?;
-    let reflections = reflections::snapshot(&state.db, &view.meeting, actor).await?;
+    let txn = state
+        .db
+        .begin_with_config(
+            Some(IsolationLevel::RepeatableRead),
+            Some(AccessMode::ReadOnly),
+        )
+        .await?;
+    let view = meetings::view(&txn, meeting_id, actor).await?;
+    let reflections = reflections::snapshot(&txn, &view.meeting, actor).await?;
+    let groups = groups::snapshot(&txn, &view.meeting).await?;
+    txn.commit().await?;
     let online = state.hub.online(meeting_id);
     // An ended meeting has no editors open, whatever sockets still say.
     let (writing, drags) = if view.meeting.status == MeetingStatus::Active {
@@ -278,7 +289,6 @@ pub(crate) async fn state_of(
     } else {
         (WritingCounts::default(), Vec::new())
     };
-    let groups = groups::snapshot(&state.db, &view.meeting).await?;
     Ok(MeetingStateDto::new(
         view,
         &online,

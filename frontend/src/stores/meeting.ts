@@ -424,13 +424,14 @@ export const useMeetingStore = defineStore('meeting', () => {
         break;
       case 'group.created':
       case 'group.updated':
-        // This tab's own change came back with the answer to its request.
-        if (isOwnEvent(p)) break;
+        // This tab's own change came back with the answer to its request,
+        // unless it is replayed on an older answer that predates it.
+        if (!replaying && isOwnEvent(p)) break;
         upsertGroup(m, p.group as GroupDto);
         applyMoves(m, p.reflections as CardMove[]);
         break;
       case 'group.deleted':
-        if (isOwnEvent(p)) break;
+        if (!replaying && isOwnEvent(p)) break;
         m.groups = m.groups.filter((g) => g.id !== (p.group as { id: string }).id);
         applyMoves(m, p.reflections as CardMove[]);
         break;
@@ -485,8 +486,11 @@ export const useMeetingStore = defineStore('meeting', () => {
   function undo(before: MeetingStateDto): void {
     const now = meeting.value;
     if (now && now.id === before.id && now.seq === before.seq && optimisticInFlight === 1) {
+      // Presence, writing and drags carry no seq: keep the current ones.
+      // (Raw: the next action clones the state, which a proxy would break.)
+      before.writing = toRaw(now.writing);
+      before.drags = toRaw(now.drags);
       meeting.value = before;
-      // Presence carries no seq: keep the current one.
       markOnline();
     } else if (now?.id === before.id) {
       void resync();

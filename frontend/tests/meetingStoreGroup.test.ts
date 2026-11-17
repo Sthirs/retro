@@ -207,6 +207,84 @@ describe('meeting store in Group', () => {
     expect(ids(store, 'delta')).toEqual(['group:d1+d2']);
   });
 
+  it('keeps the drags and writing that changed while a refused move was pending', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { store } = await opened(
+      grouping({
+        reflections: [
+          card('p1', 'plus', 0),
+          card('d1', 'delta', 0, { groupId: 'g1' }),
+          card('d2', 'delta', 1, { groupId: 'g1' }),
+        ],
+        groups: [{ id: 'g1', column: 'delta', position: 0, name: 'Pair' }],
+        drags: [{ reflectionId: 'p1', userId: BOB.id }],
+      }),
+      {
+        'PUT /api/v1/reflections/d1/group': async () => {
+          await gate;
+          return problem(409, 'wrong_phase');
+        },
+        'PATCH /api/v1/groups/g1': { status: 200, body: grouping() },
+      },
+    );
+    const done = store.moveToGroup('d1', null);
+    // Bob drops his card meanwhile; drags and writing carry no seq.
+    store.apply({ type: 'card.dragging', channel, seq: null, payload: { drags: [] } });
+    const writing = { ...grouping().writing, plus: { new: 1, edit: 0 } };
+    store.apply({ type: 'reflection.writing', channel, seq: null, payload: { counts: writing } });
+    release();
+    expect(await done).toBe(false);
+    expect(ids(store, 'delta')).toEqual(['group:d1+d2']);
+    expect(store.draggers.has('p1')).toBe(false);
+    expect(store.meeting?.writing).toEqual(writing);
+    // The restored state still works for the next action.
+    await expect(store.renameGroup('g1', 'CI')).resolves.toBe(true);
+  });
+
+  it('ends on the newest of two overlapping renames whose answers cross', async () => {
+    const group = (name: string) => ({ id: 'g1', column: 'delta', position: 0, name });
+    const named = (name: string, seq: number) =>
+      grouping({
+        reflections: [
+          card('d1', 'delta', 0, { groupId: 'g1' }),
+          card('d2', 'delta', 1, { groupId: 'g1' }),
+        ],
+        groups: [group(name)],
+        seq,
+      });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let patches = 0;
+    const { store } = await opened(named('', 2), {
+      'PATCH /api/v1/groups/g1': async () => {
+        if (++patches === 1) {
+          // Alpha's answer is held back and arrives last.
+          await gate;
+          return { status: 200, body: named('Alpha', 3) };
+        }
+        return { status: 200, body: named('Beta', 4) };
+      },
+    });
+    const updated = (name: string, seq: number) =>
+      store.apply({
+        type: 'group.updated',
+        channel,
+        seq,
+        payload: { group: group(name), reflections: [], clientId: CLIENT_ID },
+      });
+    const alpha = store.renameGroup('g1', 'Alpha');
+    updated('Alpha', 3);
+    const beta = store.renameGroup('g1', 'Beta');
+    updated('Beta', 4);
+    expect(await beta).toBe(true);
+    release();
+    expect(await alpha).toBe(true);
+    // Alpha's answer predates Beta's event, which is applied again on top.
+    expect(store.meeting?.groups[0]?.name).toBe('Beta');
+    expect(store.meeting?.seq).toBe(4);
+  });
+
   it('renames a group with the trimmed name', async () => {
     const { store, calls } = await opened(
       grouping({

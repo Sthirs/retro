@@ -5,7 +5,7 @@
  * cards' column colours. Expanded: every card, each of which can be dragged
  * out. Any participant renames it; the last name saved wins.
  */
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import type { GroupDto, ReflectionDto } from '@/api/client';
@@ -52,6 +52,8 @@ function save(): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
+  // Enter or Escape may confirm or cancel an IME candidate, not the name.
+  if (event.isComposing) return;
   const input = event.target as HTMLInputElement;
   if (event.key === 'Enter') {
     event.preventDefault();
@@ -67,6 +69,16 @@ function onKeyDown(event: KeyboardEvent): void {
 
 function onBlur(): void {
   if (editing.value) save();
+}
+
+const expandButton = ref<HTMLButtonElement | null>(null);
+const collapseButton = ref<HTMLButtonElement | null>(null);
+
+/** Expands or collapses; focus moves to the button that replaces this one. */
+async function toggle(): Promise<void> {
+  view.toggle(props.group.id);
+  await nextTick();
+  (expanded.value ? collapseButton : expandButton).value?.focus();
 }
 </script>
 
@@ -97,11 +109,12 @@ function onBlur(): void {
         <span class="group__count">{{ t('group.cards', cards.length) }}</span>
         <button
           v-if="expanded"
+          ref="collapseButton"
           type="button"
           class="group__collapse"
           aria-expanded="true"
           :aria-label="t('group.collapse')"
-          @click="view.toggle(group.id)"
+          @click="toggle"
         >
           <AppIcon name="chevronDown" :size="16" />
         </button>
@@ -121,10 +134,11 @@ function onBlur(): void {
             />
           </span>
           <button
+            ref="expandButton"
             type="button"
             class="group__expand"
             aria-expanded="false"
-            @click="view.toggle(group.id)"
+            @click="toggle"
           >
             {{ t('group.expand') }}
             <AppIcon name="chevronDown" :size="14" />

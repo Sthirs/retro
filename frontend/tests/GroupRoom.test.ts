@@ -11,6 +11,7 @@ import {
   mockSocket,
   openSocket,
   participant,
+  problem,
   renderAt,
   session,
   team,
@@ -159,6 +160,44 @@ describe('Group phase', () => {
     const group = wrapper.get('section[aria-label="Flaky CI"]');
     expect(group.findAll('[data-card-id]')).toHaveLength(3);
     expect(document.activeElement).toBe(cardEl(wrapper, 'i1').get('[data-move-trigger]').element);
+  });
+
+  it('focuses the card again where it is when a move is refused', async () => {
+    mockFetch(
+      routes(grouping(), { 'PUT /api/v1/reflections/i1/group': problem(409, 'wrong_phase') }),
+    );
+    const { wrapper } = await open();
+    await cardEl(wrapper, 'i1').get('[data-move-trigger]').trigger('click');
+    // Into the collapsed group: the card's menu unmounts with it.
+    await wrapper.get('[role="menu"]').findAll('[role="menuitem"]')[0]!.trigger('click');
+    await flushPromises();
+    const trigger = cardEl(wrapper, 'i1').get('[data-move-trigger]');
+    expect(trigger.element.closest('section[aria-label="Flaky CI"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger.element);
+  });
+
+  it('keeps the focus on the toggle when a group expands or collapses', async () => {
+    mockFetch(routes());
+    const { wrapper } = await open();
+    const group = wrapper.get('section[aria-label="Flaky CI"]');
+    await group.get('button[aria-expanded="false"]').trigger('click');
+    await flushPromises();
+    expect(document.activeElement).toBe(group.get('button[aria-label="Collapse group"]').element);
+    await group.get('button[aria-label="Collapse group"]').trigger('click');
+    await flushPromises();
+    expect(document.activeElement).toBe(group.get('button[aria-expanded="false"]').element);
+  });
+
+  it('leaves the name alone while an IME composes', async () => {
+    const { calls } = mockFetch(routes());
+    const { wrapper } = await open();
+    const input = wrapper.get('input[aria-label="Group name"]');
+    (input.element as HTMLInputElement).focus();
+    await input.setValue('Flaky');
+    await input.trigger('keydown', { key: 'Enter', isComposing: true });
+    await flushPromises();
+    expect(document.activeElement).toBe(input.element);
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
   });
 
   it('shows who else is dragging a card and locks it', async () => {

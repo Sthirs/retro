@@ -98,8 +98,16 @@ function items(): HTMLElement[] {
 
 function focusItem(index: number): void {
   const list = items();
-  if (list.length === 0) return;
-  list[(index + list.length) % list.length]?.focus({ preventScroll: true });
+  const item = list[(index + list.length) % list.length];
+  if (!item) return;
+  // The panel is fixed: scroll only within it, never the page behind.
+  item.focus({ preventScroll: true });
+  const panel = menu.value;
+  if (!panel) return;
+  if (item.offsetTop < panel.scrollTop) panel.scrollTop = item.offsetTop;
+  else if (item.offsetTop + item.offsetHeight > panel.scrollTop + panel.clientHeight) {
+    panel.scrollTop = item.offsetTop + item.offsetHeight - panel.clientHeight;
+  }
 }
 
 async function toggle(): Promise<void> {
@@ -136,14 +144,14 @@ function onFocusOut(event: FocusEvent): void {
   if (next && root.value && !root.value.contains(next)) close();
 }
 
-/** Runs a move, then shows the card where it went and focuses it again. */
+/**
+ * Runs a move, then shows the card where it is (moved, or back after a
+ * refusal) and focuses it again: this menu may have unmounted meanwhile.
+ */
 async function run(move: () => Promise<boolean>): Promise<void> {
   close();
   const id = props.card.id;
-  if (!(await move())) {
-    trigger.value?.focus();
-    return;
-  }
+  await move();
   const card = store.meeting?.reflections.find((r) => r.id === id);
   view.reveal(id, card?.groupId ?? null);
 }

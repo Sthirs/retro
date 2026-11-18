@@ -1546,3 +1546,147 @@ async fn group_changes_reach_everyone_in_order() {
         ])
     );
 }
+
+// --- Vote: own votes only, cast count to the facilitator ------------------
+
+/// A meeting in Vote: alice facilitates, bob (two cards) and dana take part.
+/// Returns the group of bob's first card.
+async fn voting(app: &TestApp) -> (String, String, String, String, String) {
+    let (alice, bob, _, m, one, _) = grouping(app).await;
+    let dana = app.token_for("dana").await;
+    let team = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json()["teamId"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    join_team(app, &alice, team, &dana).await;
+    let res = app
+        .call("POST", &format!("/api/v1/meetings/{m}/join"), &dana, None)
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    to_reflect(app, &alice, &m).await;
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &bob, None)
+        .await
+        .json();
+    let group = state["reflections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == one.as_str())
+        .unwrap()["groupId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    (alice, bob, dana, m, group)
+}
+
+/// The next event that is not presence, if one comes within `wait`.
+async fn next_non_presence(socket: &mut Socket, wait: Duration) -> Option<Value> {
+    tokio::time::timeout(wait, async {
+        loop {
+            let event = next(socket).await;
+            if event["type"] != "presence.changed" {
+                return event;
+            }
+        }
+    })
+    .await
+    .ok()
+}
+
+async fn put_vote(app: &TestApp, token: &str, group: &str, tab: &str) {
+    let res = app
+        .call_with(
+            "PUT",
+            &format!("/api/v1/groups/{group}/vote"),
+            token,
+            Some(json!({ "delta": 1 })),
+            &[("x-client-id", tab)],
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+}
+
+#[tokio::test]
+async fn votes_reach_only_the_voter_and_the_facilitator() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, dana, m, group) = voting(&app).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+    let mut dana_socket = connect(&addr, &ticket(&app, &dana).await).await;
+    subscribe(&mut dana_socket, &channel).await;
+
+    let tab = Uuid::now_v7().to_string();
+    put_vote(&app, &bob, &group, &tab).await;
+
+    // Bob's tabs and the facilitator learn that votes changed, and which tab
+    // did it: no group, no count, no seq.
+    for socket in [&mut bob_socket, &mut alice_socket] {
+        let changed = next_of(socket, "vote.changed").await;
+        assert_eq!(changed["payload"], json!({ "clientId": tab }));
+        assert_eq!(changed["seq"], Value::Null);
+        assert!(changed.get("user").is_none());
+    }
+    // Dana hears nothing of bob's vote.
+    let leaked = next_non_presence(&mut dana_socket, Duration::from_millis(500)).await;
+    assert!(leaked.is_none(), "unexpected: {leaked:?}");
+
+    // Dana's vote reaches dana and alice, never bob.
+    put_vote(&app, &dana, &group, &tab).await;
+    next_of(&mut dana_socket, "vote.changed").await;
+    next_of(&mut alice_socket, "vote.changed").await;
+    let leaked = next_non_presence(&mut bob_socket, Duration::from_millis(500)).await;
+    assert!(leaked.is_none(), "unexpected: {leaked:?}");
+}
+
+#[tokio::test]
+async fn new_vote_settings_reach_everyone_and_trimmed_voters_reload() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, dana, m, group) = voting(&app).await;
+    let tab = Uuid::now_v7().to_string();
+    put_vote(&app, &bob, &group, &tab).await;
+    put_vote(&app, &bob, &group, &tab).await;
+    let channel = format!("meeting:{m}");
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+    let mut dana_socket = connect(&addr, &ticket(&app, &dana).await).await;
+    subscribe(&mut dana_socket, &channel).await;
+    let seq = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &dana, None)
+        .await
+        .json()["seq"]
+        .as_i64()
+        .unwrap();
+
+    let res = app
+        .call(
+            "PATCH",
+            &format!("/api/v1/meetings/{m}/settings"),
+            &alice,
+            Some(json!({ "voteBudget": 1, "voteMaxPerGroup": 1 })),
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+
+    for socket in [&mut bob_socket, &mut dana_socket] {
+        let changed = next_of(socket, "vote.settings_changed").await;
+        assert_eq!(changed["seq"], seq + 1);
+        assert_eq!(
+            changed["payload"],
+            json!({ "budget": 1, "maxPerGroup": 1, "clientId": null })
+        );
+    }
+    // Bob lost a vote: his tabs re-read. Dana lost none.
+    next_of(&mut bob_socket, "vote.changed").await;
+    let leaked = next_non_presence(&mut dana_socket, Duration::from_millis(500)).await;
+    assert!(leaked.is_none(), "unexpected: {leaked:?}");
+}

@@ -54,6 +54,20 @@ function leaveGroup(m: MeetingStateDto, card: ReflectionDto): void {
   m.groups = m.groups.filter((g) => g.id !== old);
 }
 
+/** One vote change this tab sent and the server has not answered yet. */
+interface PendingVote {
+  groupId: string;
+  delta: 1 | -1;
+}
+
+/** Adds `delta` to the viewer's own votes on a group (an optimistic copy). */
+function bumpVote(m: MeetingStateDto, groupId: string, delta: number): void {
+  const mine = m.myVotes.find((v) => v.groupId === groupId);
+  if (mine) mine.count += delta;
+  else if (delta > 0) m.myVotes.push({ groupId, count: delta });
+  m.myVotes = m.myVotes.filter((v) => v.count > 0);
+}
+
 /** A notice in the room: a new facilitator, or this tab's drafts discarded. */
 export type MeetingNotice =
   | { kind: 'facilitator'; userId: string; name: string }
@@ -106,6 +120,13 @@ export const useMeetingStore = defineStore('meeting', () => {
   let resyncWanted = false;
   /** Optimistic actions waiting for the server's answer. */
   let optimisticInFlight = 0;
+  /**
+   * Votes sent and not answered yet, oldest first. They go out one at a
+   * time, and every snapshot gets them on top until answered, so quick
+   * clicks neither flicker nor overtake each other.
+   */
+  let pendingVotes: PendingVote[] = [];
+  let voteChain: Promise<unknown> = Promise.resolve();
   /**
    * Server time minus local time, in ms, from the last `serverNow` seen: the
    * timer counts down on server time, whatever the local clock says.
@@ -214,6 +235,24 @@ export const useMeetingStore = defineStore('meeting', () => {
     return items;
   });
 
+  /** The viewer's own votes per group id (spec §9.4): nobody sees others'. */
+  const myVotes = computed(
+    () => new Map((meeting.value?.myVotes ?? []).map((v) => [v.groupId, v.count])),
+  );
+  const voteBudget = computed(() => meeting.value?.voteBudget ?? 0);
+  const voteMaxPerGroup = computed(() => meeting.value?.voteMaxPerGroup ?? 0);
+  const votesUsed = computed(() => {
+    let used = 0;
+    for (const count of myVotes.value.values()) used += count;
+    return used;
+  });
+  const votesLeft = computed(() => Math.max(0, voteBudget.value - votesUsed.value));
+  /** Votes cast overall: the facilitator's view during Vote, else `null`. */
+  const votesCast = computed(() => {
+    const usage = meeting.value?.voteUsage;
+    return usage ? usage.reduce((sum, u) => sum + u.spent, 0) : null;
+  });
+
   /** Who else is dragging each card right now (spec §9.3), by card id. */
   const draggers = computed(() => {
     const by = new Map<string, ParticipantDto>();
@@ -253,6 +292,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     queued = [];
     online = new Set();
     resyncWanted = false;
+    pendingVotes = [];
   }
 
   watch(
@@ -290,6 +330,9 @@ export const useMeetingStore = defineStore('meeting', () => {
     } finally {
       replaying = false;
     }
+    // Votes still on their way are not in the snapshot yet.
+    const now = meeting.value;
+    if (now) for (const pending of pendingVotes) bumpVote(now, pending.groupId, pending.delta);
     // The log should bring it back to every event seen; reload if it did not.
     if (meeting.value && meeting.value.seq < seen) void resync();
   }
@@ -403,6 +446,8 @@ export const useMeetingStore = defineStore('meeting', () => {
         m.facilitatorId = p.facilitatorId as string;
         const name = participantsById.value.get(m.facilitatorId)?.displayName ?? '';
         notice.value = { kind: 'facilitator', userId: m.facilitatorId, name };
+        // Only the facilitator sees how many votes were cast: re-read it.
+        if (m.phase === MeetingPhase.vote && !replaying) void resync();
         break;
       }
       case 'phase.changed':
@@ -446,6 +491,15 @@ export const useMeetingStore = defineStore('meeting', () => {
       case 'reflection.changed':
         // Another tab of ours changed one of our reflections.
         if (!isOwnEvent(p)) void resync();
+        break;
+      case 'vote.changed':
+        // Our own votes (another tab of ours), or, for the facilitator,
+        // someone's: re-read them. This tab's own came with the answer.
+        if (!isOwnEvent(p)) void resync();
+        break;
+      case 'vote.settings_changed':
+        m.voteBudget = p.budget as number;
+        m.voteMaxPerGroup = p.maxPerGroup as number;
         break;
       case 'icebreaker.person_changed':
         m.icebreaker.index = p.index as number;
@@ -664,6 +718,52 @@ export const useMeetingStore = defineStore('meeting', () => {
     );
   }
 
+  /**
+   * Gives a group one more of the viewer's votes, or takes one back (spec
+   * §9.4). Refused locally when over a limit; requests go out in order.
+   */
+  function vote(groupId: string, delta: 1 | -1): Promise<boolean> {
+    const m = meeting.value;
+    if (!m) return Promise.resolve(false);
+    const mine = myVotes.value.get(groupId) ?? 0;
+    if (delta > 0 && (votesLeft.value <= 0 || mine >= m.voteMaxPerGroup)) {
+      return Promise.resolve(false);
+    }
+    if (delta < 0 && mine <= 0) return Promise.resolve(false);
+    const id = m.id;
+    const entry: PendingVote = { groupId, delta };
+    pendingVotes.push(entry);
+    bumpVote(m, groupId, delta);
+    actionError.value = null;
+    const settle = (): void => {
+      pendingVotes = pendingVotes.filter((v) => v !== entry);
+    };
+    const run = voteChain.then(async () => {
+      try {
+        const { res, log } = await logged(() => api.vote(groupId, { delta }));
+        settle();
+        if (res.status !== 200) throw apiError(res);
+        accept(res.data, log);
+        return true;
+      } catch (e) {
+        settle();
+        if (meetingId.value === id) {
+          actionError.value = errorCode(e);
+          await resync();
+        }
+        return false;
+      }
+    });
+    voteChain = run;
+    return run;
+  }
+
+  /** Sets the vote budget and the most votes per group (facilitator). */
+  function saveVoteSettings(budget: number, maxPerGroup: number): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(() => api.updateSettings(id, { voteBudget: budget, voteMaxPerGroup: maxPerGroup }));
+  }
+
   return {
     meeting,
     meetingId,
@@ -692,6 +792,12 @@ export const useMeetingStore = defineStore('meeting', () => {
     groupCards,
     columnItems,
     draggers,
+    myVotes,
+    voteBudget,
+    voteMaxPerGroup,
+    votesUsed,
+    votesLeft,
+    votesCast,
     clockOffset,
     serverTime,
     open,
@@ -712,5 +818,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     dropOnCard,
     moveToGroup,
     renameGroup,
+    vote,
+    saveVoteSettings,
   };
 });

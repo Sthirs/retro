@@ -12,6 +12,7 @@ pub mod tasks;
 pub mod teams;
 pub mod timer;
 pub mod users;
+pub mod votes;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::Rng;

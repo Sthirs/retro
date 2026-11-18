@@ -365,6 +365,94 @@
         ]
       }
     },
+    "/api/v1/groups/{group_id}/vote": {
+      "put": {
+        "tags": [
+          "votes"
+        ],
+        "summary": "Gives a group one more of the caller's votes, or takes one back\n(participants, during Vote).",
+        "operationId": "vote",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting, with the caller's votes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_vote`: `delta` is neither 1 nor -1",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`group_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, `wrong_phase` (not Vote), `vote_budget_exhausted`, `vote_group_limit` (the most votes on one group), or `no_vote_to_remove`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/invitations/{token}": {
       "get": {
         "tags": [
@@ -1737,6 +1825,94 @@
           },
           "409": {
             "description": "`meeting_ended`, `wrong_phase` (not Reflect) or `too_many_reflections`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/settings": {
+      "patch": {
+        "tags": [
+          "votes"
+        ],
+        "summary": "Sets the vote budget and the most votes per group (facilitator, until\nVote ends). Lower limits remove each person's most recent votes beyond\nthem.",
+        "operationId": "update_settings",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoteSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting, with its new settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_vote_settings`: out of bounds",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, or `wrong_phase` (after Vote)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4127,6 +4303,9 @@
           "writing",
           "groups",
           "drags",
+          "voteBudget",
+          "voteMaxPerGroup",
+          "myVotes",
           "seq",
           "createdAt",
           "serverNow"
@@ -4170,6 +4349,13 @@
           "id": {
             "type": "string",
             "format": "uuid"
+          },
+          "myVotes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MyVoteDto"
+            },
+            "description": "From Vote on, the caller's own votes per group. Nobody sees anyone\nelse's votes."
           },
           "onlineIds": {
             "type": "array",
@@ -4239,6 +4425,26 @@
           },
           "title": {
             "type": "string"
+          },
+          "voteBudget": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Votes each participant may give in all (spec §9.4)."
+          },
+          "voteMaxPerGroup": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Most votes one participant may give the same group."
+          },
+          "voteUsage": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/VoteUsageDto"
+            },
+            "description": "During Vote, for the facilitator only: every voter's usage,\nanonymous (votes cast overall, and who lower limits would trim)."
           },
           "writing": {
             "$ref": "#/components/schemas/WritingDto",
@@ -4379,6 +4585,24 @@
           "status": {
             "$ref": "#/components/schemas/TaskStatus",
             "description": "The column to move the task to."
+          }
+        }
+      },
+      "MyVoteDto": {
+        "type": "object",
+        "description": "The viewer's own votes on one group.",
+        "required": [
+          "groupId",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "groupId": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -5059,6 +5283,60 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "VoteRequest": {
+        "type": "object",
+        "description": "One more vote, or one fewer.",
+        "required": [
+          "delta"
+        ],
+        "properties": {
+          "delta": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`1` adds a vote; `-1` takes back the caller's most recent vote on the group."
+          }
+        }
+      },
+      "VoteSettingsRequest": {
+        "type": "object",
+        "description": "The meeting's vote settings.",
+        "required": [
+          "voteBudget",
+          "voteMaxPerGroup"
+        ],
+        "properties": {
+          "voteBudget": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Votes per person, 1–20."
+          },
+          "voteMaxPerGroup": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Most votes one person may give the same group, 1–10."
+          }
+        }
+      },
+      "VoteUsageDto": {
+        "type": "object",
+        "description": "How far one participant has used their votes, anonymous: what the\nfacilitator sees (votes cast overall, and who a lower limit would trim).",
+        "required": [
+          "spent",
+          "maxOnGroup"
+        ],
+        "properties": {
+          "maxOnGroup": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The most votes given to a single group."
+          },
+          "spent": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Votes given in all."
           }
         }
       },

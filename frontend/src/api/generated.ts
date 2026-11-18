@@ -343,6 +343,14 @@ export const MeetingPhase = {
 } as const;
 
 /**
+ * The viewer's own votes on one group.
+ */
+export interface MyVoteDto {
+  count: number;
+  groupId: string;
+}
+
+/**
  * A participant of a meeting.
  */
 export interface ParticipantDto {
@@ -434,6 +442,17 @@ export interface Timer {
 }
 
 /**
+ * How far one participant has used their votes, anonymous: what the
+ * facilitator sees (votes cast overall, and who a lower limit would trim).
+ */
+export interface VoteUsageDto {
+  /** The most votes given to a single group. */
+  maxOnGroup: number;
+  /** Votes given in all. */
+  spent: number;
+}
+
+/**
  * Reflections being written, per column, as clients see them (snapshot and
  * `reflection.writing`; spec §9.2).
  */
@@ -460,6 +479,11 @@ export interface MeetingStateDto {
   icebreaker: IcebreakerDto;
   id: string;
   /**
+   * From Vote on, the caller's own votes per group. Nobody sees anyone
+   * else's votes.
+   */
+  myVotes: MyVoteDto[];
+  /**
    * Everyone in the meeting room right now, including people whose join
    * is still on its way.
    */
@@ -484,6 +508,16 @@ export interface MeetingStateDto {
   teamName: string;
   timer?: Timer | null;
   title: string;
+  /** Votes each participant may give in all (spec §9.4). */
+  voteBudget: number;
+  /** Most votes one participant may give the same group. */
+  voteMaxPerGroup: number;
+  /**
+   * During Vote, for the facilitator only: every voter's usage,
+   * anonymous (votes cast overall, and who lower limits would trim).
+   * @nullable
+   */
+  voteUsage?: VoteUsageDto[] | null;
   /** Reflections being written right now, per column. */
   writing: WritingDto;
 }
@@ -684,6 +718,24 @@ export interface UpdateReflectionRequest {
 export interface UpdateTaskRequest {
   /** Rich text; sanitized by the server. */
   content: string;
+}
+
+/**
+ * One more vote, or one fewer.
+ */
+export interface VoteRequest {
+  /** `1` adds a vote; `-1` takes back the caller's most recent vote on the group. */
+  delta: number;
+}
+
+/**
+ * The meeting's vote settings.
+ */
+export interface VoteSettingsRequest {
+  /** Votes per person, 1–20. */
+  voteBudget: number;
+  /** Most votes one person may give the same group, 1–10. */
+  voteMaxPerGroup: number;
 }
 
 /**
@@ -1079,6 +1131,82 @@ export const renameGroup = async (
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(renameGroupRequest),
+  });
+};
+
+export type voteResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type voteResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type voteResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type voteResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type voteResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type voteResponseSuccess = voteResponse200 & {
+  headers: Headers;
+};
+export type voteResponseError = (
+  voteResponse400 | voteResponse403 | voteResponse404 | voteResponse409
+) & {
+  headers: Headers;
+};
+
+export type voteResponse = voteResponseSuccess | voteResponseError;
+
+export const getVoteUrl = (groupId: string) => {
+  return `/api/v1/groups/${groupId}/vote`;
+};
+
+/**
+ * @summary Gives a group one more of the caller's votes, or takes one back
+(participants, during Vote).
+ */
+export const vote = async (
+  groupId: string,
+  voteRequest: VoteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<voteResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<voteResponse>(getVoteUrl(groupId), {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(voteRequest),
   });
 };
 
@@ -2231,6 +2359,86 @@ export const createReflection = async (
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(createReflectionRequest),
+  });
+};
+
+export type updateSettingsResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type updateSettingsResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type updateSettingsResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type updateSettingsResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type updateSettingsResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type updateSettingsResponseSuccess = updateSettingsResponse200 & {
+  headers: Headers;
+};
+export type updateSettingsResponseError = (
+  | updateSettingsResponse400
+  | updateSettingsResponse403
+  | updateSettingsResponse404
+  | updateSettingsResponse409
+) & {
+  headers: Headers;
+};
+
+export type updateSettingsResponse = updateSettingsResponseSuccess | updateSettingsResponseError;
+
+export const getUpdateSettingsUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/settings`;
+};
+
+/**
+ * @summary Sets the vote budget and the most votes per group (facilitator, until
+Vote ends). Lower limits remove each person's most recent votes beyond
+them.
+ */
+export const updateSettings = async (
+  meetingId: string,
+  voteSettingsRequest: VoteSettingsRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<updateSettingsResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<updateSettingsResponse>(getUpdateSettingsUrl(meetingId), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(voteSettingsRequest),
   });
 };
 

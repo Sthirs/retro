@@ -391,9 +391,11 @@ async fn grouping_needs_a_participant_during_group() {
     assert_eq!(code(&res), "wrong_phase");
     let res = rename(&app, &r.bob, &group, "Late").await;
     assert_eq!(res.status, 409);
-    // The groups stay for the next phases.
+    // The groups stay for the next phases; at Vote each loose card (d1, d2,
+    // i1) gets a group of its own.
     let seen = state(&app, &r.bob, &r.meeting).await;
-    assert_eq!(groups(&seen).len(), 1);
+    assert_eq!(groups(&seen).len(), 4);
+    assert!(groups(&seen).iter().any(|g| g["id"] == group.as_str()));
 }
 
 #[tokio::test]

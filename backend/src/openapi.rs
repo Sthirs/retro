@@ -73,6 +73,8 @@ use crate::{
         api::groups::create_group,
         api::groups::rename_group,
         api::groups::move_card,
+        api::votes::vote,
+        api::votes::update_settings,
         api::attachments::upload_attachment,
         api::attachments::get_attachment,
         api::meetings::get_invite_link,

@@ -157,6 +157,11 @@ pub fn router(state: AppState) -> Router {
             "/reflections/{reflection_id}/group",
             put(api::groups::move_card),
         )
+        .route("/groups/{group_id}/vote", put(api::votes::vote))
+        .route(
+            "/meetings/{meeting_id}/settings",
+            patch(api::votes::update_settings),
+        )
         .route(
             "/meetings/{meeting_id}/invite-link",
             get(api::meetings::get_invite_link).post(api::meetings::regenerate_invite_link),

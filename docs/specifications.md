@@ -284,9 +284,10 @@ The individual meeting phases cannot be replayed.
 ### 9.4 Vote
 
 - Every participant gets a **vote budget** (default **5**) and can give at most **3 votes** (default) to the same group.
-- The facilitator can change both values in the meeting settings. Lowering the budget below what a user has already spent removes that user's most recent votes so they fit the new limit.
-- Each group shows **+** and **−** buttons and the user's own vote count on it. A counter shows remaining votes.
-- During this phase, users see **only their own votes**. Totals are hidden until Discuss, to avoid bias. The facilitator sees how many votes have been cast overall.
+- The facilitator can change both values in the meeting **Settings** (budget 1–20, at most 1–10 per group), until Vote ends. Lowering the budget below what a user has already spent removes that user's most recent votes so they fit the new limit; lowering the maximum per group removes each user's most recent votes on any group above it. The settings dialog warns how many people (never who) would lose votes.
+- Each group shows **+** and **−** buttons and the user's own vote count on it. **−** takes back the user's most recent vote on that group. A counter shows remaining votes ("2 of 5 votes left").
+- A card never grouped shows as the plain card it was (its implicit single-card group has no name). Clicking a group expands it to read its cards; expanding is local to each viewer.
+- During this phase, users see **only their own votes**. Totals are hidden until Discuss, to avoid bias. The facilitator sees how many votes have been cast overall, as one number: nothing per group or per person.
 - Participants press **Ready**. The facilitator advances to Discuss.
 
 ### 9.5 Discuss
@@ -351,8 +352,8 @@ The individual meeting phases cannot be replayed.
 | `reflection.changed` | reflection id, `clientId` (no content; the author's other tabs re-read the state) | author only (no `seq`) |
 | `card.dragging` | every card being dragged and who drags it (ephemeral, no `seq`) | all |
 | `group.created` / `group.updated` / `group.deleted` | group (id, column, position, name; id only when deleted), the cards whose group changed (id, group id, version), `clientId` | all |
-| `vote.settings_changed` | budget, max_per_group | all |
-| `vote.changed` | the user's own votes | own user; aggregate cast count to the facilitator |
+| `vote.settings_changed` | budget, maxPerGroup, `clientId` | all |
+| `vote.changed` | `clientId` only (no `seq`; the receiving tab re-reads the state, ADR-0012) | the voter and the facilitator (who re-reads the cast count); also every user whose votes a settings change removed |
 | `vote.totals_revealed` | totals per group | all (Discuss start) |
 | `discuss.group_changed` | group id | all |
 | `reaction.changed` | reflection, emoji, count | all |
@@ -485,9 +486,9 @@ reflection_groups(id, meeting_id → meetings,
                   name,                              -- 0–80 characters, '' = "Untitled group"
                   created_at, updated_at)
 
-votes(meeting_id, user_id, group_id, count)
-    PK(meeting_id, user_id, group_id), CHECK(count BETWEEN 0 AND 3*)
-    -- *upper bound enforced in application against meeting settings
+votes(id, meeting_id → meetings, user_id → users, group_id → reflection_groups,
+      created_at)                                 -- one row per vote, so "most recent" is exact
+    -- budget and maximum per group enforced in the application, under the meeting lock
     -- votes on single ungrouped cards: a group of one is created implicitly at Vote start
 
 reactions(reflection_id, user_id, emoji, created_at)
@@ -586,7 +587,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/meetings/{id}/icebreaker/goto` | `{ userId }`: back to someone who already had their turn (facilitator) |
 | PUT | `/meetings/{id}/timer` | Start / pause / stop the timer (facilitator) |
 | PUT | `/meetings/{id}/ready` | Set own ready flag |
-| PATCH | `/meetings/{id}/settings` | Vote budget / max per group (facilitator) |
+| PATCH | `/meetings/{id}/settings` | `{ voteBudget, voteMaxPerGroup }`: vote budget / max per group (facilitator, until Vote ends; 400 `invalid_vote_settings` out of bounds, 409 `wrong_phase` after Vote) |
 | POST | `/meetings/{id}/end` | End the meeting (facilitator) |
 
 ### 14.4 Reflections, groups, votes, reactions
@@ -605,6 +606,8 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | PUT | `/reflections/{rid}/reactions/{emoji}` | Add a reaction |
 | DELETE | `/reflections/{rid}/reactions/{emoji}` | Remove a reaction |
 | PUT | `/meetings/{id}/discuss/current` | Set the current group (facilitator) |
+
+`PUT /groups/{gid}/vote` is open to participants during Vote and answers with the meeting state, holding the caller's own votes (`myVotes`) and, for the facilitator only, every voter's anonymous usage (`voteUsage`: votes spent and the most on one group). Errors: 400 `invalid_vote` (delta neither +1 nor −1), 403 `not_participant`, 404 `group_not_found`, 409 `meeting_ended`, `wrong_phase`, `vote_budget_exhausted`, `vote_group_limit`, `no_vote_to_remove`.
 
 The group endpoints are open to participants during Group (409 `wrong_phase`, `meeting_ended`, 403 `not_participant`) and answer with the meeting state. Unknown or foreign ids give 404 `reflection_not_found` / `group_not_found`; a card dropped onto itself gives 400 `same_reflection`, and a name over 80 characters 400 `invalid_group_name`.
 

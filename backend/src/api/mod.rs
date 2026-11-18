@@ -14,6 +14,7 @@ pub mod meetings;
 pub mod reflections;
 pub mod tasks;
 pub mod teams;
+pub mod votes;
 
 use serde::Serialize;
 use utoipa::ToSchema;

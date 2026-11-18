@@ -17,6 +17,7 @@ use crate::{
     domain::{
         groups, random_token, teams,
         timer::{self, Timer, TimerAction},
+        votes,
     },
     entities::{
         greeting, icebreaker_question,
@@ -137,7 +138,7 @@ async fn lock_team(
 }
 
 /// Locks a running meeting for a facilitator action.
-async fn lock_as_facilitator(
+pub(crate) async fn lock_as_facilitator(
     txn: &impl ConnectionTrait,
     meeting_id: Uuid,
     actor: Uuid,
@@ -631,8 +632,10 @@ pub async fn next_phase(
         .filter(meeting_participant::Column::MeetingId.eq(meeting.id))
         .exec(&txn)
         .await?;
-    if phase == MeetingPhase::Group {
-        groups::place_cards(&txn, meeting.id).await?;
+    match phase {
+        MeetingPhase::Group => groups::place_cards(&txn, meeting.id).await?,
+        MeetingPhase::Vote => votes::wrap_ungrouped(&txn, meeting.id).await?,
+        _ => {}
     }
     ws::publish_meeting(&txn, meeting.id, "phase.changed", json!({ "phase": phase })).await?;
     team_updated(&txn, &meeting).await?;

@@ -1,6 +1,7 @@
 /** Stroke icon shapes: SVG path data, or `rect:x,y,w,h,r` / `circle:cx,cy,r`. */
 export const ICONS = {
   plus: ['M12 5v14M5 12h14'],
+  minus: ['M5 12h14'],
   calendar: ['M16 2v4M8 2v4M3 10h18', 'rect:3,4,18,18,2'],
   tasks: ['rect:3,3,18,18,2', 'm9 12 2 2 4-4'],
   settings: ['M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6'],
@@ -50,6 +51,11 @@ export const ICONS = {
   grid: ['rect:3,3,7,7,1', 'rect:14,3,7,7,1', 'rect:3,14,7,7,1', 'rect:14,14,7,7,1'],
   thumbsUp: [
     'M7 10v11M15 5.9 14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.4 21H7V10l4-8a3 3 0 0 1 4 3.9Z',
+  ],
+  /** A vote (Vote artboard): a thumb with its cuff. */
+  vote: [
+    'M7 10v11H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3z',
+    'M7 10l4-8a3 3 0 0 1 4 3.9L14 10h5.8a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 18.4 21H7',
   ],
   message: ['M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z'],
   transfer: ['m16 3 4 4-4 4', 'M20 7H4', 'm8 21-4-4 4-4', 'M4 17h16'],

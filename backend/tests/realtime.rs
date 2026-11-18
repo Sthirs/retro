@@ -1333,3 +1333,216 @@ async fn timer_and_ready_changes_reach_everyone() {
         json!({ "userId": bob_id, "ready": true, "readyCount": 1 })
     );
 }
+
+// --- Group ----------------------------------------------------------------
+
+/// Sends a reflection; returns its id.
+async fn send_reflection(app: &TestApp, token: &str, m: &str, column: &str) -> String {
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/meetings/{m}/reflections"),
+            token,
+            Some(json!({ "column": column, "content": "<p>Card</p>" })),
+        )
+        .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    res.json()["reflections"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// A meeting in Group with two of bob's cards (delta, ideas).
+async fn grouping(app: &TestApp) -> (String, String, String, String, String, String) {
+    let (alice, bob, bob_id, _, m) = team_with_meeting(app).await;
+    to_reflect(app, &alice, &m).await;
+    let one = send_reflection(app, &bob, &m, "delta").await;
+    let two = send_reflection(app, &bob, &m, "ideas").await;
+    to_reflect(app, &alice, &m).await;
+    (alice, bob, bob_id, m, one, two)
+}
+
+async fn send_drag(socket: &mut Socket, m: &str, card: Value) {
+    socket
+        .send(Message::text(
+            json!({ "type": "drag", "channel": format!("meeting:{m}"), "reflectionId": card })
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+}
+
+/// The next `card.dragging` event's cards.
+async fn drags(socket: &mut Socket) -> Value {
+    next_of(socket, "card.dragging").await["payload"]["drags"].clone()
+}
+
+#[tokio::test]
+async fn everyone_sees_who_drags_which_card() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, bob_id, m, one, two) = grouping(&app).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+
+    send_drag(&mut bob_socket, &m, json!(one)).await;
+    let dragging = json!([{ "reflectionId": one, "userId": bob_id }]);
+    assert_eq!(drags(&mut alice_socket).await, dragging);
+    // In the snapshot too.
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    assert_eq!(state["drags"], dragging);
+
+    // Picking up another card drops the first; dropping clears it.
+    send_drag(&mut bob_socket, &m, json!(two)).await;
+    assert_eq!(
+        drags(&mut alice_socket).await,
+        json!([{ "reflectionId": two, "userId": bob_id }])
+    );
+    send_drag(&mut bob_socket, &m, Value::Null).await;
+    assert_eq!(drags(&mut alice_socket).await, json!([]));
+
+    // A closed socket drops its card.
+    send_drag(&mut bob_socket, &m, json!(one)).await;
+    assert_eq!(drags(&mut alice_socket).await, dragging);
+    bob_socket.close(None).await.unwrap();
+    assert_eq!(drags(&mut alice_socket).await, json!([]));
+}
+
+#[tokio::test]
+async fn only_cards_of_a_meeting_in_group_can_be_dragged() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, _, m) = team_with_meeting(&app).await;
+    to_reflect(&app, &alice, &m).await;
+    let card = send_reflection(&app, &bob, &m, "plus").await;
+    let channel = format!("meeting:{m}");
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+
+    // Still in Reflect.
+    send_drag(&mut bob_socket, &m, json!(card)).await;
+    let error = next_of(&mut bob_socket, "error").await;
+    assert_eq!(error["payload"]["code"], "not_draggable");
+
+    // In Group, a card of no meeting of ours.
+    to_reflect(&app, &alice, &m).await;
+    send_drag(&mut bob_socket, &m, json!(Uuid::now_v7())).await;
+    let error = next_of(&mut bob_socket, "error").await;
+    assert_eq!(error["payload"]["code"], "not_draggable");
+    // Unsubscribed channels are refused as for writing.
+    send_drag(&mut bob_socket, &Uuid::now_v7().to_string(), json!(card)).await;
+    let error = next_of(&mut bob_socket, "error").await;
+    assert_eq!(error["payload"]["code"], "not_subscribed");
+}
+
+#[tokio::test]
+async fn only_participants_drag_cards() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, team, m) = team_with_meeting(&app).await;
+    to_reflect(&app, &alice, &m).await;
+    let card = send_reflection(&app, &bob, &m, "delta").await;
+    to_reflect(&app, &alice, &m).await;
+    // Carol is in the team and in the room, but did not join the meeting.
+    let carol = app.create_user("carol", "carol@example.com", "Carol").await;
+    join_team(&app, &alice, team, &carol).await;
+    let channel = format!("meeting:{m}");
+    let mut carol_socket = connect(&addr, &ticket(&app, &carol).await).await;
+    subscribe(&mut carol_socket, &channel).await;
+
+    send_drag(&mut carol_socket, &m, json!(card)).await;
+    let error = next_of(&mut carol_socket, "error").await;
+    assert_eq!(error["payload"]["code"], "not_draggable");
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    assert_eq!(state["drags"], json!([]));
+}
+
+#[tokio::test]
+async fn group_changes_reach_everyone_in_order() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, m, one, two) = grouping(&app).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let tab = Uuid::now_v7().to_string();
+
+    let res = app
+        .call_with(
+            "POST",
+            &format!("/api/v1/meetings/{m}/groups"),
+            &bob,
+            Some(json!({ "targetId": one, "reflectionId": two })),
+            &[("x-client-id", &tab)],
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let seq = res.json()["seq"].as_i64().unwrap();
+    let created = next_of(&mut alice_socket, "group.created").await;
+    assert_eq!(created["seq"], seq);
+    let group = created["payload"]["group"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        created["payload"],
+        json!({
+            "group": { "id": group, "column": "delta", "position": 0, "name": "" },
+            "reflections": [
+                { "id": one, "groupId": group, "version": 1 },
+                { "id": two, "groupId": group, "version": 1 },
+            ],
+            "clientId": tab,
+        })
+    );
+
+    let res = app
+        .call(
+            "PATCH",
+            &format!("/api/v1/groups/{group}"),
+            &bob,
+            Some(json!({ "name": "CI" })),
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let updated = next_of(&mut alice_socket, "group.updated").await;
+    assert_eq!(updated["seq"], seq + 1);
+    assert_eq!(updated["payload"]["group"]["name"], "CI");
+    assert_eq!(updated["payload"]["reflections"], json!([]));
+    assert_eq!(updated["payload"]["clientId"], Value::Null);
+
+    // Taking a card out of a pair dissolves the group.
+    let res = app
+        .call(
+            "PUT",
+            &format!("/api/v1/reflections/{two}/group"),
+            &bob,
+            Some(json!({ "groupId": null })),
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let deleted = next_of(&mut alice_socket, "group.deleted").await;
+    assert_eq!(deleted["seq"], seq + 2);
+    assert_eq!(deleted["payload"]["group"], json!({ "id": group }));
+    assert_eq!(
+        deleted["payload"]["reflections"],
+        json!([
+            { "id": two, "groupId": null, "version": 2 },
+            { "id": one, "groupId": null, "version": 2 },
+        ])
+    );
+}

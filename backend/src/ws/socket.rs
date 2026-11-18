@@ -14,7 +14,7 @@ use axum::{
     response::Response,
 };
 use futures_util::{SinkExt, StreamExt};
-use sea_orm::EntityTrait;
+use sea_orm::{ConnectionTrait, DbBackend, EntityTrait, Statement};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::{
@@ -39,7 +39,7 @@ const MAX_SUBSCRIPTIONS: usize = 32;
 /// The code sent on each channel of a team the user lost access to: the team
 /// is gone or they are no longer a member.
 const REVOKED: &str = "team_not_found";
-/// Ephemeral client messages (`writing`) a socket may send per second; extra
+/// Ephemeral client messages (`writing`, `drag`) a socket may send per second; extra
 /// ones are dropped (ADR-0012).
 const EPHEMERAL_PER_SECOND: u32 = 10;
 
@@ -64,6 +64,13 @@ enum Command {
         column: Option<ReflectionColumn>,
         #[serde(default)]
         mode: Option<WritingMode>,
+    },
+    /// The socket picked up a card (`reflectionId`) or dropped it (`null`)
+    /// during Group (ADR-0012, spec §9.3).
+    Drag {
+        channel: String,
+        #[serde(default, rename = "reflectionId")]
+        reflection_id: Option<Uuid>,
     },
 }
 
@@ -103,6 +110,8 @@ struct Subscription {
     presence: Option<(Uuid, Uuid)>,
     /// The reflection this socket is writing in that meeting, if any.
     writing: Option<Writing>,
+    /// The card this socket is dragging in that meeting, if any.
+    dragging: Option<Uuid>,
 }
 
 /// A channel's message on its way to the socket, tagged with its channel so
@@ -249,6 +258,12 @@ async fn end(state: &AppState, user_id: Uuid, subscription: Subscription) {
                 .set_writing(meeting, subscription.writing, None)
                 .await;
         }
+        if subscription.dragging.is_some() {
+            state
+                .hub
+                .set_dragging(meeting, user_id, subscription.dragging, None)
+                .await;
+        }
         state.hub.leave(meeting, team, user_id).await;
     }
 }
@@ -279,7 +294,79 @@ async fn command(
             .err()
             .map(|code| error_message(&channel, code));
     }
+    if let Command::Drag {
+        channel,
+        reflection_id,
+    } = command
+    {
+        if !limit.allow(Instant::now()) {
+            return None;
+        }
+        return dragging(state, user_id, &channel, reflection_id, subscriptions)
+            .await
+            .err()
+            .map(|code| error_message(&channel, code));
+    }
     Some(subscription_command(state, user_id, command, out, subscriptions).await)
+}
+
+/// Records the card the socket drags in a running meeting in Group that it
+/// is in. Its errors (`not_subscribed`, `not_draggable`) are its own codes,
+/// like writing's.
+async fn dragging(
+    state: &AppState,
+    user_id: Uuid,
+    channel: &str,
+    card: Option<Uuid>,
+    subscriptions: &mut HashMap<String, Subscription>,
+) -> Result<(), &'static str> {
+    let subscription = subscriptions.get_mut(channel).ok_or("not_subscribed")?;
+    let (meeting, _) = subscription.presence.ok_or("not_draggable")?;
+    // Dropping needs no check; picking up needs a participant and a card of
+    // this meeting, running in Group. A refused pick-up also drops what the socket held.
+    let allowed = match card {
+        None => true,
+        Some(card) => can_drag(state, meeting, user_id, card).await,
+    };
+    let to = if allowed { card } else { None };
+    let from = std::mem::replace(&mut subscription.dragging, to);
+    state.hub.set_dragging(meeting, user_id, from, to).await;
+    if allowed {
+        Ok(())
+    } else {
+        Err("not_draggable")
+    }
+}
+
+/// Whether `card` belongs to the meeting, the meeting runs in Group and
+/// `user` joined it (spec §9.3: only participants group cards); false when
+/// they cannot be read.
+async fn can_drag(state: &AppState, meeting_id: Uuid, user: Uuid, card: Uuid) -> bool {
+    let found = state
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"SELECT EXISTS (
+                 SELECT 1 FROM reflections r
+                 JOIN meetings m ON m.id = r.meeting_id
+                 JOIN meeting_participants p ON p.meeting_id = m.id AND p.user_id = $3
+                 WHERE r.id = $2 AND m.id = $1
+                   AND m.status = 'active' AND m.phase = 'group'
+               ) AS allowed"#,
+            [meeting_id.into(), card.into(), user.into()],
+        ))
+        .await
+        .and_then(|row| match row {
+            Some(row) => row.try_get::<bool>("", "allowed"),
+            None => Ok(false),
+        });
+    match found {
+        Ok(allowed) => allowed,
+        Err(error) => {
+            tracing::warn!(%error, "cannot read the dragged card");
+            false
+        }
+    }
 }
 
 /// Records what the socket is writing in a running meeting it is in. Its
@@ -327,7 +414,7 @@ async fn subscription_command(
 ) -> serde_json::Value {
     let error = error_message;
     match command {
-        Command::Writing { .. } => error("", "invalid_message"),
+        Command::Writing { .. } | Command::Drag { .. } => error("", "invalid_message"),
         Command::Unsubscribe { channel } => {
             if let Some(subscription) = subscriptions.remove(&channel) {
                 end(state, user_id, subscription).await;
@@ -373,6 +460,7 @@ async fn subscription_command(
                     team,
                     presence,
                     writing: None,
+                    dragging: None,
                 },
             );
             json!({ "type": "subscribed", "channel": name })

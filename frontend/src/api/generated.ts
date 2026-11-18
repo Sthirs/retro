@@ -49,6 +49,16 @@ export interface ColumnWritingDto {
 }
 
 /**
+ * A card dropped onto another card.
+ */
+export interface CreateGroupRequest {
+  /** The card that was dropped. */
+  reflectionId: string;
+  /** The card it was dropped onto. */
+  targetId: string;
+}
+
+/**
  * The Reflect columns (spec §9.2).
  */
 export type ReflectionColumn = (typeof ReflectionColumn)[keyof typeof ReflectionColumn];
@@ -70,6 +80,15 @@ export interface CreateReflectionRequest {
 }
 
 /**
+ * A card being dragged, and by whom (snapshot and `card.dragging`; spec
+ * §9.3).
+ */
+export interface DragDto {
+  reflectionId: string;
+  userId: string;
+}
+
+/**
  * "Hello" in the meeting's language.
  */
 export interface GreetingDto {
@@ -80,6 +99,19 @@ export interface GreetingDto {
   /** IPA, e.g. "/ˈtʃa.o/". */
   pronunciation: string;
   text: string;
+}
+
+/**
+ * A group as clients see it (snapshot and events).
+ */
+export interface GroupDto {
+  /** The column it is shown in: the one of the card it was created on. */
+  column: ReflectionColumn;
+  id: string;
+  /** Empty shows as "Untitled group". */
+  name: string;
+  /** Its place in that column, among the ungrouped cards' `position`. */
+  position: number;
 }
 
 /**
@@ -347,10 +379,19 @@ export interface ReflectionDto {
   /** Sanitized rich text (HTML). */
   content: string;
   createdAt: string;
+  /**
+   * Its group (from Group on).
+   * @nullable
+   */
+  groupId?: string | null;
   id: string;
   /** Written by the viewer. */
   mine: boolean;
+  /** Place in its column, set when Group starts. */
+  position: number;
   updatedAt: string;
+  /** Raised by every move between groups. */
+  version: number;
 }
 
 /**
@@ -408,10 +449,14 @@ export interface WritingDto {
  */
 export interface MeetingStateDto {
   createdAt: string;
+  /** Cards being dragged right now, and by whom (Group). */
+  drags: DragDto[];
   /** @nullable */
   endedAt?: string | null;
   facilitatorId: string;
   greeting: GreetingDto;
+  /** From Group on, the groups, by column and place. */
+  groups: GroupDto[];
   icebreaker: IcebreakerDto;
   id: string;
   /**
@@ -451,7 +496,7 @@ export interface MeetingSummaryDto {
   /** @nullable */
   endedAt?: string | null;
   facilitator: PersonDto;
-  /** Groups formed in the meeting; always 0 until the Group phase exists. */
+  /** Groups formed in the meeting. */
   groupCount: number;
   id: string;
   /** In joining order. */
@@ -467,6 +512,17 @@ export interface MemberDto {
   joinedAt: string;
   role: Role;
   user: UserDto;
+}
+
+/**
+ * Where a card goes.
+ */
+export interface MoveCardRequest {
+  /**
+   * The group to move it into; `null` takes it out of its group.
+   * @nullable
+   */
+  groupId?: string | null;
 }
 
 /**
@@ -514,6 +570,14 @@ export interface Problem {
   title: string;
   /** URI reference identifying the problem type. */
   type: string;
+}
+
+/**
+ * A group's new name.
+ */
+export interface RenameGroupRequest {
+  /** 0–80 characters once trimmed; empty shows as "Untitled group". */
+  name: string;
 }
 
 /**
@@ -940,6 +1004,81 @@ export const refreshSession = async (
   return apiFetch<refreshSessionResponse>(getRefreshSessionUrl(), {
     ...options,
     method: 'POST',
+  });
+};
+
+export type renameGroupResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type renameGroupResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type renameGroupResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type renameGroupResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type renameGroupResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type renameGroupResponseSuccess = renameGroupResponse200 & {
+  headers: Headers;
+};
+export type renameGroupResponseError = (
+  renameGroupResponse400 | renameGroupResponse403 | renameGroupResponse404 | renameGroupResponse409
+) & {
+  headers: Headers;
+};
+
+export type renameGroupResponse = renameGroupResponseSuccess | renameGroupResponseError;
+
+export const getRenameGroupUrl = (groupId: string) => {
+  return `/api/v1/groups/${groupId}`;
+};
+
+/**
+ * @summary Renames a group (participants, during Group; the last name saved wins).
+ */
+export const renameGroup = async (
+  groupId: string,
+  renameGroupRequest: RenameGroupRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<renameGroupResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<renameGroupResponse>(getRenameGroupUrl(groupId), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(renameGroupRequest),
   });
 };
 
@@ -1567,6 +1706,82 @@ export const setFacilitator = async (
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(setFacilitatorRequest),
+  });
+};
+
+export type createGroupResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type createGroupResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type createGroupResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type createGroupResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type createGroupResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type createGroupResponseSuccess = createGroupResponse200 & {
+  headers: Headers;
+};
+export type createGroupResponseError = (
+  createGroupResponse400 | createGroupResponse403 | createGroupResponse404 | createGroupResponse409
+) & {
+  headers: Headers;
+};
+
+export type createGroupResponse = createGroupResponseSuccess | createGroupResponseError;
+
+export const getCreateGroupUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/groups`;
+};
+
+/**
+ * @summary Drops a card onto another card: groups both, or adds the card to the
+target's group if it has one by now (participants, during Group).
+ */
+export const createGroup = async (
+  meetingId: string,
+  createGroupRequest: CreateGroupRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<createGroupResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<createGroupResponse>(getCreateGroupUrl(meetingId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createGroupRequest),
   });
 };
 
@@ -2262,6 +2477,77 @@ export const updateReflection = async (
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(updateReflectionRequest),
+  });
+};
+
+export type moveCardResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type moveCardResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type moveCardResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type moveCardResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type moveCardResponseSuccess = moveCardResponse200 & {
+  headers: Headers;
+};
+export type moveCardResponseError = (
+  moveCardResponse403 | moveCardResponse404 | moveCardResponse409
+) & {
+  headers: Headers;
+};
+
+export type moveCardResponse = moveCardResponseSuccess | moveCardResponseError;
+
+export const getMoveCardUrl = (reflectionId: string) => {
+  return `/api/v1/reflections/${reflectionId}/group`;
+};
+
+/**
+ * @summary Moves a card into a group, or out of its group (participants, during
+Group). A group left with one card dissolves.
+ */
+export const moveCard = async (
+  reflectionId: string,
+  moveCardRequest: MoveCardRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<moveCardResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<moveCardResponse>(getMoveCardUrl(reflectionId), {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(moveCardRequest),
   });
 };
 

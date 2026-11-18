@@ -48,6 +48,12 @@ pub struct Model {
     pub author_id: Uuid,
     pub column: ReflectionColumn,
     pub content: String,
+    /// Its group, from Group on.
+    pub group_id: Option<Uuid>,
+    /// Place in its column, set when Group starts.
+    pub position: i32,
+    /// Raised by every move between groups.
+    pub version: i32,
     pub created_at: TimeDateTimeWithTimeZone,
     pub updated_at: TimeDateTimeWithTimeZone,
 }

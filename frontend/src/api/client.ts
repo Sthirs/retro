@@ -1,6 +1,8 @@
 export * as api from './generated';
 export type {
   AuthConfig,
+  DragDto,
+  GroupDto,
   InvitationDto,
   InvitationPreviewDto,
   JoinLinkDto,

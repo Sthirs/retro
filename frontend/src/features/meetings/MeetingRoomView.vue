@@ -24,6 +24,7 @@ import PhaseHeader from '@/features/meetings/PhaseHeader.vue';
 import ReconnectingBanner from '@/features/meetings/ReconnectingBanner.vue';
 import TransferDialog from '@/features/meetings/TransferDialog.vue';
 import TimesUpToast from '@/features/meetings/footer/TimesUpToast.vue';
+import GroupPhase from '@/features/meetings/group/GroupPhase.vue';
 import IcebreakerPhase from '@/features/meetings/phases/IcebreakerPhase.vue';
 import PhasePlaceholder from '@/features/meetings/phases/PhasePlaceholder.vue';
 import ReflectPhase from '@/features/meetings/reflect/ReflectPhase.vue';
@@ -128,6 +129,7 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
         <div class="room__phase">
           <IcebreakerPhase v-if="meeting.phase === MeetingPhase.icebreaker" />
           <ReflectPhase v-else-if="meeting.phase === MeetingPhase.reflect" />
+          <GroupPhase v-else-if="meeting.phase === MeetingPhase.group" />
           <PhasePlaceholder v-else />
         </div>
       </main>

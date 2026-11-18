@@ -2,7 +2,7 @@
 //! out to local sockets; tracks presence across replicas (ADR-0011).
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -29,6 +29,10 @@ const MISSED_HEARTBEATS: u32 = 3;
 const WRITING_CHANGED: &str = "writing.changed";
 /// The cluster-wide writing counts, as clients get them.
 const REFLECTION_WRITING: &str = "reflection.writing";
+/// A replica's dragged cards in a meeting (internal, ADR-0012).
+const DRAGGING_CHANGED: &str = "dragging.changed";
+/// The cluster-wide dragged cards, as clients get them.
+const CARD_DRAGGING: &str = "card.dragging";
 const MEMBER_REMOVED: &str = "member.removed";
 const TEAM_DELETED: &str = "team.deleted";
 /// Access changes buffered per socket; one that lags re-checks everything.
@@ -125,12 +129,274 @@ impl From<WritingCounts> for WritingDto {
     }
 }
 
+/// Cards being dragged in a meeting: card → the user dragging it.
+pub type Drags = BTreeMap<Uuid, Uuid>;
+
+/// A card being dragged, and by whom (snapshot and `card.dragging`; spec
+/// §9.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DragDto {
+    pub reflection_id: Uuid,
+    pub user_id: Uuid,
+}
+
+fn drag_list(drags: &Drags) -> Vec<DragDto> {
+    drags
+        .iter()
+        .map(|(&reflection_id, &user_id)| DragDto {
+            reflection_id,
+            user_id,
+        })
+        .collect()
+}
+
 /// A message on its way to a channel's local subscribers: the serialized
 /// event, and the only user who may receive it (ADR-0012).
 #[derive(Debug, Clone)]
 pub struct Outbound {
     pub user: Option<Uuid>,
     pub text: Arc<str>,
+}
+
+/// A per-meeting state each replica announces in full, absolute rather than
+/// as a change, so a repeated or missed announcement is corrected by the
+/// next (ADR-0012): reflections being written, cards being dragged. Every
+/// replica folds the announcements into a cluster-wide total for clients.
+trait ReplicaState: Sized {
+    /// A replica's state in a meeting, and the cluster's total.
+    type Value: Clone + PartialEq + std::fmt::Debug;
+    /// What this replica tracks per meeting to make its [`Self::Value`].
+    type Local: Default + std::fmt::Debug;
+    /// The internal kind replicas announce their state with.
+    const INTERNAL: &'static str;
+    /// The kind clients get the cluster-wide total with.
+    const CLIENT: &'static str;
+    /// The field of the internal payload that holds the state.
+    const FIELD: &'static str;
+    /// What the state is, for logs.
+    const WHAT: &'static str;
+
+    fn empty() -> Self::Value;
+    /// Adds up the replicas' states, in replica order.
+    fn total<'a>(replicas: impl Iterator<Item = &'a Self::Value>) -> Self::Value
+    where
+        Self::Value: 'a;
+    fn value(local: &Self::Local) -> Self::Value;
+    fn encode(value: &Self::Value) -> serde_json::Value;
+    fn decode(field: &serde_json::Value) -> Option<Self::Value>;
+    /// The payload of the [`Self::CLIENT`] event.
+    fn client_payload(value: &Self::Value) -> serde_json::Value;
+    fn track(local: &mut Local) -> &mut Track<Self>;
+    fn shared(online: &mut Online) -> &mut Shared<Self>;
+}
+
+/// Open reflection editors (spec §9.2).
+#[derive(Debug, Default)]
+struct Writing;
+
+impl ReplicaState for Writing {
+    type Value = WritingCounts;
+    type Local = WritingCounts;
+    const INTERNAL: &'static str = WRITING_CHANGED;
+    const CLIENT: &'static str = REFLECTION_WRITING;
+    const FIELD: &'static str = "counts";
+    const WHAT: &'static str = "writing state";
+
+    fn empty() -> WritingCounts {
+        NO_WRITING
+    }
+
+    fn total<'a>(replicas: impl Iterator<Item = &'a WritingCounts>) -> WritingCounts {
+        let mut total = NO_WRITING;
+        for counts in replicas {
+            for (column, modes) in counts.iter().enumerate() {
+                for (mode, n) in modes.iter().enumerate() {
+                    total[column][mode] += n;
+                }
+            }
+        }
+        total
+    }
+
+    fn value(local: &WritingCounts) -> WritingCounts {
+        *local
+    }
+
+    fn encode(value: &WritingCounts) -> serde_json::Value {
+        json!(value)
+    }
+
+    fn decode(field: &serde_json::Value) -> Option<WritingCounts> {
+        serde_json::from_value(field.clone()).ok()
+    }
+
+    fn client_payload(value: &WritingCounts) -> serde_json::Value {
+        json!({ "counts": WritingDto::from(*value) })
+    }
+
+    fn track(local: &mut Local) -> &mut Track<Self> {
+        &mut local.writing
+    }
+
+    fn shared(online: &mut Online) -> &mut Shared<Self> {
+        &mut online.writing
+    }
+}
+
+/// Cards being dragged (spec §9.3).
+#[derive(Debug, Default)]
+struct Dragging;
+
+impl ReplicaState for Dragging {
+    type Value = Drags;
+    /// One (card, user) entry per dragging socket.
+    type Local = Vec<(Uuid, Uuid)>;
+    const INTERNAL: &'static str = DRAGGING_CHANGED;
+    const CLIENT: &'static str = CARD_DRAGGING;
+    const FIELD: &'static str = "drags";
+    const WHAT: &'static str = "drag state";
+
+    fn empty() -> Drags {
+        Drags::new()
+    }
+
+    /// Two replicas dragging one card (a race the soft lock does not
+    /// prevent) show one dragger: the later replica's.
+    fn total<'a>(replicas: impl Iterator<Item = &'a Drags>) -> Drags {
+        let mut total = Drags::new();
+        for drags in replicas {
+            total.extend(drags.iter().map(|(&card, &user)| (card, user)));
+        }
+        total
+    }
+
+    fn value(local: &Vec<(Uuid, Uuid)>) -> Drags {
+        local.iter().copied().collect()
+    }
+
+    fn encode(value: &Drags) -> serde_json::Value {
+        json!(drag_list(value))
+    }
+
+    fn decode(field: &serde_json::Value) -> Option<Drags> {
+        let drags: Vec<DragDto> = serde_json::from_value(field.clone()).ok()?;
+        Some(
+            drags
+                .into_iter()
+                .map(|d| (d.reflection_id, d.user_id))
+                .collect(),
+        )
+    }
+
+    fn client_payload(value: &Drags) -> serde_json::Value {
+        json!({ "drags": drag_list(value) })
+    }
+
+    fn track(local: &mut Local) -> &mut Track<Self> {
+        &mut local.drags
+    }
+
+    fn shared(online: &mut Online) -> &mut Shared<Self> {
+        &mut online.drags
+    }
+}
+
+/// A [`ReplicaState`] as this replica sees the cluster: meeting → replica
+/// (ordered, so totals are stable) → that replica's state.
+#[derive(Debug)]
+struct Shared<S: ReplicaState> {
+    meetings: HashMap<Uuid, BTreeMap<Uuid, S::Value>>,
+}
+
+impl<S: ReplicaState> Default for Shared<S> {
+    fn default() -> Self {
+        Self {
+            meetings: HashMap::new(),
+        }
+    }
+}
+
+impl<S: ReplicaState> Shared<S> {
+    /// The cluster-wide state of a meeting.
+    fn total(&self, meeting: Uuid) -> S::Value {
+        S::total(
+            self.meetings
+                .get(&meeting)
+                .into_iter()
+                .flat_map(|r| r.values()),
+        )
+    }
+
+    /// Folds in a replica's state for a meeting; returns the new total when
+    /// it changed.
+    fn set(&mut self, meeting: Uuid, replica: Uuid, value: S::Value) -> Option<S::Value> {
+        let before = self.total(meeting);
+        let replicas = self.meetings.entry(meeting).or_default();
+        if value == S::empty() {
+            replicas.remove(&replica);
+        } else {
+            replicas.insert(replica, value);
+        }
+        if replicas.is_empty() {
+            self.meetings.remove(&meeting);
+        }
+        let after = self.total(meeting);
+        (before != after).then_some(after)
+    }
+
+    /// Forgets the `gone` replicas; returns the meetings whose total changed,
+    /// with the new totals.
+    fn forget(&mut self, gone: &HashSet<Uuid>) -> Vec<(Uuid, S::Value)> {
+        let mut changed = Vec::new();
+        let meetings: Vec<Uuid> = self.meetings.keys().copied().collect();
+        for meeting in meetings {
+            let before = self.total(meeting);
+            if let Some(replicas) = self.meetings.get_mut(&meeting) {
+                replicas.retain(|replica, _| !gone.contains(replica));
+                if replicas.is_empty() {
+                    self.meetings.remove(&meeting);
+                }
+            }
+            let after = self.total(meeting);
+            if after != before {
+                changed.push((meeting, after));
+            }
+        }
+        changed
+    }
+}
+
+/// This replica's side of a [`ReplicaState`].
+#[derive(Debug)]
+struct Track<S: ReplicaState> {
+    /// What this replica's sockets do, per meeting.
+    meetings: HashMap<Uuid, S::Local>,
+    /// Meetings whose state could not be published.
+    pending: HashSet<Uuid>,
+}
+
+impl<S: ReplicaState> Default for Track<S> {
+    fn default() -> Self {
+        Self {
+            meetings: HashMap::new(),
+            pending: HashSet::new(),
+        }
+    }
+}
+
+impl<S: ReplicaState> Track<S> {
+    /// This replica's state in a meeting.
+    fn value(&self, meeting: Uuid) -> S::Value {
+        self.meetings.get(&meeting).map_or_else(S::empty, S::value)
+    }
+
+    /// Folds this replica's own states into `shared` (as replica `me`).
+    fn share(&self, me: Uuid, shared: &mut Shared<S>) {
+        for (&meeting, local) in &self.meetings {
+            shared.set(meeting, me, S::value(local));
+        }
+    }
 }
 
 /// What forgetting silent replicas changed.
@@ -140,6 +406,8 @@ struct Expired {
     offline: Vec<Change>,
     /// Meetings whose writing totals changed, with the new totals.
     writing: Vec<(Uuid, WritingCounts)>,
+    /// Meetings whose dragged cards changed, with the cards now dragged.
+    drags: Vec<(Uuid, Drags)>,
 }
 
 /// Who is online in which meeting, as this replica sees the cluster:
@@ -149,8 +417,8 @@ struct Expired {
 #[derive(Debug, Default)]
 struct Online {
     meetings: HashMap<Uuid, HashMap<Uuid, Presence>>,
-    /// Writing counts: meeting → replica → that replica's counts.
-    writing: HashMap<Uuid, HashMap<Uuid, WritingCounts>>,
+    writing: Shared<Writing>,
+    drags: Shared<Dragging>,
     seen: HashMap<Uuid, Instant>,
     /// Replicas forgotten for their silence: if one speaks again, every
     /// replica is asked to re-announce.
@@ -172,46 +440,6 @@ impl Online {
             .get(&meeting)
             .map(|users| users.keys().copied().collect())
             .unwrap_or_default()
-    }
-
-    /// The cluster-wide writing counts of a meeting.
-    fn writing(&self, meeting: Uuid) -> WritingCounts {
-        let mut total = NO_WRITING;
-        for counts in self
-            .writing
-            .get(&meeting)
-            .into_iter()
-            .flat_map(|r| r.values())
-        {
-            for (column, modes) in counts.iter().enumerate() {
-                for (mode, n) in modes.iter().enumerate() {
-                    total[column][mode] += n;
-                }
-            }
-        }
-        total
-    }
-
-    /// Folds in a replica's writing counts for a meeting; returns the new
-    /// total when it changed.
-    fn set_writing(
-        &mut self,
-        meeting: Uuid,
-        replica: Uuid,
-        counts: WritingCounts,
-    ) -> Option<WritingCounts> {
-        let before = self.writing(meeting);
-        let replicas = self.writing.entry(meeting).or_default();
-        if counts == NO_WRITING {
-            replicas.remove(&replica);
-        } else {
-            replicas.insert(replica, counts);
-        }
-        if replicas.is_empty() {
-            self.writing.remove(&meeting);
-        }
-        let after = self.writing(meeting);
-        (before != after).then_some(after)
     }
 
     /// Folds in a replica's announcement; true when the user's overall
@@ -256,7 +484,7 @@ impl Online {
 
     /// Forgets the replicas (never `me`) silent for longer than `silence`,
     /// and returns the users that leaves offline and the meetings whose
-    /// writing totals changed.
+    /// writing or dragged cards changed.
     fn expire(&mut self, now: Instant, silence: Duration, me: Uuid) -> Expired {
         let gone: HashSet<Uuid> = self
             .seen
@@ -281,35 +509,25 @@ impl Online {
             });
         }
         self.meetings.retain(|_, users| !users.is_empty());
-        let mut writing = Vec::new();
-        let meetings: Vec<Uuid> = self.writing.keys().copied().collect();
-        for meeting in meetings {
-            let before = self.writing(meeting);
-            if let Some(replicas) = self.writing.get_mut(&meeting) {
-                replicas.retain(|replica, _| !gone.contains(replica));
-                if replicas.is_empty() {
-                    self.writing.remove(&meeting);
-                }
-            }
-            let after = self.writing(meeting);
-            if after != before {
-                writing.push((meeting, after));
-            }
+        let writing = self.writing.forget(&gone);
+        let drags = self.drags.forget(&gone);
+        Expired {
+            offline,
+            writing,
+            drags,
         }
-        Expired { offline, writing }
     }
 
     /// Starts over from this replica's own sockets (the others are asked
     /// again): after a listener reconnect even our own announcements may have
     /// been missed.
-    fn reset(&mut self, me: Uuid, sockets: &Sockets, writers: &HashMap<Uuid, WritingCounts>) {
+    fn reset(&mut self, me: Uuid, local: &Local) {
         *self = Self::default();
-        for (&(meeting, user), &(team, _)) in sockets {
+        for (&(meeting, user), &(team, _)) in &local.sockets {
             self.apply(meeting, team, user, me, true);
         }
-        for (&meeting, &counts) in writers {
-            self.set_writing(meeting, me, counts);
-        }
+        local.writing.share(me, &mut self.writing);
+        local.drags.share(me, &mut self.drags);
     }
 }
 
@@ -324,9 +542,9 @@ struct Local {
     /// Each heartbeat retries them with the then-current socket count.
     pending: HashMap<(Uuid, Uuid), Uuid>,
     /// This replica's writing counts per meeting (ADR-0012).
-    writers: HashMap<Uuid, WritingCounts>,
-    /// Meetings whose writing counts could not be published.
-    pending_writing: HashSet<Uuid>,
+    writing: Track<Writing>,
+    /// This replica's dragged cards per meeting (ADR-0012).
+    drags: Track<Dragging>,
     /// Shutting down: this replica has said goodbye; sockets no longer count.
     closing: bool,
 }
@@ -402,7 +620,49 @@ impl Hub {
         self.online
             .lock()
             .expect("hub presence")
-            .writing(meeting_id)
+            .writing
+            .total(meeting_id)
+    }
+
+    /// The cards being dragged in a meeting, on any replica.
+    pub fn drags(&self, meeting_id: Uuid) -> Vec<DragDto> {
+        drag_list(
+            &self
+                .online
+                .lock()
+                .expect("hub presence")
+                .drags
+                .total(meeting_id),
+        )
+    }
+
+    /// A socket of `user` stopped dragging card `from` and/or started
+    /// dragging card `to` in a meeting (`None`: no card).
+    pub async fn set_dragging(
+        &self,
+        meeting_id: Uuid,
+        user: Uuid,
+        from: Option<Uuid>,
+        to: Option<Uuid>,
+    ) {
+        if from == to {
+            return;
+        }
+        let mut local = self.local.lock().await;
+        if local.closing {
+            return;
+        }
+        let draggers = local.drags.meetings.entry(meeting_id).or_default();
+        if let Some(card) = from
+            && let Some(i) = draggers.iter().position(|&d| d == (card, user))
+        {
+            draggers.swap_remove(i);
+        }
+        if let Some(card) = to {
+            draggers.push((card, user));
+        }
+        self.announce_state::<Dragging>(&mut local, meeting_id)
+            .await;
     }
 
     /// A socket's writing state in a meeting went from `from` to `to`
@@ -420,7 +680,7 @@ impl Hub {
         if local.closing {
             return;
         }
-        let counts = local.writers.entry(meeting_id).or_insert(NO_WRITING);
+        let counts = local.writing.meetings.entry(meeting_id).or_default();
         if let Some((column, mode)) = from {
             let n = &mut counts[column.index()][mode as usize];
             *n = n.saturating_sub(1);
@@ -428,46 +688,67 @@ impl Hub {
         if let Some((column, mode)) = to {
             counts[column.index()][mode as usize] += 1;
         }
-        self.announce_writing(&mut local, meeting_id).await;
+        self.announce_state::<Writing>(&mut local, meeting_id).await;
     }
 
-    /// Publishes this replica's writing counts for a meeting (absolute, so a
-    /// repeated or missed announcement is corrected by the next); one that
-    /// cannot be published is retried on the next heartbeat.
-    async fn announce_writing(&self, local: &mut Local, meeting_id: Uuid) {
-        let counts = local
-            .writers
-            .get(&meeting_id)
-            .copied()
-            .unwrap_or(NO_WRITING);
-        if counts == NO_WRITING {
-            local.writers.remove(&meeting_id);
+    /// Publishes this replica's state in a meeting; one that cannot be
+    /// published is retried on the next heartbeat.
+    async fn announce_state<S: ReplicaState>(&self, local: &mut Local, meeting_id: Uuid) {
+        let track = S::track(local);
+        let value = track.value(meeting_id);
+        if value == S::empty() {
+            track.meetings.remove(&meeting_id);
         }
-        if self.publish_writing(meeting_id, counts).await {
-            local.pending_writing.remove(&meeting_id);
+        let published = self.publish_state::<S>(meeting_id, &value).await;
+        let pending = &mut S::track(local).pending;
+        if published {
+            pending.remove(&meeting_id);
         } else {
-            local.pending_writing.insert(meeting_id);
+            pending.insert(meeting_id);
         }
     }
 
-    async fn publish_writing(&self, meeting_id: Uuid, counts: WritingCounts) -> bool {
+    async fn publish_state<S: ReplicaState>(&self, meeting_id: Uuid, value: &S::Value) -> bool {
+        let mut payload = json!({ "meetingId": meeting_id, "replica": self.replica });
+        payload[S::FIELD] = S::encode(value);
         let notification = Notification {
             channel: Channel::Meeting(meeting_id).to_string(),
-            kind: WRITING_CHANGED.into(),
+            kind: S::INTERNAL.into(),
             seq: None,
-            payload: json!({
-                "meetingId": meeting_id,
-                "replica": self.replica,
-                "counts": counts,
-            }),
+            payload,
             user: None,
         };
         match notify(&self.db, &notification).await {
             Ok(()) => true,
             Err(error) => {
-                tracing::warn!(%error, "cannot publish writing state");
+                tracing::warn!(%error, "cannot publish {}", S::WHAT);
                 false
             }
+        }
+    }
+
+    /// Re-announces this replica's state in every meeting it has one in.
+    async fn announce_all<S: ReplicaState>(&self, local: &mut Local) {
+        let meetings: Vec<Uuid> = S::track(local).meetings.keys().copied().collect();
+        for meeting in meetings {
+            self.announce_state::<S>(local, meeting).await;
+        }
+    }
+
+    /// Publishes the states that failed, as they now stand.
+    async fn retry_state<S: ReplicaState>(&self, local: &mut Local) {
+        let pending: Vec<Uuid> = S::track(local).pending.iter().copied().collect();
+        for meeting in pending {
+            self.announce_state::<S>(local, meeting).await;
+        }
+    }
+
+    /// Withdraws this replica's state from every meeting (shutting down).
+    async fn withdraw<S: ReplicaState>(&self, local: &mut Local) {
+        let track = S::track(local);
+        track.pending.clear();
+        for meeting in std::mem::take(&mut track.meetings).into_keys() {
+            self.publish_state::<S>(meeting, &S::empty()).await;
         }
     }
 
@@ -517,10 +798,8 @@ impl Hub {
         for ((meeting, user), (team, _)) in std::mem::take(&mut local.sockets) {
             self.publish_presence(meeting, team, user, false).await;
         }
-        local.pending_writing.clear();
-        for meeting in std::mem::take(&mut local.writers).into_keys() {
-            self.publish_writing(meeting, NO_WRITING).await;
-        }
+        self.withdraw::<Writing>(&mut local).await;
+        self.withdraw::<Dragging>(&mut local).await;
     }
 
     /// Publishes a socket count transition; one that cannot be published is
@@ -584,10 +863,8 @@ impl Hub {
         for (meeting, team, user) in sockets {
             self.announce(&mut local, meeting, team, user, true).await;
         }
-        let writers: Vec<Uuid> = local.writers.keys().copied().collect();
-        for meeting in writers {
-            self.announce_writing(&mut local, meeting).await;
-        }
+        self.announce_all::<Writing>(&mut local).await;
+        self.announce_all::<Dragging>(&mut local).await;
     }
 
     /// Publishes the announcements that failed, as the sockets now stand: a
@@ -599,10 +876,8 @@ impl Hub {
             let online = local.sockets.contains_key(&(meeting, user));
             self.announce(&mut local, meeting, team, user, online).await;
         }
-        let pending: Vec<Uuid> = local.pending_writing.iter().copied().collect();
-        for meeting in pending {
-            self.announce_writing(&mut local, meeting).await;
-        }
+        self.retry_state::<Writing>(&mut local).await;
+        self.retry_state::<Dragging>(&mut local).await;
     }
 
     /// Every heartbeat: tells the other replicas this one is alive, retries
@@ -640,7 +915,10 @@ impl Hub {
                 self.send_presence(meeting, team, user, false);
             }
             for (meeting, counts) in expired.writing {
-                self.send_writing(meeting, &counts);
+                self.send_state::<Writing>(meeting, &counts);
+            }
+            for (meeting, drags) in expired.drags {
+                self.send_state::<Dragging>(meeting, &drags);
             }
             drop(online);
         }
@@ -681,11 +959,10 @@ impl Hub {
         let _ = self.access.send(AccessChange::Unknown);
         {
             let local = self.local.lock().await;
-            self.online.lock().expect("hub presence").reset(
-                self.replica,
-                &local.sockets,
-                &local.writers,
-            );
+            self.online
+                .lock()
+                .expect("hub presence")
+                .reset(self.replica, &local);
         }
         let channels: Vec<String> = {
             let channels = self.channels.lock().expect("hub channels");
@@ -739,7 +1016,8 @@ impl Hub {
         match notification.kind.as_str() {
             PRESENCE_SYNC => self.announce_local().await,
             PRESENCE_CHANGED => self.presence_changed(&notification).await,
-            WRITING_CHANGED => self.writing_changed(&notification).await,
+            WRITING_CHANGED => self.state_changed::<Writing>(&notification).await,
+            DRAGGING_CHANGED => self.state_changed::<Dragging>(&notification).await,
             PRESENCE_ALIVE => {
                 if let Some(replica) = uuid_field(&notification.payload, "replica") {
                     self.heard_from(replica).await;
@@ -779,15 +1057,14 @@ impl Hub {
         }
     }
 
-    /// Folds a replica's writing counts into the cluster view, and tells
-    /// clients when a meeting's totals changed.
-    async fn writing_changed(&self, notification: &Notification) {
+    /// Folds a replica's state into the cluster view, and tells clients when
+    /// the meeting's total changed.
+    async fn state_changed<S: ReplicaState>(&self, notification: &Notification) {
         let p = &notification.payload;
-        let (Some(meeting), Some(replica), Some(counts)) = (
+        let (Some(meeting), Some(replica), Some(value)) = (
             uuid_field(p, "meetingId"),
             uuid_field(p, "replica"),
-            p.get("counts")
-                .and_then(|v| serde_json::from_value::<WritingCounts>(v.clone()).ok()),
+            p.get(S::FIELD).and_then(S::decode),
         ) else {
             return;
         };
@@ -795,18 +1072,18 @@ impl Hub {
         // Announced under the lock: a total cannot overtake a newer one (the
         // heartbeat's expiry included).
         let mut view = self.online.lock().expect("hub presence");
-        if let Some(total) = view.set_writing(meeting, replica, counts) {
-            self.send_writing(meeting, &total);
+        if let Some(total) = S::shared(&mut view).set(meeting, replica, value) {
+            self.send_state::<S>(meeting, &total);
         }
     }
 
-    /// Tells local clients how many reflections are being written.
-    fn send_writing(&self, meeting: Uuid, counts: &WritingCounts) {
+    /// Tells local clients a meeting's cluster-wide state.
+    fn send_state<S: ReplicaState>(&self, meeting: Uuid, value: &S::Value) {
         self.send(&Notification {
             channel: Channel::Meeting(meeting).to_string(),
-            kind: REFLECTION_WRITING.into(),
+            kind: S::CLIENT.into(),
             seq: None,
-            payload: json!({ "counts": WritingDto::from(*counts) }),
+            payload: S::client_payload(value),
             user: None,
         });
     }
@@ -907,8 +1184,11 @@ mod tests {
         online.apply(meeting, team, both, theirs, true);
         // Its "offline" was missed while the listener was down.
         online.apply(meeting, team, stale, mine, true);
-        let sockets = Sockets::from([((meeting, me), (team, 1)), ((meeting, both), (team, 2))]);
-        online.reset(mine, &sockets, &HashMap::new());
+        let local = Local {
+            sockets: Sockets::from([((meeting, me), (team, 1)), ((meeting, both), (team, 2))]),
+            ..Local::default()
+        };
+        online.reset(mine, &local);
         assert_eq!(online.users(meeting), HashSet::from([me, both]));
         // `both` now depends on this replica alone.
         assert!(online.apply(meeting, team, both, mine, false));
@@ -959,9 +1239,10 @@ mod tests {
         let [meeting, a, b] = ids();
         let mut online = Online::default();
         let delta = counts(ReflectionColumn::Delta, WritingMode::New, 1);
-        assert_eq!(online.set_writing(meeting, a, delta), Some(delta));
+        assert_eq!(online.writing.set(meeting, a, delta), Some(delta));
         let total = online
-            .set_writing(
+            .writing
+            .set(
                 meeting,
                 b,
                 counts(ReflectionColumn::Delta, WritingMode::New, 2),
@@ -969,11 +1250,11 @@ mod tests {
             .unwrap();
         assert_eq!(total[ReflectionColumn::Delta.index()], [3, 0]);
         // Absolute counts: repeating an announcement changes nothing.
-        assert_eq!(online.set_writing(meeting, a, delta), None);
-        online.set_writing(meeting, a, NO_WRITING);
-        online.set_writing(meeting, b, NO_WRITING);
-        assert_eq!(online.writing(meeting), NO_WRITING);
-        assert!(online.writing.is_empty());
+        assert_eq!(online.writing.set(meeting, a, delta), None);
+        online.writing.set(meeting, a, NO_WRITING);
+        online.writing.set(meeting, b, NO_WRITING);
+        assert_eq!(online.writing.total(meeting), NO_WRITING);
+        assert!(online.writing.meetings.is_empty());
     }
 
     #[test]
@@ -984,12 +1265,12 @@ mod tests {
         let mut online = Online::default();
         online.touch(me, start);
         online.touch(dead, start);
-        online.set_writing(
+        online.writing.set(
             meeting,
             me,
             counts(ReflectionColumn::Plus, WritingMode::Edit, 1),
         );
-        online.set_writing(
+        online.writing.set(
             meeting,
             dead,
             counts(ReflectionColumn::Plus, WritingMode::New, 1),
@@ -1008,15 +1289,22 @@ mod tests {
     fn reconnecting_keeps_only_our_own_writers() {
         let [meeting, other, me, them] = ids();
         let mut online = Online::default();
-        online.set_writing(
+        online.writing.set(
             meeting,
             them,
             counts(ReflectionColumn::Ideas, WritingMode::New, 1),
         );
         let ours = counts(ReflectionColumn::Thanks, WritingMode::New, 2);
-        online.reset(me, &Sockets::new(), &HashMap::from([(other, ours)]));
-        assert_eq!(online.writing(meeting), NO_WRITING);
-        assert_eq!(online.writing(other), ours);
+        let local = Local {
+            writing: Track {
+                meetings: HashMap::from([(other, ours)]),
+                ..Track::default()
+            },
+            ..Local::default()
+        };
+        online.reset(me, &local);
+        assert_eq!(online.writing.total(meeting), NO_WRITING);
+        assert_eq!(online.writing.total(other), ours);
     }
 
     #[test]
@@ -1030,6 +1318,72 @@ mod tests {
         assert_eq!(json["delta"], json!({ "new": 0, "edit": 1 }));
         assert_eq!(json["plus"], json!({ "new": 0, "edit": 0 }));
         assert_eq!(json.as_object().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn dragged_cards_add_up_across_replicas() {
+        let [meeting, a, b, one, two, kai, jade] = ids();
+        let mut online = Online::default();
+        let first = Drags::from([(one, kai)]);
+        assert_eq!(
+            online.drags.set(meeting, a, first.clone()),
+            Some(first.clone())
+        );
+        let both = Drags::from([(one, kai), (two, jade)]);
+        assert_eq!(
+            online.drags.set(meeting, b, Drags::from([(two, jade)])),
+            Some(both.clone())
+        );
+        // Absolute: repeating an announcement changes nothing.
+        assert_eq!(online.drags.set(meeting, a, first), None);
+        assert_eq!(drag_list(&online.drags.total(meeting)).len(), 2);
+        online.drags.set(meeting, a, Drags::new());
+        online.drags.set(meeting, b, Drags::new());
+        assert!(online.drags.total(meeting).is_empty());
+        assert!(online.drags.meetings.is_empty());
+    }
+
+    #[test]
+    fn a_silent_replica_stops_dragging() {
+        let [meeting, me, dead, mine, theirs, kai, jade] = ids();
+        let silence = Duration::from_secs(45);
+        let start = Instant::now();
+        let mut online = Online::default();
+        online.touch(me, start);
+        online.touch(dead, start);
+        online.drags.set(meeting, me, Drags::from([(mine, kai)]));
+        online
+            .drags
+            .set(meeting, dead, Drags::from([(theirs, jade)]));
+        let expired = online.expire(start + silence * 2, silence, me);
+        assert_eq!(expired.drags, vec![(meeting, Drags::from([(mine, kai)]))]);
+    }
+
+    #[test]
+    fn reconnecting_keeps_only_our_own_drags() {
+        let [meeting, me, them, mine, theirs, kai, jade] = ids();
+        let mut online = Online::default();
+        online
+            .drags
+            .set(meeting, them, Drags::from([(theirs, jade)]));
+        let local = Local {
+            drags: Track {
+                meetings: HashMap::from([(meeting, vec![(mine, kai)])]),
+                ..Track::default()
+            },
+            ..Local::default()
+        };
+        online.reset(me, &local);
+        assert_eq!(online.drags.total(meeting), Drags::from([(mine, kai)]));
+    }
+
+    #[test]
+    fn drags_serialize_in_camel_case() {
+        let [card, user] = ids();
+        assert_eq!(
+            serde_json::to_value(drag_list(&Drags::from([(card, user)]))).unwrap(),
+            json!([{ "reflectionId": card, "userId": user }])
+        );
     }
 
     fn event(channel: &str, kind: &str, payload: serde_json::Value) -> Notification {

@@ -242,4 +242,43 @@ describe('RealtimeClient', () => {
     socket.emit({ type: 'error', channel: 'meeting:1', payload: { code: 'team_not_found' } });
     expect(seen.map((e) => e.type)).toEqual(['resync', 'error']);
   });
+  it('sends the dragged card, restores it after a reconnect and shares the rate budget', async () => {
+    const rt = client();
+    const seen: RealtimeEvent[] = [];
+    rt.subscribe('meeting:1', (e) => seen.push(e));
+    rt.setDragging('meeting:1', 'card-1');
+    await flushPromises();
+    const socket = MockWebSocket.last!;
+    socket.open();
+    socket.emit({ type: 'subscribed', channel: 'meeting:1' });
+    expect(socket.sent.at(-1)).toEqual({
+      type: 'drag',
+      channel: 'meeting:1',
+      reflectionId: 'card-1',
+    });
+    // A refused pick-up is not a lost subscription.
+    socket.emit({ type: 'error', channel: 'meeting:1', payload: { code: 'not_draggable' } });
+    expect(seen.map((e) => e.type)).toEqual(['resync']);
+
+    socket.drop();
+    await vi.advanceTimersByTimeAsync(2000);
+    const again = MockWebSocket.last!;
+    again.open();
+    again.emit({ type: 'subscribed', channel: 'meeting:1' });
+    expect(again.sent.at(-1)).toEqual({
+      type: 'drag',
+      channel: 'meeting:1',
+      reflectionId: 'card-1',
+    });
+
+    // Writing and dragging spend one budget: past it, the latest drop waits.
+    for (let i = 0; i < 7; i++) {
+      rt.setWriting('meeting:1', i % 2 === 0 ? { column: 'plus', mode: 'new' } : null);
+    }
+    rt.setDragging('meeting:1', null);
+    const drags = () => again.sent.filter((m) => m.type === 'drag');
+    expect(drags()).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(drags().at(-1)).toEqual({ type: 'drag', channel: 'meeting:1', reflectionId: null });
+  });
 });

@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        random_token, teams,
+        groups, random_token, teams,
         timer::{self, Timer, TimerAction},
     },
     entities::{
@@ -53,6 +53,8 @@ pub struct MeetingView {
     /// In joining order.
     pub participants: Vec<Participant>,
     pub task_count: i64,
+    /// Groups formed in the meeting (spec §9.3).
+    pub group_count: i64,
 }
 
 /// The default title of the team's `number`-th meeting.
@@ -197,7 +199,31 @@ struct CountRow {
     count: i64,
 }
 
-/// Attaches team name, facilitator, participants and task counts in bulk.
+/// The rows of `table` per meeting, for the meetings bound to `placeholders`.
+/// `table` is always a constant, never input.
+async fn count_by_meeting(
+    db: &impl ConnectionTrait,
+    table: &'static str,
+    placeholders: &str,
+    ids: Vec<sea_orm::Value>,
+) -> Result<HashMap<Uuid, i64>, AppError> {
+    Ok(CountRow::find_by_statement(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        format!(
+            "SELECT meeting_id, COUNT(*) AS count FROM {table} \
+             WHERE meeting_id IN ({placeholders}) GROUP BY meeting_id"
+        ),
+        ids,
+    ))
+    .all(db)
+    .await?
+    .into_iter()
+    .map(|r| (r.meeting_id, r.count))
+    .collect())
+}
+
+/// Attaches team name, facilitator, participants, task and group counts in
+/// bulk.
 async fn views(
     db: &impl ConnectionTrait,
     meetings: Vec<meeting::Model>,
@@ -227,19 +253,8 @@ async fn views(
     .all(db)
     .await?;
 
-    let counts: HashMap<Uuid, i64> = CountRow::find_by_statement(Statement::from_sql_and_values(
-        DbBackend::Postgres,
-        format!(
-            "SELECT meeting_id, COUNT(*) AS count FROM tasks \
-             WHERE meeting_id IN ({placeholders}) GROUP BY meeting_id"
-        ),
-        id_values,
-    ))
-    .all(db)
-    .await?
-    .into_iter()
-    .map(|r| (r.meeting_id, r.count))
-    .collect();
+    let counts = count_by_meeting(db, "tasks", &placeholders, id_values.clone()).await?;
+    let group_counts = count_by_meeting(db, "reflection_groups", &placeholders, id_values).await?;
 
     let team_ids: Vec<Uuid> = meetings.iter().map(|m| m.team_id).collect();
     let team_names: HashMap<Uuid, String> = team::Entity::find()
@@ -289,6 +304,7 @@ async fn views(
                 facilitator,
                 participants: participants.remove(&meeting.id).unwrap_or_default(),
                 task_count: counts.get(&meeting.id).copied().unwrap_or(0),
+                group_count: group_counts.get(&meeting.id).copied().unwrap_or(0),
                 meeting,
             })
         })
@@ -615,6 +631,9 @@ pub async fn next_phase(
         .filter(meeting_participant::Column::MeetingId.eq(meeting.id))
         .exec(&txn)
         .await?;
+    if phase == MeetingPhase::Group {
+        groups::place_cards(&txn, meeting.id).await?;
+    }
     ws::publish_meeting(&txn, meeting.id, "phase.changed", json!({ "phase": phase })).await?;
     team_updated(&txn, &meeting).await?;
     txn.commit().await?;

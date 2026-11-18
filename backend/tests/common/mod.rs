@@ -189,6 +189,74 @@ impl TestApp {
         self.token_for(username).await
     }
 
+    /// Starts a meeting of `team` with `token` as facilitator, sends one
+    /// reflection and advances to Discuss. Returns the meeting and its
+    /// current group, where tasks can be written.
+    pub async fn discussing(&self, token: &str, team: uuid::Uuid) -> (String, String) {
+        let res = self
+            .call(
+                "POST",
+                &format!("/api/v1/teams/{team}/meetings"),
+                token,
+                None,
+            )
+            .await;
+        assert_eq!(res.status, 201, "{}", res.text());
+        let meeting = res.json()["id"].as_str().unwrap().to_owned();
+        let next = format!("/api/v1/meetings/{meeting}/phase/next");
+        let res = self.call("POST", &next, token, None).await;
+        assert_eq!(res.status, 200, "to reflect: {}", res.text());
+        let res = self
+            .call(
+                "POST",
+                &format!("/api/v1/meetings/{meeting}/reflections"),
+                token,
+                Some(serde_json::json!({ "column": "plus", "content": "<p>Topic</p>" })),
+            )
+            .await;
+        assert_eq!(res.status, 201, "{}", res.text());
+        for _ in 0..3 {
+            let res = self.call("POST", &next, token, None).await;
+            assert_eq!(res.status, 200, "{}", res.text());
+        }
+        let state = self
+            .get_with_token(&format!("/api/v1/meetings/{meeting}/state"), token)
+            .await
+            .json();
+        assert_eq!(state["phase"], "discuss");
+        let group = state["discussGroupId"].as_str().unwrap().to_owned();
+        (meeting, group)
+    }
+
+    /// Writes a task for `group` of a meeting in Discuss (see
+    /// [`Self::discussing`]), from the tab `headers` name; returns the
+    /// response (201 with the meeting state).
+    pub async fn discuss_task(
+        &self,
+        token: &str,
+        meeting: &str,
+        group: &str,
+        content: &str,
+        headers: &[(&str, &str)],
+    ) -> TestResponse {
+        self.call_with(
+            "POST",
+            &format!("/api/v1/meetings/{meeting}/tasks"),
+            token,
+            Some(serde_json::json!({ "groupId": group, "content": content })),
+            headers,
+        )
+        .await
+    }
+
+    /// The id of the newest task in a meeting state.
+    pub fn last_task(state: &Value) -> String {
+        state["tasks"].as_array().unwrap().last().unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
     pub async fn login(&self, login: &str, password: &str, remember: bool) -> TestResponse {
         self.post_json(
             "/api/v1/auth/login",

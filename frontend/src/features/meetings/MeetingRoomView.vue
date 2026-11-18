@@ -24,9 +24,9 @@ import PhaseHeader from '@/features/meetings/PhaseHeader.vue';
 import ReconnectingBanner from '@/features/meetings/ReconnectingBanner.vue';
 import TransferDialog from '@/features/meetings/TransferDialog.vue';
 import TimesUpToast from '@/features/meetings/footer/TimesUpToast.vue';
+import DiscussPhase from '@/features/meetings/discuss/DiscussPhase.vue';
 import GroupPhase from '@/features/meetings/group/GroupPhase.vue';
 import IcebreakerPhase from '@/features/meetings/phases/IcebreakerPhase.vue';
-import PhasePlaceholder from '@/features/meetings/phases/PhasePlaceholder.vue';
 import ReflectPhase from '@/features/meetings/reflect/ReflectPhase.vue';
 import VotePhase from '@/features/meetings/vote/VotePhase.vue';
 import VoteSettingsDialog from '@/features/meetings/vote/VoteSettingsDialog.vue';
@@ -162,7 +162,7 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
           <ReflectPhase v-else-if="meeting.phase === MeetingPhase.reflect" />
           <GroupPhase v-else-if="meeting.phase === MeetingPhase.group" />
           <VotePhase v-else-if="meeting.phase === MeetingPhase.vote" />
-          <PhasePlaceholder v-else />
+          <DiscussPhase v-else />
         </div>
       </main>
       <MeetingFooter @end="endOpen = true" />

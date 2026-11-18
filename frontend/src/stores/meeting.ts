@@ -12,8 +12,10 @@ import {
   ReflectionColumn,
   type GroupDto,
   type MeetingStateDto,
+  type DiscussGroupDto,
   type MyVoteDto,
   type ParticipantDto,
+  type ReactionDto,
   type ReflectionDto,
   type Timer,
   type TimerAction,
@@ -73,6 +75,33 @@ function bumpVote(m: MeetingStateDto, groupId: string, delta: number): void {
   if (mine) mine.count += delta;
   else if (delta > 0) m.myVotes.push({ groupId, count: delta });
   m.myVotes = m.myVotes.filter((v) => v.count > 0);
+}
+
+/** The key of one emoji on one card. */
+function reactionKey(reflectionId: string, emoji: string): string {
+  return `${reflectionId} ${emoji}`;
+}
+
+/**
+ * Sets the count of one emoji on a card, and whether it is the viewer's;
+ * `mine` left out keeps it. A count of zero removes it.
+ */
+function setReaction(
+  m: MeetingStateDto,
+  reflectionId: string,
+  emoji: string,
+  count: number,
+  mine?: boolean,
+): void {
+  const existing = m.reactions.find((r) => r.reflectionId === reflectionId && r.emoji === emoji);
+  if (count <= 0) {
+    m.reactions = m.reactions.filter((r) => r !== existing);
+  } else if (existing) {
+    existing.count = count;
+    if (mine !== undefined) existing.mine = mine;
+  } else {
+    m.reactions.push({ reflectionId, emoji, count, mine: mine ?? false });
+  }
 }
 
 /** A notice in the room: a new facilitator, or this tab's drafts discarded. */
@@ -162,6 +191,15 @@ export const useMeetingStore = defineStore('meeting', () => {
    * timer counts down on server time, whatever the local clock says.
    */
   const clockOffset = ref(0);
+  /**
+   * The group this viewer previews in Discuss, or `null` while following the
+   * current one (spec §9.5). Local: nobody else sees it.
+   */
+  const viewedGroupId = ref<string | null>(null);
+  /** Reaction toggles this tab sent and the server has not answered yet, by key. */
+  const pendingReactions = new Map<string, number>();
+  /** Bumped by every `reaction.changed` event, by key: newer than an answer? */
+  const reactionEvents = new Map<string, number>();
 
   function syncClock(serverNow: unknown): void {
     if (typeof serverNow !== 'string') return;
@@ -280,6 +318,39 @@ export const useMeetingStore = defineStore('meeting', () => {
   /** Votes cast overall: the facilitator's view during Vote, else `null`. */
   const votesCast = computed(() => meeting.value?.votesCast ?? null);
 
+  /** The groups in Discuss order, with their vote totals (spec §9.5). */
+  const discussOrder = computed<DiscussGroupDto[]>(() => meeting.value?.discussOrder ?? []);
+  /** The group everyone follows in Discuss. */
+  const currentGroupId = computed(() => meeting.value?.discussGroupId ?? null);
+  /** The group this viewer looks at: the one they preview, else the current one. */
+  const viewingGroupId = computed(() => {
+    const viewed = viewedGroupId.value;
+    if (viewed && discussOrder.value.some((g) => g.groupId === viewed)) return viewed;
+    return currentGroupId.value;
+  });
+  /** Whether the viewer looks at a group other than the current one (read-only). */
+  const previewing = computed(
+    () => viewingGroupId.value !== null && viewingGroupId.value !== currentGroupId.value,
+  );
+  /** Place of the current group in the Discuss order, or -1. */
+  const currentIndex = computed(() =>
+    discussOrder.value.findIndex((g) => g.groupId === currentGroupId.value),
+  );
+  /** Place of the group the viewer looks at, or -1. */
+  const viewingIndex = computed(() =>
+    discussOrder.value.findIndex((g) => g.groupId === viewingGroupId.value),
+  );
+  /** Reactions per card id, each emoji in the order it was first used. */
+  const reactionsByCard = computed(() => {
+    const by = new Map<string, ReactionDto[]>();
+    for (const r of meeting.value?.reactions ?? []) {
+      const list = by.get(r.reflectionId) ?? [];
+      list.push(r);
+      by.set(r.reflectionId, list);
+    }
+    return by;
+  });
+
   /** Who else is dragging each card right now (spec §9.3), by card id. */
   const draggers = computed(() => {
     const by = new Map<string, ParticipantDto>();
@@ -328,6 +399,9 @@ export const useMeetingStore = defineStore('meeting', () => {
     confirmedVotes = [];
     confirmedCast = null;
     voteResyncWanted = false;
+    viewedGroupId.value = null;
+    pendingReactions.clear();
+    reactionEvents.clear();
   }
 
   /** Shows the confirmed votes with the pending ones on top. */
@@ -394,6 +468,11 @@ export const useMeetingStore = defineStore('meeting', () => {
       if (state.votesCast == null) confirmedCast = null;
       else confirmedCast ??= state.votesCast;
       resyncVotes();
+    }
+    // The current group moved while this snapshot was on its way (e.g. while
+    // offline): everyone follows it, previews end.
+    if (meeting.value && meeting.value.discussGroupId !== state.discussGroupId) {
+      viewedGroupId.value = null;
     }
     meeting.value = state;
     online = new Set(state.onlineIds);
@@ -596,6 +675,35 @@ export const useMeetingStore = defineStore('meeting', () => {
       case 'vote.settings_changed':
         m.voteBudget = p.budget as number;
         m.voteMaxPerGroup = p.maxPerGroup as number;
+        break;
+      case 'discuss.group_changed':
+        m.discussGroupId = p.groupId as string;
+        // Everyone follows the facilitator: previews end.
+        if (!replaying) viewedGroupId.value = null;
+        break;
+      case 'reaction.changed': {
+        const key = reactionKey(p.reflectionId as string, p.emoji as string);
+        reactionEvents.set(key, (reactionEvents.get(key) ?? 0) + 1);
+        // Absolute and in commit order: taken as it is, unless this tab has
+        // a toggle of that emoji on its way, whose answer brings it.
+        if (pendingReactions.has(key)) break;
+        setReaction(m, p.reflectionId as string, p.emoji as string, p.count as number);
+        break;
+      }
+      case 'reaction.mine_changed': {
+        // Another tab of ours reacted.
+        if (isOwnEvent(p)) break;
+        const r = m.reactions.find((x) => x.reflectionId === p.reflectionId && x.emoji === p.emoji);
+        if (r) r.mine = p.mine as boolean;
+        break;
+      }
+      case 'task.created':
+      case 'task.updated':
+      case 'task.moved':
+      case 'task.deleted':
+        // The Tasks panel: re-read, unless this tab made the change (its
+        // answer brought it).
+        if (!isOwnEvent(p) && !replaying) void resync();
         break;
       case 'icebreaker.person_changed':
         m.icebreaker.index = p.index as number;
@@ -919,6 +1027,81 @@ export const useMeetingStore = defineStore('meeting', () => {
     }
   }
 
+  /** Looks at another group in Discuss, without affecting anyone (spec §9.5). */
+  function viewGroup(groupId: string): void {
+    viewedGroupId.value = groupId === currentGroupId.value ? null : groupId;
+  }
+
+  /** Back to the group everyone follows. */
+  function followCurrent(): void {
+    viewedGroupId.value = null;
+  }
+
+  /** Moves everyone to a group (facilitator, during Discuss). */
+  function setCurrentGroup(groupId: string): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(
+      () => api.setCurrentGroup(id, { groupId }),
+      () => {
+        meeting.value!.discussGroupId = groupId;
+        viewedGroupId.value = null;
+      },
+    );
+  }
+
+  /** Writes a task for a group of the meeting (the current one). */
+  function createTask(groupId: string, content: string): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(() => api.createTask(id, { groupId, content }));
+  }
+
+  /**
+   * Puts the viewer's `emoji` on a card, or takes it back when it is already
+   * theirs (spec §9.5: one of each emoji per person). Shown at once; the
+   * answer brings the count.
+   */
+  async function toggleReaction(reflectionId: string, emoji: string): Promise<boolean> {
+    const m = meeting.value;
+    if (!m) return false;
+    const key = reactionKey(reflectionId, emoji);
+    const existing = m.reactions.find((r) => r.reflectionId === reflectionId && r.emoji === emoji);
+    const on = !existing?.mine;
+    const before = existing ? { count: existing.count, mine: existing.mine } : null;
+    setReaction(m, reflectionId, emoji, (existing?.count ?? 0) + (on ? 1 : -1), on);
+    pendingReactions.set(key, (pendingReactions.get(key) ?? 0) + 1);
+    const seen = reactionEvents.get(key) ?? 0;
+    const gen = generation;
+    actionError.value = null;
+    try {
+      const encoded = encodeURIComponent(emoji);
+      const res = on
+        ? await api.addReaction(reflectionId, encoded)
+        : await api.removeReaction(reflectionId, encoded);
+      if (res.status !== 200) throw apiError(res);
+      if (gen !== generation || meeting.value?.id !== m.id) return false;
+      // A later event (someone else's reaction) has a newer count than this
+      // answer: keep it, and take only whether it is the viewer's.
+      const newer = (reactionEvents.get(key) ?? 0) > seen;
+      const now = meeting.value.reactions.find(
+        (r) => r.reflectionId === reflectionId && r.emoji === res.data.emoji,
+      );
+      if (newer && now) now.mine = res.data.mine;
+      else setReaction(meeting.value, reflectionId, res.data.emoji, res.data.count, res.data.mine);
+      return true;
+    } catch (e) {
+      if (gen !== generation || meeting.value?.id !== m.id) return false;
+      const now = meeting.value;
+      if (before) setReaction(now, reflectionId, emoji, before.count, before.mine);
+      else setReaction(now, reflectionId, emoji, 0);
+      actionError.value = errorCode(e);
+      return false;
+    } finally {
+      const left = (pendingReactions.get(key) ?? 1) - 1;
+      if (left > 0) pendingReactions.set(key, left);
+      else pendingReactions.delete(key);
+    }
+  }
+
   return {
     meeting,
     meetingId,
@@ -954,6 +1137,14 @@ export const useMeetingStore = defineStore('meeting', () => {
     votesUsed,
     votesLeft,
     votesCast,
+    discussOrder,
+    currentGroupId,
+    viewedGroupId,
+    viewingGroupId,
+    previewing,
+    currentIndex,
+    viewingIndex,
+    reactionsByCard,
     clockOffset,
     serverTime,
     open,
@@ -977,5 +1168,10 @@ export const useMeetingStore = defineStore('meeting', () => {
     vote,
     saveVoteSettings,
     voteImpact,
+    viewGroup,
+    followCurrent,
+    setCurrentGroup,
+    createTask,
+    toggleReaction,
   };
 });

@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { expect, test, type Browser, type Page, type Request } from "@playwright/test";
 
-import { createTeam, deleteTeam, seedTask, startMeeting, userIdOf } from "../api";
+import { createTeam, deleteTeam, discussMeeting, seedTask, userIdOf } from "../api";
 import { watchCsp } from "../csp";
 import { PASSWORD, USERS } from "../fixtures";
 import { channelSubscribed } from "../realtime";
@@ -80,10 +80,9 @@ test.describe("tasks board", () => {
       status: "active",
       content: `<p>${PIN} <span data-type="mention" data-id="${finnId}" data-label="${USERS.finn.name}">@${USERS.finn.name}</span></p>`,
     });
-    await seedTask(ERIN, teamId, {
+    await seedTask(FINN, teamId, {
       status: "future",
       content: `<p>${FUTURE[0]}</p>`,
-      authorId: finnId,
     });
     for (const text of FUTURE.slice(1)) {
       await seedTask(ERIN, teamId, {
@@ -193,22 +192,22 @@ test.describe("tasks board", () => {
     ]);
     const chip = (id: string, name: string) =>
       `<span data-type="mention" data-id="${id}" data-label="${name}">@${name}</span>`;
-    const first = await startMeeting(ERIN, teamId);
-    const second = await startMeeting(ERIN, teamId);
+    const first = await discussMeeting(ERIN, teamId);
+    const second = await discussMeeting(ERIN, teamId);
     await seedTask(ERIN, teamId, {
       status: "future",
       content: `<p>For Finn ${chip(finnId, USERS.finn.name)}</p>`,
-      meetingId: first,
+      meeting: first,
     });
     await seedTask(ERIN, teamId, {
       status: "stuck",
       content: `<p>For Erin ${chip(erinId, USERS.erin.name)}</p>`,
-      meetingId: second,
+      meeting: second,
     });
     await seedTask(ERIN, teamId, {
       status: "active",
       content: "<p>For nobody</p>",
-      meetingId: second,
+      meeting: second,
     });
 
     const tasks = new TasksPage(page);

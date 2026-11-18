@@ -33,6 +33,8 @@ pub struct TaskDto {
     pub author: PersonDto,
     pub mentions: Vec<PersonDto>,
     pub meeting_id: Option<Uuid>,
+    /// The group of that meeting it was written for (Discuss).
+    pub group_id: Option<Uuid>,
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub created_at: OffsetDateTime,
@@ -48,6 +50,7 @@ impl From<TaskView> for TaskDto {
             author: v.author.into(),
             mentions: v.mentions.into_iter().map(Into::into).collect(),
             meeting_id: v.task.meeting_id,
+            group_id: v.task.group_id,
             created_at: v.task.created_at,
         }
     }

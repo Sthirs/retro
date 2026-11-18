@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        groups, random_token, teams,
+        discuss, groups, random_token, teams,
         timer::{self, Timer, TimerAction},
         votes,
     },
@@ -647,6 +647,7 @@ pub async fn next_phase(
     match phase {
         MeetingPhase::Group => groups::place_cards(&txn, meeting.id).await?,
         MeetingPhase::Vote => votes::wrap_ungrouped(&txn, meeting.id).await?,
+        MeetingPhase::Discuss => discuss::start(&txn, meeting.id).await?,
         _ => {}
     }
     ws::publish_meeting(&txn, meeting.id, "phase.changed", json!({ "phase": phase })).await?;

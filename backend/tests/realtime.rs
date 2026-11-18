@@ -373,25 +373,22 @@ async fn task_changes_reach_the_team_channel() {
     let addr = app.spawn_server().await;
     let alice = app.token_for("alice").await;
     let team = create_team(&app, &alice, "Platform").await;
+    let (m, group) = app.discussing(&alice, team).await;
     let mut socket = connect(&addr, &ticket(&app, &alice).await).await;
     subscribe(&mut socket, &format!("team:{team}")).await;
 
     let res = app
-        .call(
-            "POST",
-            &format!("/api/v1/dev/teams/{team}/tasks"),
-            &alice,
-            Some(json!({ "status": "future", "content": "<p>Write docs</p>" })),
-        )
+        .discuss_task(&alice, &m, &group, "<p>Write docs</p>", &[])
         .await;
     assert_eq!(res.status, 201, "{}", res.text());
-    let task = res.json();
+    let task = TestApp::last_task(&res.json());
     let created = next_of(&mut socket, "task.created").await;
-    assert_eq!(created["payload"]["taskId"], task["id"]);
+    assert_eq!(created["payload"]["taskId"], task);
+    assert_eq!(created["payload"]["status"], "active");
 
     app.call(
         "PUT",
-        &format!("/api/v1/tasks/{}/position", task["id"].as_str().unwrap()),
+        &format!("/api/v1/tasks/{task}/position"),
         &alice,
         Some(json!({ "status": "done" })),
     )
@@ -501,16 +498,12 @@ async fn rename(app: &TestApp, token: &str, meeting: &str, title: &str) {
 }
 
 async fn create_task(app: &TestApp, token: &str, team: Uuid) -> Value {
+    let (m, group) = app.discussing(token, team).await;
     let res = app
-        .call(
-            "POST",
-            &format!("/api/v1/dev/teams/{team}/tasks"),
-            token,
-            Some(json!({ "status": "future", "content": "<p>Later</p>" })),
-        )
+        .discuss_task(token, &m, &group, "<p>Later</p>", &[])
         .await;
     assert_eq!(res.status, 201, "{}", res.text());
-    res.json()
+    json!({ "id": TestApp::last_task(&res.json()) })
 }
 
 /// Reads until an `error` arrived on each of `channels`, and returns them.
@@ -798,22 +791,17 @@ async fn task_events_name_the_tab_that_made_the_change() {
     let addr = app.spawn_server().await;
     let alice = app.token_for("alice").await;
     let team = create_team(&app, &alice, "Platform").await;
+    let (m, group) = app.discussing(&alice, team).await;
     let mut socket = connect(&addr, &ticket(&app, &alice).await).await;
     subscribe(&mut socket, &format!("team:{team}")).await;
     let tab = Uuid::now_v7().to_string();
     let from_tab = [("X-Client-Id", tab.as_str())];
 
     let res = app
-        .call_with(
-            "POST",
-            &format!("/api/v1/dev/teams/{team}/tasks"),
-            &alice,
-            Some(json!({ "status": "future", "content": "<p>Echo</p>" })),
-            &from_tab,
-        )
+        .discuss_task(&alice, &m, &group, "<p>Echo</p>", &from_tab)
         .await;
     assert_eq!(res.status, 201, "{}", res.text());
-    let task = res.json()["id"].as_str().unwrap().to_owned();
+    let task = TestApp::last_task(&res.json());
     let created = next_of(&mut socket, "task.created").await;
     assert_eq!(created["payload"]["clientId"], tab);
 
@@ -1747,4 +1735,191 @@ async fn new_vote_settings_reach_everyone_and_trimmed_voters_reload() {
         before[1]["payload"],
         json!({ "votesCast": 1, "clientId": settings_tab })
     );
+}
+
+// --- Discuss: the current group, reactions and tasks ------------------------
+
+/// A meeting in Discuss: alice facilitates, bob (two single-card groups) and
+/// dana take part. Returns the current group, the other group, and the card
+/// of the current group.
+async fn discussing(app: &TestApp) -> (String, String, String, String, String, String, String) {
+    let (alice, bob, dana, m, _) = voting(app).await;
+    to_reflect(app, &alice, &m).await;
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    let current = state["discussGroupId"].as_str().unwrap().to_owned();
+    let other = state["discussOrder"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["groupId"].as_str().unwrap().to_owned())
+        .find(|g| *g != current)
+        .unwrap();
+    let card = state["reflections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["groupId"] == current.as_str())
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    (alice, bob, dana, m, current, other, card)
+}
+
+#[tokio::test]
+async fn everyone_follows_the_current_group_in_order() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, dana, m, _, other, _) = discussing(&app).await;
+    let channel = format!("meeting:{m}");
+    let mut sockets = Vec::new();
+    for token in [&alice, &bob, &dana] {
+        let mut socket = connect(&addr, &ticket(&app, token).await).await;
+        subscribe(&mut socket, &channel).await;
+        sockets.push(socket);
+    }
+
+    let tab = Uuid::now_v7().to_string();
+    let res = app
+        .call_with(
+            "PUT",
+            &format!("/api/v1/meetings/{m}/discuss/current"),
+            &alice,
+            Some(json!({ "groupId": other })),
+            &[("x-client-id", &tab)],
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let seq = res.json()["seq"].clone();
+    for socket in &mut sockets {
+        let changed = next_of(socket, "discuss.group_changed").await;
+        assert_eq!(changed["seq"], seq);
+        assert_eq!(
+            changed["payload"],
+            json!({ "groupId": other, "clientId": tab })
+        );
+    }
+}
+
+#[tokio::test]
+async fn reaction_counts_reach_everyone_and_mine_reaches_the_reactor() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, dana, m, _, _, card) = discussing(&app).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+    let mut dana_socket = connect(&addr, &ticket(&app, &dana).await).await;
+    subscribe(&mut dana_socket, &channel).await;
+
+    let tab = Uuid::now_v7().to_string();
+    let res = app
+        .call_with(
+            "PUT",
+            &format!("/api/v1/reflections/{card}/reactions/%F0%9F%8E%89"),
+            &bob,
+            None,
+            &[("x-client-id", &tab)],
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    // The same again changes nothing, and says nothing.
+    let res = app
+        .call(
+            "PUT",
+            &format!("/api/v1/reflections/{card}/reactions/%F0%9F%8E%89"),
+            &bob,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    rename(&app, &alice, &m, "After the reaction").await;
+
+    let changed = json!({ "reflectionId": card, "emoji": "🎉", "count": 1, "clientId": tab });
+    let before = events_before(&mut bob_socket, "meeting.renamed").await;
+    assert_eq!(
+        kinds(&before),
+        vec!["reaction.changed", "reaction.mine_changed"],
+        "{before:?}"
+    );
+    assert_eq!(before[0]["payload"], changed);
+    assert!(before[0]["seq"].is_i64());
+    assert_eq!(
+        before[1]["payload"],
+        json!({ "reflectionId": card, "emoji": "🎉", "mine": true, "clientId": tab })
+    );
+    assert_eq!(before[1]["seq"], Value::Null);
+    // The others get the count, never who reacted.
+    for socket in [&mut alice_socket, &mut dana_socket] {
+        let before = events_before(socket, "meeting.renamed").await;
+        assert_eq!(kinds(&before), vec!["reaction.changed"], "{before:?}");
+        assert_eq!(before[0]["payload"], changed);
+    }
+}
+
+#[tokio::test]
+async fn tasks_written_in_discuss_reach_the_room_and_the_board() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, m, current, _, _) = discussing(&app).await;
+    let team = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json()["teamId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut socket, &format!("meeting:{m}")).await;
+    subscribe(&mut socket, &format!("team:{team}")).await;
+
+    let tab = Uuid::now_v7().to_string();
+    let res = app
+        .discuss_task(
+            &bob,
+            &m,
+            &current,
+            "<p>Fix CI</p>",
+            &[("x-client-id", &tab)],
+        )
+        .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    let task = TestApp::last_task(&res.json());
+    let mut channels = Vec::new();
+    for _ in 0..2 {
+        let created = next_of(&mut socket, "task.created").await;
+        assert_eq!(
+            created["payload"],
+            json!({ "taskId": task, "status": "active", "clientId": tab })
+        );
+        channels.push(created["channel"].as_str().unwrap().to_owned());
+    }
+    channels.sort();
+    assert_eq!(
+        channels,
+        vec![format!("meeting:{m}"), format!("team:{team}")]
+    );
+
+    // Once the meeting ended, board changes reach the team channel only.
+    let res = app
+        .call("POST", &format!("/api/v1/meetings/{m}/end"), &alice, None)
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let res = app
+        .call(
+            "PUT",
+            &format!("/api/v1/tasks/{task}/position"),
+            &alice,
+            Some(json!({ "status": "done" })),
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let moved = next_of(&mut socket, "task.moved").await;
+    assert_eq!(moved["channel"], format!("team:{team}"));
+    assert_silent(&mut socket, Duration::from_millis(500)).await;
 }

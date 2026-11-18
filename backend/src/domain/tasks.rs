@@ -16,6 +16,7 @@ use crate::{
         rich_text, teams,
     },
     entities::{
+        meeting::{self, MeetingPhase, MeetingStatus},
         task::{self, TaskStatus},
         task_mention,
         team::{self},
@@ -146,16 +147,25 @@ pub async fn insert(
     status: TaskStatus,
     raw_content: &str,
 ) -> Result<task::Model, AppError> {
-    insert_from(db, team_id, author_id, status, raw_content, None).await
+    insert_from(db, team_id, author_id, status, raw_content, None, None).await
 }
 
-/// [`insert`] for a request from the tab `client` (see [`publish`]).
+/// Where a task was written: a meeting, for one of its groups (spec §9.5).
+#[derive(Debug, Clone, Copy)]
+pub struct Origin {
+    pub meeting_id: Uuid,
+    pub group_id: Uuid,
+}
+
+/// [`insert`] from a meeting (`origin`), for a request from the tab
+/// `client` (see [`publish`]).
 pub async fn insert_from(
     db: &(impl TransactionTrait + ConnectionTrait),
     team_id: Uuid,
     author_id: Uuid,
     status: TaskStatus,
     raw_content: &str,
+    origin: Option<Origin>,
     client: Option<Uuid>,
 ) -> Result<task::Model, AppError> {
     let content = rich_text::sanitize(raw_content)?;
@@ -184,8 +194,8 @@ pub async fn insert_from(
     let task = task::ActiveModel {
         id: Set(Uuid::now_v7()),
         team_id: Set(team_id),
-        meeting_id: Set(None),
-        group_id: Set(None),
+        meeting_id: Set(origin.map(|o| o.meeting_id)),
+        group_id: Set(origin.map(|o| o.group_id)),
         author_id: Set(author_id),
         content: Set(html),
         status: Set(status),
@@ -204,22 +214,48 @@ pub async fn insert_from(
     Ok(task)
 }
 
-/// Tells the team's boards that a task changed (spec §10.1, §11.2). `client`
-/// is the tab that made the change, which skips its own echo.
+/// Tells the team's boards that a task changed (spec §10.1, §11.2), and the
+/// room of its meeting while that is running (its Tasks panel). `client` is
+/// the tab that made the change, which skips its own echo. The team row is
+/// locked already, so the meeting row comes second, as everywhere.
 async fn publish(
     db: &impl ConnectionTrait,
     task: &task::Model,
     kind: &str,
     client: Option<Uuid>,
 ) -> Result<(), AppError> {
-    ws::publish_team(
-        db,
-        task.team_id,
-        kind,
-        serde_json::json!({ "taskId": task.id, "status": task.status, "clientId": client }),
-    )
-    .await?;
+    let payload =
+        serde_json::json!({ "taskId": task.id, "status": task.status, "clientId": client });
+    ws::publish_team(db, task.team_id, kind, payload.clone()).await?;
+    if let Some(meeting_id) = task.meeting_id {
+        let running = meeting::Entity::find_by_id(meeting_id)
+            .filter(meeting::Column::Status.eq(MeetingStatus::Active))
+            .one(db)
+            .await?
+            .is_some();
+        if running {
+            ws::publish_meeting(db, meeting_id, kind, payload).await?;
+        }
+    }
     Ok(())
+}
+
+/// The tasks written in a meeting, oldest first, with their authors and
+/// mentions (its Tasks panel, from Discuss on).
+pub async fn of_meeting(
+    db: &impl ConnectionTrait,
+    meeting: &meeting::Model,
+) -> Result<Vec<TaskView>, AppError> {
+    if meeting.phase < MeetingPhase::Discuss {
+        return Ok(Vec::new());
+    }
+    let rows = task::Entity::find()
+        .filter(task::Column::MeetingId.eq(meeting.id))
+        .order_by_asc(task::Column::CreatedAt)
+        .order_by_asc(task::Column::Id)
+        .all(db)
+        .await?;
+    views(db, rows).await
 }
 
 /// Records the mentions of `task_id`, keeping only team members.

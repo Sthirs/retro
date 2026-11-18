@@ -89,10 +89,77 @@ export async function userIdOf(login: string): Promise<string> {
   return userId;
 }
 
+/** Meetings run to Discuss for seeding tasks, per team (see `seedTask`). */
+const seedMeetings = new Map<string, Promise<DiscussMeeting>>();
+
+/** A meeting in Discuss and its current group. */
+export interface DiscussMeeting {
+  meetingId: string;
+  groupId: string;
+}
+
 /**
- * Adds a task at the end of a column through the dev-only seeding route (the
- * dev cluster runs with SEED_DEV_USERS). `login` is the caller, a team member;
- * `authorId` defaults to the caller. `content` is rich-text HTML.
+ * Starts a meeting with `login` as its facilitator and runs it to Discuss,
+ * with one reflection, so it has a group to write tasks for.
+ */
+export async function discussMeeting(login: string, teamId: string): Promise<DiscussMeeting> {
+  const meetingId = await startMeeting(login, teamId);
+  await meetingAction(login, meetingId, 'phase/next');
+  await writeReflection(login, meetingId, 'plus', '<p>Tasks</p>');
+  for (let i = 0; i < 3; i++) await meetingAction(login, meetingId, 'phase/next');
+  const state = await meetingState(login, meetingId);
+  if (state.phase !== 'discuss' || !state.discussGroupId) {
+    throw new Error(`discuss meeting: ${state.phase}`);
+  }
+  return { meetingId, groupId: state.discussGroupId };
+}
+
+/**
+ * Writes a task for a group of a meeting in Discuss, as `login` (a
+ * participant); it lands at the end of Active. Returns its id.
+ */
+export async function createTask(
+  login: string,
+  meetingId: string,
+  groupId: string,
+  content: string,
+): Promise<string> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/meetings/${meetingId}/tasks`, {
+      data: { groupId, content },
+    });
+    if (!res.ok()) throw new Error(`create task: ${res.status()} ${await res.text()}`);
+    const state = (await res.json()) as MeetingState;
+    return state.tasks[state.tasks.length - 1]!.id;
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Moves a task to the end of a column of the board. */
+export async function moveTask(
+  login: string,
+  taskId: string,
+  status: 'future' | 'stuck' | 'active' | 'done',
+): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.put(`/api/v1/tasks/${taskId}/position`, {
+      data: { status },
+    });
+    if (!res.ok()) throw new Error(`move task: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/**
+ * Adds a task at the end of a column, written by `login` (a team member) the
+ * way the product writes tasks: in the Discuss phase of a meeting
+ * (`meetingId`, already in Discuss, or else one meeting per team that the
+ * first seeder runs to Discuss), then moved to its column. `content` is
+ * rich-text HTML.
  */
 export async function seedTask(
   login: string,
@@ -100,18 +167,60 @@ export async function seedTask(
   task: {
     status: 'future' | 'stuck' | 'active' | 'done';
     content: string;
-    authorId?: string;
-    /** A source meeting of the team (see `startMeeting`). */
-    meetingId?: string;
+    /** A meeting of the team in Discuss (see `discussMeeting`). */
+    meeting?: DiscussMeeting;
   },
 ): Promise<{ id: string }> {
+  let meeting = task.meeting;
+  if (!meeting) {
+    let pending = seedMeetings.get(teamId);
+    if (!pending) {
+      pending = discussMeeting(login, teamId);
+      seedMeetings.set(teamId, pending);
+      pending.catch(() => seedMeetings.delete(teamId));
+    }
+    meeting = await pending;
+  }
+  await meetingAction(login, meeting.meetingId, 'join');
+  const id = await createTask(login, meeting.meetingId, meeting.groupId, task.content);
+  if (task.status !== 'active') await moveTask(login, id, task.status);
+  return { id };
+}
+
+/** Moves everyone in a meeting to a group (`login` facilitates, Discuss). */
+export async function setDiscussGroup(
+  login: string,
+  meetingId: string,
+  groupId: string,
+): Promise<void> {
   const { api } = await signedIn(login);
   try {
-    const res = await api.post(`/api/v1/dev/teams/${teamId}/tasks`, {
-      data: task,
+    const res = await api.put(`/api/v1/meetings/${meetingId}/discuss/current`, {
+      data: { groupId },
     });
-    if (!res.ok()) throw new Error(`seed task: ${res.status()} ${await res.text()}`);
-    return (await res.json()) as { id: string };
+    if (!res.ok()) throw new Error(`discuss group: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Reacts to a card with an emoji as `login` (or takes it back); returns the status and code. */
+export async function react(
+  login: string,
+  reflectionId: string,
+  emoji: string,
+  on = true,
+): Promise<{ status: number; code: string | null; count: number | null }> {
+  const { api } = await signedIn(login);
+  try {
+    const path = `/api/v1/reflections/${reflectionId}/reactions/${encodeURIComponent(emoji)}`;
+    const res = on ? await api.put(path) : await api.delete(path);
+    const body = (await res.json()) as { code?: string; count?: number };
+    return {
+      status: res.status(),
+      code: res.ok() ? null : (body.code ?? null),
+      count: res.ok() ? (body.count ?? null) : null,
+    };
   } finally {
     await api.dispose();
   }
@@ -251,6 +360,11 @@ export interface MeetingState {
   myVotes: { groupId: string; count: number }[];
   /** Votes cast overall: the facilitator's one number during Vote, else null. */
   votesCast: number | null;
+  /** From Discuss on: the groups in order, with their totals. */
+  discussOrder: { groupId: string; votes: number; cards: number }[];
+  discussGroupId: string | null;
+  reactions: { reflectionId: string; emoji: string; count: number; mine: boolean }[];
+  tasks: { id: string; contentHtml: string; groupId: string | null; status: string }[];
 }
 
 /** The meeting state as `login` sees it. */

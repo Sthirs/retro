@@ -105,8 +105,8 @@ async fn grouping_with(app: &TestApp, suffix: &str) -> (Room, String, String, St
     let bob = app.token_for("bob").await;
     let erin = app
         .create_user(
-            &format!("vera{suffix}"),
-            &format!("vera{suffix}@example.com"),
+            &format!("vic{suffix}"),
+            &format!("vic{suffix}@example.com"),
             "Erin Galli",
         )
         .await;

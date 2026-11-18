@@ -13,6 +13,7 @@ import {
   writeReflection,
 } from '../api';
 import { watchCsp } from '../csp';
+import { channelSubscribed } from '../realtime';
 import { PASSWORD, USERS } from '../fixtures';
 import { AppShell } from '../pages/AppShell';
 import { SignInPage } from '../pages/SignInPage';
@@ -130,8 +131,13 @@ test.describe('vote', () => {
   });
 
   test.afterEach(async () => {
-    for (const context of contexts) await context.close();
-    await deleteTeam(QUINN, teamId);
+    // Every step runs even if one fails, so the team never outlives the test.
+    const failures: unknown[] = [];
+    for (const context of contexts) await context.close().catch((e: unknown) => failures.push(e));
+    await deleteTeam(QUINN, teamId).catch((e: unknown) => failures.push(e));
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `vote cleanup: ${failures.length} step(s) failed`);
+    }
     // The room works within the app's own Content Security Policy.
     expect(cspViolations.flat()).toEqual([]);
   });
@@ -204,7 +210,7 @@ test.describe('vote', () => {
     // No totals in what the server sends: groups carry no votes.
     const samiState = await meetingState(SAMI, meetingId);
     expect(samiState.myVotes).toEqual([{ groupId: await groupOf(meetingId, TRAIN), count: 1 }]);
-    expect(samiState.voteUsage).toBeNull();
+    expect(samiState.votesCast).toBeNull();
     for (const group of samiState.groups) {
       expect(Object.keys(group).sort()).toEqual(['column', 'id', 'name', 'position']);
     }
@@ -212,7 +218,9 @@ test.describe('vote', () => {
     expect(rosaState.myVotes).toEqual([{ groupId: await groupOf(meetingId, FLAKY), count: 2 }]);
     const quinnState = await meetingState(QUINN, meetingId);
     expect(quinnState.myVotes).toEqual([]);
-    expect(quinnState.voteUsage!.map((u) => u.spent).sort()).toEqual([1, 2]);
+    // One number, nothing per person.
+    expect(quinnState.votesCast).toBe(3);
+    expect(quinnState).not.toHaveProperty('voteUsage');
   });
 
   test('− takes a vote back, down to zero', async ({ browser }) => {
@@ -222,6 +230,8 @@ test.describe('vote', () => {
     await rosa.addVotes(SHIPPING, 2);
     await expect(stepper.remove).toBeEnabled();
     await expect(rosa.counter).toHaveText('3 of 5 votes left');
+    // The facilitator sees both, before they go back.
+    await expect(quinn.castCount).toHaveText('2 votes cast so far');
 
     await rosa.removeVotes(SHIPPING, 1);
     await expect(stepper.count).toHaveText('1');
@@ -281,7 +291,13 @@ test.describe('vote', () => {
     // A second tab of Rosa's follows the first live, and the other way round.
     const tab = new VotePage(await rosa.page.context().newPage());
     cspViolations.push(await watchCsp(tab.page));
+    // Live only once its subscription is acknowledged and the reload after it is in.
+    const subscribed = channelSubscribed(tab.page, `meeting:${meetingId}`);
+    const refreshed = tab.page.waitForResponse(
+      (r) => r.request().method() === 'GET' && new URL(r.url()).pathname.endsWith('/state'),
+    );
     await tab.goto(teamId, meetingId);
+    await Promise.all([subscribed, refreshed]);
     await expect(tab.stepper(DEMO).count).toHaveText('2');
     await rosa.addVotes(THANKS, 1);
     await expect(tab.stepper(THANKS).count).toHaveText('1');
@@ -335,25 +351,17 @@ test.describe('vote', () => {
     const rosa = await open(browser, 'rosa');
     const stepper = rosa.stepper(DEMO);
     await stepper.add.focus();
-    let saved = rosa.voteSaved();
-    await rosa.page.keyboard.press('Enter');
-    await saved;
+    await rosa.pressVote('Enter');
     await expect(stepper.count).toHaveText('1');
     await expect(stepper.add).toBeFocused();
-    saved = rosa.voteSaved();
-    await rosa.page.keyboard.press('Space');
-    await saved;
+    await rosa.pressVote('Space');
     await expect(stepper.count).toHaveText('2');
     // The third reaches the maximum: + turns off and the focus moves to −.
-    saved = rosa.voteSaved();
-    await rosa.page.keyboard.press('Enter');
-    await saved;
+    await rosa.pressVote('Enter');
     await expect(stepper.root).toHaveAttribute('aria-label', `Your votes on ${DEMO}: 3 of 3`);
     await expect(stepper.add).toBeDisabled();
     await expect(stepper.remove).toBeFocused();
-    saved = rosa.voteSaved();
-    await rosa.page.keyboard.press('Enter');
-    await saved;
+    await rosa.pressVote('Enter');
     await expect(stepper.count).toHaveText('2');
     // Tab goes from − to + (the count is not a stop).
     await rosa.page.keyboard.press('Tab');
@@ -428,9 +436,7 @@ test.describe('vote', () => {
     await quinn.budgetInput.fill('3');
     await quinn.perGroupInput.focus();
     // One person, never who.
-    await expect(quinn.warning).toContainText(
-      '1 person has already used more votes than the new budget of 3.',
-    );
+    await expect(quinn.warning).toContainText('1 person has more votes than the new limits allow.');
     await expect(quinn.warning).toContainText(
       'Their most recent votes will be removed to fit the new limits.',
     );
@@ -450,9 +456,7 @@ test.describe('vote', () => {
     await quinn.openSettings();
     await quinn.perGroupInput.fill('1');
     await quinn.budgetInput.focus();
-    await expect(quinn.warning).toContainText(
-      '1 person gave one group more votes than the new maximum of 1.',
-    );
+    await expect(quinn.warning).toContainText('1 person has more votes than the new limits allow.');
     await quinn.settingsDialog.getByRole('button', { name: 'Close' }).click();
     await quinn.saveSettings(3, 1);
     await expect(rosa.stepper(CI).count).toHaveText('1');
@@ -474,7 +478,14 @@ test.describe('vote', () => {
     await rosa.ready.click();
     await expect(rosa.ready).toHaveText("You're ready");
     await sami.ready.click();
-    await quinn.ready.click();
+    // Quinn's Ready shows at once: wait for the server to take it.
+    const [readySaved] = await Promise.all([
+      quinn.page.waitForResponse(
+        (r) => r.request().method() === 'PUT' && new URL(r.url()).pathname.endsWith('/ready'),
+      ),
+      quinn.ready.click(),
+    ]);
+    expect(readySaved.status()).toBe(200);
     await expect(quinn.readyCount).toContainText('3/3');
     await expect(quinn.readyCount).toHaveAttribute('title', 'Everyone is ready');
 

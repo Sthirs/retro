@@ -249,8 +249,8 @@ export interface MeetingState {
   voteMaxPerGroup: number;
   /** The viewer's own votes only. */
   myVotes: { groupId: string; count: number }[];
-  /** The facilitator's anonymous view of everyone's votes during Vote, else null. */
-  voteUsage: { spent: number; maxOnGroup: number }[] | null;
+  /** Votes cast overall: the facilitator's one number during Vote, else null. */
+  votesCast: number | null;
 }
 
 /** The meeting state as `login` sees it. */
@@ -312,7 +312,7 @@ export async function castVote(
 ): Promise<{ status: number; code: string | null }> {
   const { api } = await signedIn(login);
   try {
-    const res = await api.put(`/api/v1/groups/${groupId}/vote`, {
+    const res = await api.post(`/api/v1/groups/${groupId}/vote`, {
       data: { delta },
     });
     const body = (await res.json()) as { code?: string };

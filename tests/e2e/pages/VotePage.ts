@@ -86,19 +86,20 @@ export class VotePage extends MeetingRoomPage {
   /** Clicks + `n` times, each time once the server saved the vote. */
   async addVotes(name: string, n: number): Promise<void> {
     for (let i = 0; i < n; i++) {
-      const saved = this.voteSaved();
-      await this.stepper(name).add.click();
-      await saved;
+      await Promise.all([this.voteSaved(), this.stepper(name).add.click()]);
     }
   }
 
   /** Clicks − `n` times, each time once the server saved it. */
   async removeVotes(name: string, n: number): Promise<void> {
     for (let i = 0; i < n; i++) {
-      const saved = this.voteSaved();
-      await this.stepper(name).remove.click();
-      await saved;
+      await Promise.all([this.voteSaved(), this.stepper(name).remove.click()]);
     }
+  }
+
+  /** Presses `key` on the focused vote button, once the server saved the vote. */
+  async pressVote(key: string): Promise<void> {
+    await Promise.all([this.voteSaved(), this.page.keyboard.press(key)]);
   }
 
   async expand(name: string): Promise<void> {
@@ -128,11 +129,13 @@ export class VotePage extends MeetingRoomPage {
     await this.openSettings();
     await this.budgetInput.fill(String(budget));
     await this.perGroupInput.fill(String(perGroup));
-    const saved = this.page.waitForResponse(
-      (r) => r.request().method() === 'PATCH' && /\/settings$/.test(new URL(r.url()).pathname),
-    );
-    await this.settingsDialog.getByRole('button', { name: 'Save settings' }).click();
-    expect((await saved).status()).toBe(200);
+    const [saved] = await Promise.all([
+      this.page.waitForResponse(
+        (r) => r.request().method() === 'PATCH' && /\/settings$/.test(new URL(r.url()).pathname),
+      ),
+      this.settingsDialog.getByRole('button', { name: 'Save settings' }).click(),
+    ]);
+    expect(saved.status()).toBe(200);
     await expect(this.settingsDialog).toBeHidden();
   }
 
@@ -140,7 +143,7 @@ export class VotePage extends MeetingRoomPage {
   async voteSaved(): Promise<void> {
     const res = await this.page.waitForResponse(
       (r) =>
-        r.request().method() === 'PUT' && /\/groups\/[^/]+\/vote$/.test(new URL(r.url()).pathname),
+        r.request().method() === 'POST' && /\/groups\/[^/]+\/vote$/.test(new URL(r.url()).pathname),
     );
     expect(res.status(), 'the vote is saved').toBe(200);
   }

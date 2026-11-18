@@ -284,7 +284,7 @@ The individual meeting phases cannot be replayed.
 ### 9.4 Vote
 
 - Every participant gets a **vote budget** (default **5**) and can give at most **3 votes** (default) to the same group.
-- The facilitator can change both values in the meeting **Settings** (budget 1–20, at most 1–10 per group), until Vote ends. Lowering the budget below what a user has already spent removes that user's most recent votes so they fit the new limit; lowering the maximum per group removes each user's most recent votes on any group above it. The settings dialog warns how many people (never who) would lose votes.
+- The facilitator can change both values in the meeting **Settings** (budget 1–20, at most 1–10 per group), until Vote ends. Lowering the budget below what a user has already spent removes that user's most recent votes so they fit the new limit; lowering the maximum per group removes each user's most recent votes on any group above it. The settings dialog warns how many people (never who) would lose votes; the server computes that number, so the client never holds anyone's usage.
 - Each group shows **+** and **−** buttons and the user's own vote count on it. **−** takes back the user's most recent vote on that group. A counter shows remaining votes ("2 of 5 votes left").
 - A card never grouped shows as the plain card it was (its implicit single-card group has no name). Clicking a group expands it to read its cards; expanding is local to each viewer.
 - During this phase, users see **only their own votes**. Totals are hidden until Discuss, to avoid bias. The facilitator sees how many votes have been cast overall, as one number: nothing per group or per person.
@@ -330,8 +330,8 @@ The individual meeting phases cannot be replayed.
   - `meeting:{id}` — everything in a meeting;
   - `team:{id}` — team-level changes (meeting started/ended, task board updates, membership changes).
 - The server checks team membership before accepting any subscription. When a member leaves or is removed, or the team is deleted, the server ends that user's subscriptions to the team's channels (the team channel and its meetings' channels) at once, with an `error` message on each; a former member receives nothing more.
-- Messages are JSON: `{ "type": string, "channel": string, "seq": number, "payload": object }`. Errors have the same shape: `{ "type": "error", "channel", "seq": null, "payload": { "code" } }`.
-- Every message carries a per-channel `seq`. After a reconnect, the client either resyncs by fetching the full state (`GET /meetings/{id}/state`) or requests the messages after the last `seq` it saw.
+- Messages are JSON: `{ "type": string, "channel": string, "seq": number | null, "payload": object }`. Errors have the same shape: `{ "type": "error", "channel", "seq": null, "payload": { "code" } }`.
+- Every persisted message carries a per-channel `seq`; ephemeral and per-user notifications (marked "no `seq`" in §11.2) carry `seq: null` and are outside gap detection, which applies only to sequenced messages. After a reconnect, the client either resyncs by fetching the full state (`GET /meetings/{id}/state`) or requests the messages after the last `seq` it saw.
 - Client → server **ephemeral** messages (writing state, drag in progress, cursor) go over the WebSocket and are **not persisted**. A user's writing state is tied to their socket, so it ends when the socket closes ([ADR-0012](adr/0012-ephemeral-client-messages-and-user-events.md)). **State-changing** actions go through the REST API (or WS commands), are validated, persisted, then broadcast.
 - Protocol details (ticket, subscribe messages, `seq`, presence across replicas): [ADR-0011](adr/0011-realtime-hub.md).
 - Horizontal scaling: when more than one backend replica runs, broadcasts go through **PostgreSQL `LISTEN/NOTIFY`** so that every replica reaches its connected clients (see §11.3).
@@ -588,6 +588,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | PUT | `/meetings/{id}/timer` | Start / pause / stop the timer (facilitator) |
 | PUT | `/meetings/{id}/ready` | Set own ready flag |
 | PATCH | `/meetings/{id}/settings` | `{ voteBudget, voteMaxPerGroup }`: vote budget / max per group (facilitator, until Vote ends; 400 `invalid_vote_settings` out of bounds, 409 `wrong_phase` after Vote) |
+| GET | `/meetings/{id}/settings/impact?voteBudget=&voteMaxPerGroup=` | `{ affected }`: how many people would lose votes under these limits, never who (facilitator, until Vote ends; 400 `invalid_vote_settings`, 409 `wrong_phase` after Vote, `meeting_ended`) |
 | POST | `/meetings/{id}/end` | End the meeting (facilitator) |
 
 ### 14.4 Reflections, groups, votes, reactions
@@ -602,12 +603,12 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/meetings/{id}/groups` | `{ targetId, reflectionId }`: drop a card onto another card, creating a group of both (or joining the target's group if it has one) |
 | PATCH | `/groups/{gid}` | `{ name }`: rename a group |
 | PUT | `/reflections/{rid}/group` | `{ groupId \| null }`: move a card into a group, or out of its group |
-| PUT | `/groups/{gid}/vote` | `{ "delta": +1 \| -1 }` |
+| POST | `/groups/{gid}/vote` | `{ "delta": +1 \| -1 }`: one more vote, or take back the most recent (not idempotent) |
 | PUT | `/reflections/{rid}/reactions/{emoji}` | Add a reaction |
 | DELETE | `/reflections/{rid}/reactions/{emoji}` | Remove a reaction |
 | PUT | `/meetings/{id}/discuss/current` | Set the current group (facilitator) |
 
-`PUT /groups/{gid}/vote` is open to participants during Vote and answers with the meeting state, holding the caller's own votes (`myVotes`) and, for the facilitator only, every voter's anonymous usage (`voteUsage`: votes spent and the most on one group). Errors: 400 `invalid_vote` (delta neither +1 nor −1), 403 `not_participant`, 404 `group_not_found`, 409 `meeting_ended`, `wrong_phase`, `vote_budget_exhausted`, `vote_group_limit`, `no_vote_to_remove`.
+`POST /groups/{gid}/vote` is open to participants during Vote and answers with the meeting state, holding the caller's own votes (`myVotes`) and, for the facilitator only, the number of votes cast overall (`votesCast`; `null` for everyone else and outside Vote). Nobody receives anyone else's votes or usage. Errors: 400 `invalid_vote` (delta neither +1 nor −1), 403 `not_participant`, 404 `group_not_found`, 409 `meeting_ended`, `wrong_phase`, `vote_budget_exhausted`, `vote_group_limit`, `no_vote_to_remove`.
 
 The group endpoints are open to participants during Group (409 `wrong_phase`, `meeting_ended`, 403 `not_participant`) and answer with the meeting state. Unknown or foreign ids give 404 `reflection_not_found` / `group_not_found`; a card dropped onto itself gives 400 `same_reflection`, and a name over 80 characters 400 `invalid_group_name`.
 

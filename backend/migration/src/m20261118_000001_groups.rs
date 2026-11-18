@@ -27,6 +27,16 @@ ALTER TABLE reflections
   ADD COLUMN version INT NOT NULL DEFAULT 0;
 
 CREATE INDEX reflections_group ON reflections (group_id) WHERE group_id IS NOT NULL;
+
+-- Meetings already in Group or later never pass through place_cards: place
+-- their cards now, the same way (by column, in the order they were sent).
+UPDATE reflections r SET position = o.rank
+FROM (SELECT x.id,
+             (row_number() OVER (PARTITION BY x.meeting_id, x."column"
+                                 ORDER BY x.created_at, x.id) - 1)::int AS rank
+      FROM reflections x JOIN meetings m ON m.id = x.meeting_id
+      WHERE m.phase >= 'group') o
+WHERE r.id = o.id;
 "#;
 
 const DOWN: &str = r#"

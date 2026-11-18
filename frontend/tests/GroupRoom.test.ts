@@ -123,6 +123,104 @@ describe('Group phase', () => {
     expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ name: 'CI is slow' });
   });
 
+  it('shows a rename by someone else in a field that only has the focus', async () => {
+    const { calls } = mockFetch(routes());
+    const { wrapper } = await open();
+    const socket = await openSocket();
+    socket.emit({ type: 'subscribed', channel });
+    await flushPromises();
+    const input = wrapper.get('input[aria-label="Group name"]');
+
+    await input.trigger('focus');
+    socket.emit({
+      type: 'group.updated',
+      channel,
+      seq: 3,
+      payload: {
+        group: { id: 'g1', column: 'delta', position: 0, name: 'CI is slow' },
+        reflections: [],
+        clientId: null,
+      },
+    });
+    await flushPromises();
+    expect((input.element as HTMLInputElement).value).toBe('CI is slow');
+    await input.trigger('blur');
+    await flushPromises();
+    expect((input.element as HTMLInputElement).value).toBe('CI is slow');
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+  });
+
+  it('caps a name at 80 characters, as the server counts them', async () => {
+    mockFetch(routes());
+    const { wrapper } = await open();
+    const input = wrapper.get('input[aria-label="Group name"]');
+    const field = input.element as HTMLInputElement;
+    await input.trigger('focus');
+
+    // Emoji are one character each, not two UTF-16 units.
+    await input.setValue('🔥'.repeat(50));
+    expect([...field.value]).toHaveLength(50);
+    await input.setValue('a'.repeat(81));
+    expect(field.value).toBe('a'.repeat(80));
+    // Leading spaces are trimmed by the server, so they do not count.
+    await input.setValue(`  ${'b'.repeat(80)}`);
+    expect(field.value).toBe(`  ${'b'.repeat(80)}`);
+  });
+
+  it('cannot rename a group the server has not created yet', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    mockFetch(
+      routes(
+        grouping({
+          groups: [],
+          reflections: [card('p1', 'plus', 0, 'One'), card('p2', 'plus', 1, 'Two')],
+        }),
+        {
+          [`POST ${BASE}/groups`]: async () => {
+            await gate;
+            return { status: 200, body: grouping({ seq: 3 }) };
+          },
+        },
+      ),
+    );
+    const { wrapper } = await open();
+    await cardEl(wrapper, 'p2').get('[data-move-trigger]').trigger('click');
+    await wrapper.get('[role="menu"]').findAll('[role="menuitem"]')[0]!.trigger('click');
+    await flushPromises();
+    const input = wrapper.get('input[aria-label="Group name"]');
+    expect(input.attributes('readonly')).toBeDefined();
+    release();
+    await flushPromises();
+  });
+
+  it('tells untitled groups apart in Move to… by their first card', async () => {
+    mockFetch(
+      routes(
+        grouping({
+          reflections: [
+            card('p1', 'plus', 0, 'Release train shipped on time', { groupId: 'g2' }),
+            card('p2', 'plus', 1, 'Pairing helped', { groupId: 'g2' }),
+            card('d1', 'delta', 0, 'Flaky e2e tests blocked merges', { groupId: 'g1' }),
+            card('d2', 'delta', 1, 'CI takes 25 minutes', { groupId: 'g1' }),
+            card('i1', 'ideas', 0, 'Quarantine flaky tests'),
+          ],
+          groups: [
+            { id: 'g2', column: 'plus', position: 0, name: '' },
+            { id: 'g1', column: 'delta', position: 0, name: '' },
+          ],
+        }),
+      ),
+    );
+    const { wrapper } = await open();
+    await cardEl(wrapper, 'i1').get('[data-move-trigger]').trigger('click');
+    const items = wrapper.get('[role="menu"]').findAll('[role="menuitem"]');
+    expect(items.slice(0, 2).map((i) => i.text())).toEqual([
+      expect.stringContaining('Release train shipped on time'),
+      expect.stringContaining('Flaky e2e tests blocked merges'),
+    ]);
+  });
+
   it('moves a card from the keyboard with Move to…', async () => {
     const moved = grouping({
       reflections: [

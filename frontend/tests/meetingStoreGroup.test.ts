@@ -185,6 +185,32 @@ describe('meeting store in Group', () => {
     expect(store.meeting?.groups.map((g) => g.id)).toEqual(['g9']);
   });
 
+  it('moves into a group not created yet through one of its cards', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { store, calls } = await opened(grouping(), {
+      [`POST ${BASE}/groups`]: async () => {
+        await gate;
+        return { status: 200, body: grouping({ seq: 3 }) };
+      },
+    });
+    const first = store.dropOnCard('d2', 'i1');
+    const pending = store.meeting!.groups[0]!.id;
+    expect(pending).toMatch(/^pending-/);
+
+    const moved = store.moveToGroup('p1', pending);
+    expect(store.meeting?.reflections.find((r) => r.id === 'p1')?.groupId).toBe(pending);
+    expect(await store.renameGroup(pending, 'CI')).toBe(false);
+    release();
+    await Promise.all([first, moved]);
+    const writes = calls.filter((c) => c.method !== 'GET' && !c.path.endsWith('/join'));
+    expect(writes.map((c) => c.body)).toEqual([
+      { targetId: 'd2', reflectionId: 'i1' },
+      { targetId: 'd2', reflectionId: 'p1' },
+    ]);
+    expect(calls.some((c) => c.path.includes('pending-'))).toBe(false);
+  });
+
   it('dissolves a pair optimistically and undoes a refused move', async () => {
     const { store } = await opened(
       grouping({

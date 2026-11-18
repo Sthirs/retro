@@ -64,6 +64,14 @@ export type MeetingNotice =
  * to date by applying the meeting channel's events in `seq` order. A gap in
  * the sequence, or a reconnect, reloads the snapshot.
  */
+/** Prefix of a group shown before the server has created it. */
+const PENDING_GROUP = 'pending-';
+
+/** Whether a group is a placeholder the server has not created yet. */
+export function isPendingGroup(id: string): boolean {
+  return id.startsWith(PENDING_GROUP);
+}
+
 export const useMeetingStore = defineStore('meeting', () => {
   const session = useSessionStore();
   const meeting = ref<MeetingStateDto | null>(null);
@@ -607,7 +615,7 @@ export const useMeetingStore = defineStore('meeting', () => {
         }
         // A placeholder until the server's answer brings the real group.
         const group: GroupDto = {
-          id: `pending-${reflectionId}`,
+          id: `${PENDING_GROUP}${reflectionId}`,
           column: target.column,
           position: target.position,
           name: '',
@@ -620,8 +628,18 @@ export const useMeetingStore = defineStore('meeting', () => {
     );
   }
 
-  /** Moves a card into a group, or out of its group with `null`. */
+  /**
+   * Moves a card into a group, or out of its group with `null`. A group not
+   * created yet has no id to send: the card is dropped onto one of its cards
+   * instead, which joins the group the server makes (spec §9.3).
+   */
   function moveToGroup(reflectionId: string, groupId: string | null): Promise<boolean> {
+    if (groupId && isPendingGroup(groupId)) {
+      const target = meeting.value?.reflections.find(
+        (r) => r.groupId === groupId && r.id !== reflectionId,
+      );
+      return target ? dropOnCard(target.id, reflectionId) : Promise.resolve(false);
+    }
     return act(
       () => api.moveCard(reflectionId, { groupId }),
       () => {
@@ -636,6 +654,7 @@ export const useMeetingStore = defineStore('meeting', () => {
 
   /** Names a group; empty shows as "Untitled group". */
   function renameGroup(groupId: string, name: string): Promise<boolean> {
+    if (isPendingGroup(groupId)) return Promise.resolve(false);
     return act(
       () => api.renameGroup(groupId, { name }),
       () => {

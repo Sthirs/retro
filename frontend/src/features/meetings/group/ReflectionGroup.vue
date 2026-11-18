@@ -14,7 +14,7 @@ import GroupCard from '@/features/meetings/group/GroupCard.vue';
 import { useGroupView } from '@/features/meetings/group/groupView';
 import { plainText } from '@/features/meetings/group/plainText';
 import { useCardDrag } from '@/features/meetings/group/useCardDrag';
-import { useMeetingStore } from '@/stores/meeting';
+import { isPendingGroup, useMeetingStore } from '@/stores/meeting';
 
 const props = defineProps<{ group: GroupDto; cards: ReflectionDto[] }>();
 const { t } = useI18n();
@@ -34,18 +34,52 @@ const isOver = computed(
   () => drag.over.value?.kind === 'group' && drag.over.value.id === props.group.id,
 );
 
-/** The name being typed; follows the group's name while not being edited. */
+/** A group the server has not created yet: it cannot be renamed. */
+const pending = computed(() => isPendingGroup(props.group.id));
+
+/**
+ * The name being typed. It follows the group's name until the user types:
+ * a field that only has the focus must not send an old name back.
+ */
 const draft = ref(props.group.name);
 const editing = ref(false);
+const dirty = ref(false);
 watch(
   () => props.group.name,
   (name) => {
-    if (!editing.value) draft.value = name;
+    if (!editing.value || !dirty.value) draft.value = name;
   },
 );
 
+function onFocus(): void {
+  editing.value = true;
+  dirty.value = false;
+}
+
+/**
+ * Keeps at most NAME_MAX characters after the leading spaces, counted as
+ * the server counts them (code points, after trim).
+ */
+function onInput(event: Event): void {
+  dirty.value = true;
+  // An IME candidate is not text yet; it is checked once composed.
+  if ((event as InputEvent).isComposing) return;
+  const input = event.target as HTMLInputElement;
+  const lead = /^\s*/.exec(input.value)?.[0] ?? '';
+  const chars = [...input.value.slice(lead.length)];
+  if (chars.length > NAME_MAX) {
+    draft.value = lead + chars.slice(0, NAME_MAX).join('');
+    input.value = draft.value;
+  }
+}
+
 function save(): void {
   editing.value = false;
+  if (!dirty.value) {
+    draft.value = props.group.name;
+    return;
+  }
+  dirty.value = false;
   const name = draft.value.trim();
   draft.value = name;
   if (name !== props.group.name) void store.renameGroup(props.group.id, name);
@@ -63,6 +97,7 @@ function onKeyDown(event: KeyboardEvent): void {
     event.stopPropagation();
     draft.value = props.group.name;
     editing.value = false;
+    dirty.value = false;
     input.blur();
   }
 }
@@ -100,9 +135,9 @@ async function toggle(): Promise<void> {
           type="text"
           :aria-label="t('group.nameLabel')"
           :placeholder="t('group.untitled')"
-          :maxlength="NAME_MAX"
-          :readonly="!store.isActive"
-          @focus="editing = true"
+          :readonly="!store.isActive || pending"
+          @focus="onFocus"
+          @input="onInput"
           @keydown="onKeyDown"
           @blur="onBlur"
         />

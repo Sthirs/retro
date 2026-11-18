@@ -35,11 +35,16 @@ function excerpt(html: string): string {
 const groups = computed(() =>
   (store.meeting?.groups ?? [])
     .filter((g) => g.id !== props.card.groupId)
-    .map((g) => ({
-      id: g.id,
-      name: g.name || t('group.untitled'),
-      count: store.groupCards.get(g.id)?.length ?? 0,
-    })),
+    .map((g) => {
+      const cards = store.groupCards.get(g.id) ?? [];
+      return {
+        id: g.id,
+        name: g.name || t('group.untitled'),
+        // Untitled groups are told apart by their first card.
+        excerpt: !g.name && cards[0] ? excerpt(cards[0].content) : '',
+        count: cards.length,
+      };
+    }),
 );
 const loose = computed(() =>
   (store.meeting?.reflections ?? [])
@@ -208,7 +213,10 @@ function ungroup(): void {
           @click="intoGroup(group.id)"
         >
           <AppIcon name="grid" :size="16" />
-          <span class="item__label">{{ group.name }}</span>
+          <span class="item__text">
+            <span class="item__label">{{ group.name }}</span>
+            <span v-if="group.excerpt" class="item__excerpt">{{ group.excerpt }}</span>
+          </span>
           <span class="item__count">{{ t('group.cards', group.count) }}</span>
         </button>
       </template>
@@ -326,6 +334,23 @@ function ungroup(): void {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item__text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px 0;
+}
+.item__text .item__label {
+  flex: none;
+}
+.item__excerpt {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

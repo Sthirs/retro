@@ -615,6 +615,14 @@ export const useMeetingStore = defineStore('meeting', () => {
     call: () => Promise<{ status: number; data: unknown }>,
     optimistic?: () => void,
   ): Promise<boolean> {
+    return (await actResult(call, optimistic)).ok;
+  }
+
+  /** As `act()`, and says why it failed. */
+  async function actResult(
+    call: () => Promise<{ status: number; data: unknown }>,
+    optimistic?: () => void,
+  ): Promise<{ ok: true } | { ok: false; error: unknown }> {
     const before = meeting.value ? structuredClone(toRaw(meeting.value)) : null;
     const since = voteEpoch;
     actionError.value = null;
@@ -626,12 +634,11 @@ export const useMeetingStore = defineStore('meeting', () => {
       const { res, log } = await logged(call);
       if (res.status !== 200 && res.status !== 201) throw apiError(res);
       accept(res.data as MeetingStateDto, log, since);
-      return true;
+      return { ok: true };
     } catch (e) {
       if (optimistic && before) undo(before);
       actionError.value = errorCode(e);
-      lastFailure = e;
-      return false;
+      return { ok: false, error: e };
     } finally {
       if (optimistic) optimisticInFlight--;
     }
@@ -878,9 +885,6 @@ export const useMeetingStore = defineStore('meeting', () => {
     return run;
   }
 
-  /** The last failure `act()` caught. */
-  let lastFailure: unknown = null;
-
   /**
    * Sets the vote budget and the most votes per group (facilitator). When the
    * answer is lost or broken (not a refusal), the change may have committed
@@ -888,13 +892,13 @@ export const useMeetingStore = defineStore('meeting', () => {
    */
   async function saveVoteSettings(budget: number, maxPerGroup: number): Promise<boolean> {
     const id = meetingId.value!;
-    lastFailure = null;
-    const saved = await act(() =>
+    const result = await actResult(() =>
       api.updateSettings(id, { voteBudget: budget, voteMaxPerGroup: maxPerGroup }),
     );
-    const refused = lastFailure instanceof ApiError && lastFailure.status < 500;
-    if (!saved && !refused && meetingId.value === id) void resync();
-    return saved;
+    if (result.ok) return true;
+    const refused = result.error instanceof ApiError && result.error.status < 500;
+    if (!refused && meetingId.value === id) void resync();
+    return false;
   }
 
   /**

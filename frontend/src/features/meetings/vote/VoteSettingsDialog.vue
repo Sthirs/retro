@@ -191,7 +191,9 @@ async function save(): Promise<void> {
         <button
           type="button"
           class="number__button"
-          :aria-label="`${t('vote.decrease')}: ${t('vote.budgetLabel')}`"
+          :aria-label="
+            t('vote.stepperLabel', { action: t('vote.decrease'), setting: t('vote.budgetLabel') })
+          "
           :disabled="budget <= BUDGET.min"
           @click="step('budget', -1)"
         >
@@ -211,7 +213,9 @@ async function save(): Promise<void> {
         <button
           type="button"
           class="number__button"
-          :aria-label="`${t('vote.increase')}: ${t('vote.budgetLabel')}`"
+          :aria-label="
+            t('vote.stepperLabel', { action: t('vote.increase'), setting: t('vote.budgetLabel') })
+          "
           :disabled="budget >= BUDGET.max"
           @click="step('budget', 1)"
         >
@@ -228,7 +232,9 @@ async function save(): Promise<void> {
         <button
           type="button"
           class="number__button"
-          :aria-label="`${t('vote.decrease')}: ${t('vote.maxLabel')}`"
+          :aria-label="
+            t('vote.stepperLabel', { action: t('vote.decrease'), setting: t('vote.maxLabel') })
+          "
           :disabled="perGroup <= PER_GROUP.min"
           @click="step('perGroup', -1)"
         >
@@ -248,7 +254,9 @@ async function save(): Promise<void> {
         <button
           type="button"
           class="number__button"
-          :aria-label="`${t('vote.increase')}: ${t('vote.maxLabel')}`"
+          :aria-label="
+            t('vote.stepperLabel', { action: t('vote.increase'), setting: t('vote.maxLabel') })
+          "
           :disabled="perGroup >= PER_GROUP.max"
           @click="step('perGroup', 1)"
         >

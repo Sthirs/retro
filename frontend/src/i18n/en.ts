@@ -412,6 +412,8 @@ export default {
     add: 'Add a vote to {name}',
     remove: 'Remove a vote from {name}',
     where: '{column}, group {n}',
+    controlName: '{label} ({where})',
+    stepperLabel: '{action}: {setting}',
     settings: 'Settings',
     settingsTitle: 'Vote settings',
     budgetLabel: 'Votes per person',

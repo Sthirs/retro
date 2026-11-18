@@ -40,7 +40,9 @@ const label = computed(() =>
   voteLabel(props.group, props.cards, { untitled: t('group.untitled'), image: t('group.image') }),
 );
 /** What the vote controls are called: unique in the room. */
-const controlName = computed(() => (props.where ? `${label.value} (${props.where})` : label.value));
+const controlName = computed(() =>
+  props.where ? t('vote.controlName', { label: label.value, where: props.where }) : label.value,
+);
 const voted = computed(() => (store.myVotes.get(props.group.id) ?? 0) > 0);
 const expanded = computed(() => view.expanded.has(props.group.id));
 

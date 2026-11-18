@@ -1,8 +1,5 @@
 import type { GroupDto, ReflectionDto } from '@/api/client';
-import { plainText } from '@/features/meetings/group/plainText';
-
-/** Longest card text used as the name of a single card, in characters. */
-const SHORT_NAME = 40;
+import { excerpt, plainText } from '@/features/meetings/group/plainText';
 
 /**
  * What a group is called in Vote (its region and its stepper): its name, a
@@ -15,6 +12,5 @@ export function voteLabel(
 ): string {
   if (group.name) return group.name;
   if (cards.length !== 1) return words.untitled;
-  const chars = [...(cards[0] ? plainText(cards[0].content, words.image) : '')];
-  return chars.length > SHORT_NAME ? `${chars.slice(0, SHORT_NAME).join('')}…` : chars.join('');
+  return excerpt(cards[0] ? plainText(cards[0].content, words.image) : '');
 }

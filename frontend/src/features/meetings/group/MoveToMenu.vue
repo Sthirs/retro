@@ -11,7 +11,7 @@ import type { ReflectionDto } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
 import { usePopover } from '@/composables/usePopover';
 import { useGroupView } from '@/features/meetings/group/groupView';
-import { plainText } from '@/features/meetings/group/plainText';
+import { excerpt, plainText } from '@/features/meetings/group/plainText';
 import { useMeetingStore } from '@/stores/meeting';
 
 const props = defineProps<{ card: ReflectionDto; disabled?: boolean }>();
@@ -24,12 +24,8 @@ const trigger = ref<HTMLButtonElement | null>(null);
 const menu = ref<HTMLElement | null>(null);
 const { open, close } = usePopover(root, trigger);
 
-/** Longest card excerpt in a menu row. */
-const EXCERPT = 48;
-
-function excerpt(html: string): string {
-  const text = plainText(html, t('group.image'));
-  return text.length > EXCERPT ? `${text.slice(0, EXCERPT - 1)}…` : text;
+function cardExcerpt(html: string): string {
+  return excerpt(plainText(html, t('group.image')));
 }
 
 const groups = computed(() =>
@@ -41,7 +37,7 @@ const groups = computed(() =>
         id: g.id,
         name: g.name || t('group.untitled'),
         // Untitled groups are told apart by their first card.
-        excerpt: !g.name && cards[0] ? excerpt(cards[0].content) : '',
+        excerpt: !g.name && cards[0] ? cardExcerpt(cards[0].content) : '',
         count: cards.length,
       };
     }),
@@ -49,7 +45,7 @@ const groups = computed(() =>
 const loose = computed(() =>
   (store.meeting?.reflections ?? [])
     .filter((r) => !r.groupId && r.id !== props.card.id)
-    .map((r) => ({ id: r.id, column: r.column, text: excerpt(r.content) })),
+    .map((r) => ({ id: r.id, column: r.column, text: cardExcerpt(r.content) })),
 );
 
 const PANEL_WIDTH = 280;

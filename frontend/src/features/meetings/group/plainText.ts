@@ -12,3 +12,15 @@ export function plainText(html: string, image: string): string {
   for (const block of doc.querySelectorAll('p, li, br')) block.append(' ');
   return (doc.body.textContent ?? '').replace(/\s+/g, ' ').trim();
 }
+
+/** Longest excerpt of a card's text, in characters, `…` included. */
+export const EXCERPT_CHARS = 48;
+
+/**
+ * `text` cut to at most `max` characters, `…` included, never inside an
+ * emoji or another character outside the BMP.
+ */
+export function excerpt(text: string, max = EXCERPT_CHARS): string {
+  const chars = [...text];
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text;
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ssoUrl } from '@/auth/config';
+import { EXCERPT_CHARS, excerpt } from '@/features/meetings/group/plainText';
 import { AVATAR_COLORS, avatarColorIndex, initials } from '@/lib/avatar';
 import { safeRedirect } from '@/lib/redirect';
 import { applyThemePreference, readThemePreference, resolveTheme } from '@/lib/theme';
@@ -98,5 +99,19 @@ describe('formatDayMonth', () => {
   it('formats as "d MMM" with a three-letter month', () => {
     expect(formatDayMonth('2026-11-10T10:00:00Z')).toBe('10 Nov');
     expect(formatDayMonth('2026-09-03T10:00:00Z')).toBe('3 Sep');
+  });
+});
+
+describe('excerpt', () => {
+  it('keeps short text whole, and cuts long text to the limit with …', () => {
+    expect(excerpt('Short', 10)).toBe('Short');
+    expect(excerpt('a'.repeat(10), 10)).toBe('a'.repeat(10));
+    expect(excerpt('a'.repeat(11), 10)).toBe(`${'a'.repeat(9)}…`);
+    expect([...excerpt('a'.repeat(100))]).toHaveLength(EXCERPT_CHARS);
+  });
+
+  it('never cuts inside a character outside the BMP', () => {
+    const text = '🎉'.repeat(12);
+    expect(excerpt(text, 10)).toBe(`${'🎉'.repeat(9)}…`);
   });
 });

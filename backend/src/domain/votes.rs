@@ -36,6 +36,10 @@ use crate::{
 pub const BUDGET_RANGE: std::ops::RangeInclusive<i32> = 1..=20;
 /// Bounds of the votes one person may give the same group.
 pub const MAX_PER_GROUP_RANGE: std::ops::RangeInclusive<i32> = 1..=10;
+/// The vote budget of a new meeting (the column default of the migration).
+pub const DEFAULT_BUDGET: i32 = 5;
+/// The most votes per group of a new meeting (the column default).
+pub const DEFAULT_MAX_PER_GROUP: i32 = 3;
 
 /// The viewer's own votes on one group.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]

@@ -61,9 +61,13 @@ pub async fn vote(
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct VoteSettingsRequest {
-    /// Votes per person, 1–20.
+    // Bounds and defaults: the domain's `BUDGET_RANGE`, `DEFAULT_BUDGET`,
+    // `MAX_PER_GROUP_RANGE` and `DEFAULT_MAX_PER_GROUP` (a test checks).
+    /// Votes per person.
+    #[schema(minimum = 1, maximum = 20, default = 5)]
     pub vote_budget: i32,
-    /// Most votes one person may give the same group, 1–10.
+    /// Most votes one person may give the same group.
+    #[schema(minimum = 1, maximum = 10, default = 3)]
     pub vote_max_per_group: i32,
 }
 
@@ -109,9 +113,11 @@ pub async fn update_settings(
 #[serde(rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct VoteImpactQuery {
-    /// Votes per person, 1–20.
+    /// Votes per person.
+    #[param(minimum = 1, maximum = 20)]
     pub vote_budget: i32,
-    /// Most votes one person may give the same group, 1–10.
+    /// Most votes one person may give the same group.
+    #[param(minimum = 1, maximum = 10)]
     pub vote_max_per_group: i32,
 }
 
@@ -147,4 +153,34 @@ pub async fn settings_impact(
         )
         .await?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+
+    use crate::domain::votes::{
+        BUDGET_RANGE, DEFAULT_BUDGET, DEFAULT_MAX_PER_GROUP, MAX_PER_GROUP_RANGE,
+    };
+
+    /// The OpenAPI bounds are literals (utoipa needs them so): they must
+    /// match the domain's, which the frontend reads from the document.
+    #[test]
+    fn the_documented_settings_bounds_are_the_domains() {
+        let doc: Value = serde_json::from_str(&crate::openapi::json()).unwrap();
+        let fields = &doc["components"]["schemas"]["VoteSettingsRequest"]["properties"];
+        for (name, range, default) in [
+            ("voteBudget", BUDGET_RANGE, DEFAULT_BUDGET),
+            (
+                "voteMaxPerGroup",
+                MAX_PER_GROUP_RANGE,
+                DEFAULT_MAX_PER_GROUP,
+            ),
+        ] {
+            let field = &fields[name];
+            assert_eq!(field["minimum"], *range.start(), "{name}");
+            assert_eq!(field["maximum"], *range.end(), "{name}");
+            assert_eq!(field["default"], default, "{name}");
+        }
+    }
 }

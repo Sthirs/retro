@@ -729,9 +729,17 @@ export interface VoteRequest {
  * The meeting's vote settings.
  */
 export interface VoteSettingsRequest {
-  /** Votes per person, 1–20. */
+  /**
+   * Votes per person.
+   * @minimum 1
+   * @maximum 20
+   */
   voteBudget: number;
-  /** Most votes one person may give the same group, 1–10. */
+  /**
+   * Most votes one person may give the same group.
+   * @minimum 1
+   * @maximum 10
+   */
   voteMaxPerGroup: number;
 }
 
@@ -758,9 +766,17 @@ export type OidcCallbackParams = {
 };
 
 export type SettingsImpactParams = {
-  /** Votes per person, 1–20. */
+  /**
+   * Votes per person.
+   * @minimum 1
+   * @maximum 20
+   */
   voteBudget: number;
-  /** Most votes one person may give the same group, 1–10. */
+  /**
+   * Most votes one person may give the same group.
+   * @minimum 1
+   * @maximum 10
+   */
   voteMaxPerGroup: number;
 };
 

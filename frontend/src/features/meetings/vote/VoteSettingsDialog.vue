@@ -16,6 +16,7 @@ import AppButton from '@/components/ui/AppButton.vue';
 import AppDialog from '@/components/ui/AppDialog.vue';
 import { useErrorText } from '@/composables/useErrorText';
 import { MeetingPhase } from '@/api/client';
+import { BUDGET, PER_GROUP } from '@/features/meetings/vote/voteLimits';
 import { useMeetingStore } from '@/stores/meeting';
 
 const props = defineProps<{ open: boolean }>();
@@ -23,10 +24,6 @@ const emit = defineEmits<{ close: [] }>();
 const { t } = useI18n();
 const errorText = useErrorText();
 const store = useMeetingStore();
-
-/** Defaults and bounds (spec §9.4). */
-const BUDGET = { default: 5, min: 1, max: 20 };
-const PER_GROUP = { default: 3, min: 1, max: 10 };
 
 const budget = ref(BUDGET.default);
 const perGroup = ref(PER_GROUP.default);

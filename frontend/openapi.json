@@ -1950,21 +1950,25 @@
           {
             "name": "voteBudget",
             "in": "query",
-            "description": "Votes per person, 1–20.",
+            "description": "Votes per person.",
             "required": true,
             "schema": {
               "type": "integer",
-              "format": "int32"
+              "format": "int32",
+              "maximum": 20,
+              "minimum": 1
             }
           },
           {
             "name": "voteMaxPerGroup",
             "in": "query",
-            "description": "Most votes one person may give the same group, 1–10.",
+            "description": "Most votes one person may give the same group.",
             "required": true,
             "schema": {
               "type": "integer",
-              "format": "int32"
+              "format": "int32",
+              "maximum": 10,
+              "minimum": 1
             }
           }
         ],
@@ -5421,12 +5425,18 @@
           "voteBudget": {
             "type": "integer",
             "format": "int32",
-            "description": "Votes per person, 1–20."
+            "description": "Votes per person.",
+            "default": 5,
+            "maximum": 20,
+            "minimum": 1
           },
           "voteMaxPerGroup": {
             "type": "integer",
             "format": "int32",
-            "description": "Most votes one person may give the same group, 1–10."
+            "description": "Most votes one person may give the same group.",
+            "default": 3,
+            "maximum": 10,
+            "minimum": 1
           }
         }
       },

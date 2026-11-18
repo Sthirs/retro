@@ -149,6 +149,12 @@ export const useMeetingStore = defineStore('meeting', () => {
   let confirmedCast: number | null = null;
   /** A snapshot's votes were unsure: reload once the votes are answered. */
   let voteResyncWanted = false;
+  /**
+   * The phase changed and its snapshot has not come yet: what is shown is
+   * still the previous phase's (e.g. loose cards at Vote start, or no
+   * reflections at Group start), so the room waits for it.
+   */
+  const phaseLoading = ref(false);
   /** Bumped on every reset (e.g. another account): stale work stops. */
   let generation = 0;
   /**
@@ -310,6 +316,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     loadError.value = null;
     actionError.value = null;
     notice.value = null;
+    phaseLoading.value = false;
     queued = [];
     online = new Set();
     resyncWanted = false;
@@ -399,6 +406,8 @@ export const useMeetingStore = defineStore('meeting', () => {
       replaying = false;
     }
     renderVotes();
+    // A phase change replayed on it needs the new phase's snapshot (asked).
+    phaseLoading.value = meeting.value?.phase !== state.phase;
     // The log should bring it back to every event seen; reload if it did not.
     if (meeting.value && meeting.value.seq < seen) void resync();
   }
@@ -474,6 +483,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     if (event.type === 'error') {
       loadSeq++;
       meeting.value = null;
+      phaseLoading.value = false;
       queued = [];
       resyncWanted = false;
       loading.value = false;
@@ -526,8 +536,10 @@ export const useMeetingStore = defineStore('meeting', () => {
       case 'phase.changed':
         m.phase = p.phase as MeetingStateDto['phase'];
         // Ready flags reset with every phase; the snapshot of the new phase
-        // (e.g. every reflection, from Group on) comes from the server.
+        // (e.g. every reflection, from Group on) comes from the server, and
+        // the room waits for it.
         for (const participant of m.participants) participant.ready = false;
+        phaseLoading.value = true;
         void resync();
         break;
       case 'timer.updated':
@@ -908,6 +920,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     meetingId,
     loading,
     loadError,
+    phaseLoading,
     actionError,
     notice,
     isFacilitator,

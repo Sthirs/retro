@@ -125,6 +125,45 @@ describe('meeting store', () => {
     expect(store.participantsById.get(dana.id)?.online).toBe(false);
   });
 
+  it('waits for the new phase’s snapshot after every phase change', async () => {
+    let release!: () => void;
+    let phase = 'reflect';
+    const { store } = await opened({
+      [JOIN]: { status: 200, body: meetingState({ seq: 2, phase: 'reflect' }) },
+      [STATE]: async () => {
+        await new Promise<void>((resolve) => (release = resolve));
+        return { status: 200, body: meetingState({ seq: 3, phase }) };
+      },
+    });
+    expect(store.phaseLoading).toBe(false);
+    // Reflect → Group: the snapshot still holds no one else's reflections.
+    phase = 'group';
+    store.apply({ type: 'phase.changed', channel, seq: 3, payload: { phase: 'group' } });
+    expect(store.meeting!.phase).toBe('group');
+    expect(store.phaseLoading).toBe(true);
+    await new Promise((r) => setTimeout(r));
+    release();
+    await new Promise((r) => setTimeout(r));
+    expect(store.phaseLoading).toBe(false);
+  });
+
+  it('keeps waiting for the new phase when its snapshot fails, until a retry', async () => {
+    let reads = 0;
+    const { store } = await opened({
+      [JOIN]: { status: 200, body: meetingState({ seq: 2, phase: 'group' }) },
+      [STATE]: () =>
+        ++reads === 1
+          ? problem(500, 'internal')
+          : { status: 200, body: meetingState({ seq: 3, phase: 'vote' }) },
+    });
+    store.apply({ type: 'phase.changed', channel, seq: 3, payload: { phase: 'vote' } });
+    await new Promise((r) => setTimeout(r));
+    expect(store.phaseLoading).toBe(true);
+    expect(store.loadError).toBe('internal');
+    await store.resync();
+    expect(store.phaseLoading).toBe(false);
+  });
+
   it('reloads the snapshot after a gap or a resync', async () => {
     const { store, calls } = await opened({
       [STATE]: { status: 200, body: meetingState({ seq: 9, phase: 'group' }) },

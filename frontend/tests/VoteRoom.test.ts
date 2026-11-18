@@ -410,11 +410,11 @@ describe('Vote phase', () => {
     socket.emit({ type: 'phase.changed', channel, seq: 3, payload: { phase: 'vote' } });
     await flushPromises();
     expect(wrapper.get('h1').text()).toBe('Vote');
-    expect(wrapper.find('[data-testid="vote-loading"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="phase-loading"]').text()).toBe('Loading the Vote phase…');
     expect(wrapper.findAll('[data-testid="vote-group"]')).toHaveLength(0);
     release();
     await flushPromises();
-    expect(wrapper.find('[data-testid="vote-loading"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="phase-loading"]').exists()).toBe(false);
     expect(wrapper.findAll('[data-testid="vote-group"]')).toHaveLength(2);
   });
 });

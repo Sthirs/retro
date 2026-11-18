@@ -96,15 +96,6 @@ watch(
   },
 );
 
-/**
- * Whether the snapshot is Vote's: every card in a group. Right after the
- * phase changes, the Group snapshot (with loose cards) is still shown until
- * the new one arrives; the ballot waits for it rather than hide those cards.
- */
-const ballotReady = computed(
-  () => meeting.value?.reflections.every((r) => r.groupId !== null) ?? false,
-);
-
 /** "Marco Bianchi is now the facilitator" (or drafts discarded), for a few seconds. */
 const noticeText = ref('');
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -155,21 +146,22 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
         />
         <AppAlert v-if="store.actionError">{{ errorText(store.actionError) }}</AppAlert>
         <div class="room__phase">
-          <IcebreakerPhase v-if="meeting.phase === MeetingPhase.icebreaker" />
-          <ReflectPhase v-else-if="meeting.phase === MeetingPhase.reflect" />
-          <GroupPhase v-else-if="meeting.phase === MeetingPhase.group" />
-          <template v-else-if="meeting.phase === MeetingPhase.vote">
-            <VotePhase v-if="ballotReady" />
-            <div v-else-if="store.loadError" class="ballot-wait">
+          <!-- Until the new phase's snapshot comes, the old one is shown. -->
+          <template v-if="store.phaseLoading">
+            <div v-if="store.loadError" class="phase-wait">
               <AppAlert>{{ errorText(store.loadError) }}</AppAlert>
               <AppButton variant="ghost" size="touch" @click="store.resync()">
                 {{ t('common.retry') }}
               </AppButton>
             </div>
-            <p v-else class="loading" aria-busy="true" data-testid="vote-loading">
-              {{ t('vote.loading') }}
+            <p v-else class="loading" aria-busy="true" data-testid="phase-loading">
+              {{ t('meetingRoom.phaseLoading', { phase: t(`phases.${meeting.phase}`) }) }}
             </p>
           </template>
+          <IcebreakerPhase v-else-if="meeting.phase === MeetingPhase.icebreaker" />
+          <ReflectPhase v-else-if="meeting.phase === MeetingPhase.reflect" />
+          <GroupPhase v-else-if="meeting.phase === MeetingPhase.group" />
+          <VotePhase v-else-if="meeting.phase === MeetingPhase.vote" />
           <PhasePlaceholder v-else />
         </div>
       </main>
@@ -189,7 +181,7 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
 .loading {
   color: var(--muted);
 }
-.ballot-wait {
+.phase-wait {
   display: flex;
   flex-direction: column;
   align-items: flex-start;

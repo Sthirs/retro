@@ -22,7 +22,7 @@ use crate::{
         meetings::{self, MeetingView, Participant},
         reflections::{self, ReflectionCountsDto, ReflectionsSnapshot},
         timer::{Timer, TimerAction},
-        votes::{self, MyVoteDto, VoteUsageDto},
+        votes::{self, MyVoteDto},
     },
     entities::{
         meeting::{MeetingPhase, MeetingStatus},
@@ -193,9 +193,9 @@ pub struct MeetingStateDto {
     /// From Vote on, the caller's own votes per group. Nobody sees anyone
     /// else's votes.
     pub my_votes: Vec<MyVoteDto>,
-    /// During Vote, for the facilitator only: every voter's usage,
-    /// anonymous (votes cast overall, and who lower limits would trim).
-    pub vote_usage: Option<Vec<VoteUsageDto>>,
+    /// During Vote, for the facilitator only: votes cast overall, as one
+    /// number (nothing per group or per person). `null` for everyone else.
+    pub votes_cast: Option<i32>,
     /// Last event `seq` included in this snapshot on `meeting:{id}`.
     pub seq: i64,
     #[serde(with = "time::serde::rfc3339")]
@@ -271,7 +271,7 @@ impl MeetingStateDto {
             vote_budget: m.vote_budget,
             vote_max_per_group: m.vote_max_per_group,
             my_votes: votes.mine,
-            vote_usage: votes.usage,
+            votes_cast: votes.cast,
             seq: m.event_seq,
             created_at: m.created_at,
             ended_at: m.ended_at,
@@ -283,7 +283,7 @@ impl MeetingStateDto {
 /// The votes part of a state, as its viewer may see it.
 struct VotesSnapshot {
     mine: Vec<MyVoteDto>,
-    usage: Option<Vec<VoteUsageDto>>,
+    cast: Option<i32>,
 }
 
 /// The meeting's current state, as `actor` sees it. Its reads share one
@@ -305,7 +305,7 @@ pub(crate) async fn state_of(
     let groups = groups::snapshot(&txn, &view.meeting).await?;
     let votes = VotesSnapshot {
         mine: votes::my_votes(&txn, &view.meeting, actor).await?,
-        usage: votes::usage(&txn, &view.meeting, actor).await?,
+        cast: votes::votes_cast(&txn, &view.meeting, actor).await?,
     };
     txn.commit().await?;
     let online = state.hub.online(meeting_id);

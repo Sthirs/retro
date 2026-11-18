@@ -75,6 +75,7 @@ use crate::{
         api::groups::move_card,
         api::votes::vote,
         api::votes::update_settings,
+        api::votes::settings_impact,
         api::attachments::upload_attachment,
         api::attachments::get_attachment,
         api::meetings::get_invite_link,

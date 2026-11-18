@@ -190,7 +190,7 @@ fn group_of(state: &Value, card: &str) -> String {
 
 async fn vote(app: &TestApp, token: &str, group: &str, delta: i32) -> TestResponse {
     app.call(
-        "PUT",
+        "POST",
         &format!("/api/v1/groups/{group}/vote"),
         token,
         Some(json!({ "delta": delta })),
@@ -244,12 +244,43 @@ fn spent(state: &Value) -> i64 {
 
 /// Votes cast overall, as the facilitator sees them.
 fn cast(state: &Value) -> i64 {
-    state["voteUsage"]
-        .as_array()
-        .expect("the facilitator sees vote usage")
-        .iter()
-        .map(|u| u["spent"].as_i64().unwrap())
-        .sum()
+    state["votesCast"]
+        .as_i64()
+        .expect("the facilitator sees the votes cast")
+}
+
+/// How many people `budget` and `max` would take votes from.
+async fn impact(app: &TestApp, token: &str, meeting: &str, budget: i32, max: i32) -> TestResponse {
+    app.call(
+        "GET",
+        &format!(
+            "/api/v1/meetings/{meeting}/settings/impact?voteBudget={budget}&voteMaxPerGroup={max}"
+        ),
+        token,
+        None,
+    )
+    .await
+}
+
+/// `token`'s votes, oldest accepted first: (vote id, group id).
+async fn rows(app: &TestApp, meeting: &str, token: &str) -> Vec<(Uuid, Uuid)> {
+    use retro_backend::entities::vote;
+    use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+    let user: Uuid = app.call("GET", "/api/v1/me", token, None).await.json()["user"]["id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    vote::Entity::find()
+        .filter(vote::Column::MeetingId.eq(meeting.parse::<Uuid>().unwrap()))
+        .filter(vote::Column::UserId.eq(user))
+        .order_by_asc(vote::Column::Ordinal)
+        .all(&app.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|v| (v.id, v.group_id))
+        .collect()
 }
 
 fn ok(res: TestResponse) -> Value {
@@ -358,30 +389,17 @@ async fn everyone_sees_only_their_own_votes() {
 
     let bob = state(&app, &r.bob, &r.meeting).await;
     assert_eq!(mine(&bob), vec![(r.pair.clone(), 2)]);
-    assert_eq!(bob["voteUsage"], Value::Null);
+    assert_eq!(bob["votesCast"], Value::Null);
     let erin = state(&app, &r.erin, &r.meeting).await;
     assert_eq!(mine(&erin), vec![(r.d1.clone(), 1)]);
-    assert_eq!(erin["voteUsage"], Value::Null);
+    assert_eq!(erin["votesCast"], Value::Null);
 
     // The facilitator has no votes yet, and sees only how many were cast,
-    // per voter and anonymous.
+    // as one number: nothing per voter.
     let alice = state(&app, &r.alice, &r.meeting).await;
     assert_eq!(mine(&alice), vec![]);
     assert_eq!(cast(&alice), 3);
-    let mut usage: Vec<(i64, i64)> = alice["voteUsage"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|u| {
-            assert_eq!(u.as_object().unwrap().len(), 2, "no ids: {u}");
-            (
-                u["spent"].as_i64().unwrap(),
-                u["maxOnGroup"].as_i64().unwrap(),
-            )
-        })
-        .collect();
-    usage.sort();
-    assert_eq!(usage, vec![(1, 1), (2, 2)]);
+    assert!(alice.get("voteUsage").is_none(), "no per-voter usage");
 
     // No total appears anywhere: groups carry no votes.
     for group in alice["groups"].as_array().unwrap() {
@@ -410,7 +428,7 @@ async fn the_cast_count_follows_the_facilitator_role() {
     .await;
     assert_eq!(res.status, 200, "{}", res.text());
     assert_eq!(
-        state(&app, &r.alice, &r.meeting).await["voteUsage"],
+        state(&app, &r.alice, &r.meeting).await["votesCast"],
         Value::Null
     );
     assert_eq!(cast(&state(&app, &r.bob, &r.meeting).await), 1);
@@ -454,7 +472,7 @@ async fn voting_needs_a_participant_during_vote() {
     let seen = state(&app, &r.bob, &r.meeting).await;
     assert_eq!(mine(&seen), vec![(r.pair.clone(), 1)]);
     assert_eq!(
-        state(&app, &r.alice, &r.meeting).await["voteUsage"],
+        state(&app, &r.alice, &r.meeting).await["votesCast"],
         Value::Null
     );
 }
@@ -585,4 +603,125 @@ async fn unchanged_settings_change_nothing() {
     let before = state(&app, &r.bob, &r.meeting).await["seq"].clone();
     ok(settings(&app, &r.alice, &r.meeting, 5, 3).await);
     assert_eq!(state(&app, &r.bob, &r.meeting).await["seq"], before);
+}
+
+#[tokio::test]
+async fn a_vote_is_a_post_not_a_put() {
+    let app = TestApp::new().await;
+    let r = room(&app).await;
+    let res = app
+        .call(
+            "PUT",
+            &format!("/api/v1/groups/{}/vote", r.pair),
+            &r.bob,
+            Some(json!({ "delta": 1 })),
+        )
+        .await;
+    assert_eq!(res.status, 405);
+    assert_eq!(spent(&state(&app, &r.bob, &r.meeting).await), 0);
+}
+
+#[tokio::test]
+async fn the_group_limit_goes_first_and_keeps_the_oldest_votes() {
+    let app = TestApp::new().await;
+    let r = room(&app).await;
+    // bob, oldest first: pair, pair, d1. Group limit 1 first drops the second
+    // pair vote; budget 2 then fits pair + d1. (Budget first would keep only
+    // the two pair votes, then drop one: pair alone.)
+    for group in [&r.pair, &r.pair, &r.d1] {
+        ok(vote(&app, &r.bob, group, 1).await);
+    }
+    let before = rows(&app, &r.meeting, &r.bob).await;
+    ok(settings(&app, &r.alice, &r.meeting, 2, 1).await);
+    let after = rows(&app, &r.meeting, &r.bob).await;
+    assert_eq!(after, vec![before[0], before[2]]);
+}
+
+#[tokio::test]
+async fn most_recent_means_accepted_last_not_the_clock() {
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    let app = TestApp::new().await;
+    let r = room(&app).await;
+    for _ in 0..3 {
+        ok(vote(&app, &r.bob, &r.pair, 1).await);
+    }
+    let votes = rows(&app, &r.meeting, &r.bob).await;
+    // The clock stepped back: the newest vote carries the oldest time.
+    app.db
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE votes SET created_at = created_at - interval '1 hour' WHERE id = $1",
+            [votes[2].0.into()],
+        ))
+        .await
+        .unwrap();
+    ok(vote(&app, &r.bob, &r.pair, -1).await);
+    assert_eq!(rows(&app, &r.meeting, &r.bob).await, votes[..2].to_vec());
+    ok(vote(&app, &r.bob, &r.pair, 1).await);
+    let votes = rows(&app, &r.meeting, &r.bob).await;
+    app.db
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "UPDATE votes SET created_at = created_at - interval '1 hour' WHERE id = $1",
+            [votes[2].0.into()],
+        ))
+        .await
+        .unwrap();
+    ok(settings(&app, &r.alice, &r.meeting, 5, 2).await);
+    assert_eq!(rows(&app, &r.meeting, &r.bob).await, votes[..2].to_vec());
+}
+
+#[tokio::test]
+async fn the_settings_preview_counts_people_never_names_them() {
+    let app = TestApp::new().await;
+    let r = room(&app).await;
+    // bob: pair x3, d1 x2 (5). erin: i1 x2 (2).
+    for group in [&r.pair, &r.pair, &r.pair, &r.d1, &r.d1] {
+        ok(vote(&app, &r.bob, group, 1).await);
+    }
+    ok(vote(&app, &r.erin, &r.i1, 1).await);
+    ok(vote(&app, &r.erin, &r.i1, 1).await);
+
+    for (budget, max, affected) in [
+        (5, 3, 0),
+        (4, 3, 1),
+        (5, 2, 1),
+        (5, 1, 2),
+        (1, 3, 2),
+        // Group limit first: bob keeps pair x2 + d1 x2 = 4, within 4.
+        (4, 2, 1),
+        (20, 10, 0),
+    ] {
+        let res = impact(&app, &r.alice, &r.meeting, budget, max).await;
+        assert_eq!(ok(res), json!({ "affected": affected }), "{budget}/{max}");
+    }
+    // The preview changes nothing.
+    assert_eq!(spent(&state(&app, &r.bob, &r.meeting).await), 5);
+
+    // Facilitator only, within bounds.
+    let res = impact(&app, &r.bob, &r.meeting, 4, 3).await;
+    assert_eq!(res.status, 403);
+    assert_eq!(code(&res), "not_facilitator");
+    let res = impact(&app, &r.alice, &r.meeting, 0, 3).await;
+    assert_eq!(res.status, 400);
+    assert_eq!(code(&res), "invalid_vote_settings");
+    let dave = app
+        .create_user("dave", "dave@example.com", "Dave Moretti")
+        .await;
+    let res = impact(&app, &dave, &r.meeting, 4, 3).await;
+    assert_eq!(res.status, 404);
+
+    // Not after Vote.
+    next_phase(&app, &r.alice, &r.meeting).await;
+    let res = impact(&app, &r.alice, &r.meeting, 4, 3).await;
+    assert_eq!(res.status, 409);
+    assert_eq!(code(&res), "wrong_phase");
+}
+
+#[tokio::test]
+async fn the_settings_preview_works_before_vote() {
+    let app = TestApp::new().await;
+    let (r, ..) = grouping_with(&app, "").await;
+    let res = impact(&app, &r.alice, &r.meeting, 1, 1).await;
+    assert_eq!(ok(res), json!({ "affected": 0 }));
 }

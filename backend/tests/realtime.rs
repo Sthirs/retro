@@ -1584,24 +1584,10 @@ async fn voting(app: &TestApp) -> (String, String, String, String, String) {
     (alice, bob, dana, m, group)
 }
 
-/// The next event that is not presence, if one comes within `wait`.
-async fn next_non_presence(socket: &mut Socket, wait: Duration) -> Option<Value> {
-    tokio::time::timeout(wait, async {
-        loop {
-            let event = next(socket).await;
-            if event["type"] != "presence.changed" {
-                return event;
-            }
-        }
-    })
-    .await
-    .ok()
-}
-
 async fn put_vote(app: &TestApp, token: &str, group: &str, tab: &str) {
     let res = app
         .call_with(
-            "PUT",
+            "POST",
             &format!("/api/v1/groups/{group}/vote"),
             token,
             Some(json!({ "delta": 1 })),
@@ -1609,6 +1595,26 @@ async fn put_vote(app: &TestApp, token: &str, group: &str, tab: &str) {
         )
         .await;
     assert_eq!(res.status, 200, "{}", res.text());
+}
+
+/// The events `socket` receives before the next `kind`, presence aside: a
+/// checkpoint published after the event under test, so a late delivery of
+/// that event still shows up here.
+async fn events_before(socket: &mut Socket, kind: &str) -> Vec<Value> {
+    let mut seen = Vec::new();
+    loop {
+        let event = next(socket).await;
+        if event["type"] == kind {
+            return seen;
+        }
+        if event["type"] != "presence.changed" {
+            seen.push(event);
+        }
+    }
+}
+
+fn kinds(events: &[Value]) -> Vec<&str> {
+    events.iter().map(|e| e["type"].as_str().unwrap()).collect()
 }
 
 #[tokio::test]
@@ -1624,27 +1630,34 @@ async fn votes_reach_only_the_voter_and_the_facilitator() {
     let mut dana_socket = connect(&addr, &ticket(&app, &dana).await).await;
     subscribe(&mut dana_socket, &channel).await;
 
-    let tab = Uuid::now_v7().to_string();
-    put_vote(&app, &bob, &group, &tab).await;
+    let bob_tab = Uuid::now_v7().to_string();
+    put_vote(&app, &bob, &group, &bob_tab).await;
+    rename(&app, &alice, &m, "After bob's vote").await;
 
     // Bob's tabs and the facilitator learn that votes changed, and which tab
     // did it: no group, no count, no seq.
     for socket in [&mut bob_socket, &mut alice_socket] {
-        let changed = next_of(socket, "vote.changed").await;
-        assert_eq!(changed["payload"], json!({ "clientId": tab }));
-        assert_eq!(changed["seq"], Value::Null);
-        assert!(changed.get("user").is_none());
+        let before = events_before(socket, "meeting.renamed").await;
+        assert_eq!(kinds(&before), vec!["vote.changed"], "{before:?}");
+        assert_eq!(before[0]["payload"], json!({ "clientId": bob_tab }));
+        assert_eq!(before[0]["seq"], Value::Null);
+        assert!(before[0].get("user").is_none());
     }
-    // Dana hears nothing of bob's vote.
-    let leaked = next_non_presence(&mut dana_socket, Duration::from_millis(500)).await;
-    assert!(leaked.is_none(), "unexpected: {leaked:?}");
+    // Dana hears nothing of bob's vote, before the checkpoint or late.
+    let before = events_before(&mut dana_socket, "meeting.renamed").await;
+    assert!(before.is_empty(), "unexpected: {before:?}");
 
     // Dana's vote reaches dana and alice, never bob.
-    put_vote(&app, &dana, &group, &tab).await;
-    next_of(&mut dana_socket, "vote.changed").await;
-    next_of(&mut alice_socket, "vote.changed").await;
-    let leaked = next_non_presence(&mut bob_socket, Duration::from_millis(500)).await;
-    assert!(leaked.is_none(), "unexpected: {leaked:?}");
+    let dana_tab = Uuid::now_v7().to_string();
+    put_vote(&app, &dana, &group, &dana_tab).await;
+    rename(&app, &alice, &m, "After dana's vote").await;
+    for socket in [&mut dana_socket, &mut alice_socket] {
+        let before = events_before(socket, "meeting.renamed").await;
+        assert_eq!(kinds(&before), vec!["vote.changed"], "{before:?}");
+        assert_eq!(before[0]["payload"], json!({ "clientId": dana_tab }));
+    }
+    let before = events_before(&mut bob_socket, "meeting.renamed").await;
+    assert!(before.is_empty(), "unexpected: {before:?}");
 }
 
 #[tokio::test]
@@ -1667,26 +1680,31 @@ async fn new_vote_settings_reach_everyone_and_trimmed_voters_reload() {
         .as_i64()
         .unwrap();
 
+    let settings_tab = Uuid::now_v7().to_string();
     let res = app
-        .call(
+        .call_with(
             "PATCH",
             &format!("/api/v1/meetings/{m}/settings"),
             &alice,
             Some(json!({ "voteBudget": 1, "voteMaxPerGroup": 1 })),
+            &[("x-client-id", &settings_tab)],
         )
         .await;
     assert_eq!(res.status, 200, "{}", res.text());
+    rename(&app, &alice, &m, "After the settings").await;
 
     for socket in [&mut bob_socket, &mut dana_socket] {
         let changed = next_of(socket, "vote.settings_changed").await;
         assert_eq!(changed["seq"], seq + 1);
         assert_eq!(
             changed["payload"],
-            json!({ "budget": 1, "maxPerGroup": 1, "clientId": null })
+            json!({ "budget": 1, "maxPerGroup": 1, "clientId": settings_tab })
         );
     }
-    // Bob lost a vote: his tabs re-read. Dana lost none.
-    next_of(&mut bob_socket, "vote.changed").await;
-    let leaked = next_non_presence(&mut dana_socket, Duration::from_millis(500)).await;
-    assert!(leaked.is_none(), "unexpected: {leaked:?}");
+    // Bob lost a vote: his tabs re-read. Dana lost none, now or late.
+    let before = events_before(&mut bob_socket, "meeting.renamed").await;
+    assert_eq!(kinds(&before), vec!["vote.changed"], "{before:?}");
+    assert_eq!(before[0]["payload"], json!({ "clientId": settings_tab }));
+    let before = events_before(&mut dana_socket, "meeting.renamed").await;
+    assert!(before.is_empty(), "unexpected: {before:?}");
 }

@@ -157,10 +157,14 @@ pub fn router(state: AppState) -> Router {
             "/reflections/{reflection_id}/group",
             put(api::groups::move_card),
         )
-        .route("/groups/{group_id}/vote", put(api::votes::vote))
+        .route("/groups/{group_id}/vote", post(api::votes::vote))
         .route(
             "/meetings/{meeting_id}/settings",
             patch(api::votes::update_settings),
+        )
+        .route(
+            "/meetings/{meeting_id}/settings/impact",
+            get(api::votes::settings_impact),
         )
         .route(
             "/meetings/{meeting_id}/invite-link",

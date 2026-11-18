@@ -105,22 +105,34 @@ pub(crate) async fn find_for_member(
         .one(db)
         .await?
         .ok_or(AppError::NotFound("meeting_not_found"))?;
-    let role = teams::require_member(db, meeting.team_id, actor)
-        .await
-        .map_err(|e| match e {
-            AppError::NotFound(_) => AppError::NotFound("meeting_not_found"),
-            other => other,
-        })?;
     if !lock {
+        let role = member_role(db, meeting.team_id, actor).await?;
         return Ok((meeting, role));
     }
     lock_team(db, meeting.team_id, "meeting_not_found").await?;
+    // Read the role under the team lock: a removal (which takes it first)
+    // has then either committed or not started.
+    let role = member_role(db, meeting.team_id, actor).await?;
     let meeting = meeting::Entity::find_by_id(meeting_id)
         .lock_exclusive()
         .one(db)
         .await?
         .ok_or(AppError::NotFound("meeting_not_found"))?;
     Ok((meeting, role))
+}
+
+/// `actor`'s role in the team; `meeting_not_found` when not a member.
+async fn member_role(
+    db: &impl ConnectionTrait,
+    team_id: Uuid,
+    actor: Uuid,
+) -> Result<Role, AppError> {
+    teams::require_member(db, team_id, actor)
+        .await
+        .map_err(|e| match e {
+            AppError::NotFound(_) => AppError::NotFound("meeting_not_found"),
+            other => other,
+        })
 }
 
 /// Locks a team row until the transaction ends; `missing` when it is gone.

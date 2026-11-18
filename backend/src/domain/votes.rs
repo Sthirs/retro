@@ -3,7 +3,8 @@
 //! anyone else's votes; the facilitator sees how many were cast overall.
 //!
 //! Every vote is a row, so limits are counts and "the most recent votes" a
-//! lower limit removes are known exactly. Changes lock the meeting, which
+//! lower limit removes are known exactly: those with the highest `ordinal`,
+//! the order the server accepted them in. Changes lock the meeting, which
 //! checks the limits transactionally. Each publishes `vote.changed
 //! {clientId}` (ids only, ADR-0012) to the voter and to the facilitator,
 //! whose tabs re-read the state.
@@ -43,15 +44,12 @@ pub struct MyVoteDto {
     pub count: i32,
 }
 
-/// How far one participant has used their votes, anonymous: what the
-/// facilitator sees (votes cast overall, and who a lower limit would trim).
+/// What lower limits would do: how many people would lose votes, never who.
 #[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct VoteUsageDto {
-    /// Votes given in all.
-    pub spent: i32,
-    /// The most votes given to a single group.
-    pub max_on_group: i32,
+pub struct VoteImpactDto {
+    /// People with at least one vote the limits would remove.
+    pub affected: i32,
 }
 
 /// One change of a vote: one more, or one fewer.
@@ -71,7 +69,8 @@ pub fn validate_settings(budget: i32, max_per_group: i32) -> Result<(i32, i32), 
 }
 
 /// Wraps every card left out of a group in a group of its own, at its place,
-/// so votes always go to groups (spec §13). Runs when Vote starts.
+/// so votes always go to groups (spec §13). Runs when Vote starts, under the
+/// meeting lock: one read and one statement, however many cards are loose.
 pub async fn wrap_ungrouped(db: &impl ConnectionTrait, meeting_id: Uuid) -> Result<(), AppError> {
     let loose = reflection::Entity::find()
         .filter(reflection::Column::MeetingId.eq(meeting_id))
@@ -80,27 +79,35 @@ pub async fn wrap_ungrouped(db: &impl ConnectionTrait, meeting_id: Uuid) -> Resu
         .order_by_asc(reflection::Column::Position)
         .all(db)
         .await?;
-    let now = OffsetDateTime::now_utc();
-    for card in loose {
-        let group = reflection_group::ActiveModel {
-            id: Set(Uuid::now_v7()),
-            meeting_id: Set(meeting_id),
-            column: Set(card.column),
-            position: Set(card.position),
-            name: Set(String::new()),
-            created_at: Set(now),
-            updated_at: Set(now),
-        }
-        .insert(db)
-        .await?;
-        reflection::ActiveModel {
-            id: Set(card.id),
-            group_id: Set(Some(group.id)),
-            ..Default::default()
-        }
-        .update(db)
-        .await?;
+    if loose.is_empty() {
+        return Ok(());
     }
+    // One new group id (UUIDv7, so in card order) per loose card.
+    let pairs: Vec<serde_json::Value> = loose
+        .iter()
+        .map(|card| json!({ "reflection_id": card.id, "group_id": Uuid::now_v7() }))
+        .collect();
+    db.execute_raw(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        r#"WITH loose AS (
+             SELECT * FROM jsonb_to_recordset($2::jsonb) AS x(reflection_id uuid, group_id uuid)
+           ), created AS (
+             INSERT INTO reflection_groups (id, meeting_id, "column", position, name, created_at, updated_at)
+             SELECT loose.group_id, r.meeting_id, r."column", r.position, '', $3, $3
+             FROM loose JOIN reflections r ON r.id = loose.reflection_id
+             WHERE r.meeting_id = $1 AND r.group_id IS NULL
+             RETURNING id
+           )
+           UPDATE reflections r SET group_id = loose.group_id
+           FROM loose JOIN created ON created.id = loose.group_id
+           WHERE r.id = loose.reflection_id"#,
+        [
+            meeting_id.into(),
+            serde_json::Value::Array(pairs).into(),
+            OffsetDateTime::now_utc().into(),
+        ],
+    ))
+    .await?;
     Ok(())
 }
 
@@ -137,39 +144,67 @@ pub async fn my_votes(
 }
 
 #[derive(Debug, FromQueryResult)]
-struct UsageRow {
-    spent: i64,
-    max_on_group: i64,
+struct CountRow {
+    count: i64,
 }
 
-/// Every voter's usage, anonymous and in no particular order. Only the
-/// facilitator gets it, and only while the meeting is in Vote.
-pub async fn usage(
+/// Votes cast overall, as one number (spec §9.4). Only the facilitator gets
+/// it, and only while the meeting is in Vote; `None` for everyone else.
+pub async fn votes_cast(
     db: &impl ConnectionTrait,
     meeting: &meeting::Model,
     viewer: Uuid,
-) -> Result<Option<Vec<VoteUsageDto>>, AppError> {
+) -> Result<Option<i32>, AppError> {
     if meeting.phase != MeetingPhase::Vote || meeting.facilitator_id != viewer {
         return Ok(None);
     }
-    let rows = UsageRow::find_by_statement(Statement::from_sql_and_values(
+    let cast = vote::Entity::find()
+        .filter(vote::Column::MeetingId.eq(meeting.id))
+        .count(db)
+        .await?;
+    Ok(Some(i32::try_from(cast).unwrap_or(i32::MAX)))
+}
+
+/// How many people `budget` and `max_per_group` would take votes from, as
+/// [`trim`] would: any group over the maximum, or more votes left than the
+/// budget once those are gone. Facilitator, until Vote ends.
+pub async fn impact(
+    db: &impl ConnectionTrait,
+    meeting_id: Uuid,
+    actor: Uuid,
+    budget: i32,
+    max_per_group: i32,
+) -> Result<VoteImpactDto, AppError> {
+    let (budget, max_per_group) = validate_settings(budget, max_per_group)?;
+    let (meeting, _) = find_for_member(db, meeting_id, actor, false).await?;
+    if meeting.status != MeetingStatus::Active {
+        return Err(AppError::Conflict("meeting_ended"));
+    }
+    if meeting.facilitator_id != actor {
+        return Err(AppError::Denied("not_facilitator"));
+    }
+    if meeting.phase > MeetingPhase::Vote {
+        return Err(AppError::Conflict("wrong_phase"));
+    }
+    let row = CountRow::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT SUM(n)::bigint AS spent, MAX(n)::bigint AS max_on_group FROM \
-           (SELECT user_id, COUNT(*) AS n FROM votes WHERE meeting_id = $1 \
-            GROUP BY user_id, group_id) per_group \
-         GROUP BY user_id ORDER BY spent DESC, max_on_group DESC",
-        [meeting.id.into()],
+        "SELECT COUNT(*)::bigint AS count FROM ( \
+           SELECT bool_or(n > $3) AS over_group, SUM(LEAST(n, $3)) AS kept FROM \
+             (SELECT user_id, COUNT(*) AS n FROM votes WHERE meeting_id = $1 \
+              GROUP BY user_id, group_id) per_group \
+           GROUP BY user_id) per_user \
+         WHERE over_group OR kept > $2",
+        [
+            meeting.id.into(),
+            i64::from(budget).into(),
+            i64::from(max_per_group).into(),
+        ],
     ))
-    .all(db)
+    .one(db)
     .await?;
-    Ok(Some(
-        rows.into_iter()
-            .map(|r| VoteUsageDto {
-                spent: i32::try_from(r.spent).unwrap_or(i32::MAX),
-                max_on_group: i32::try_from(r.max_on_group).unwrap_or(i32::MAX),
-            })
-            .collect(),
-    ))
+    Ok(VoteImpactDto {
+        affected: row.map_or(0, |r| i32::try_from(r.count).unwrap_or(i32::MAX)),
+    })
 }
 
 /// Tells `users` and the facilitator that votes changed: each re-reads its
@@ -217,6 +252,13 @@ pub async fn vote(
             AppError::NotFound(_) => AppError::NotFound("group_not_found"),
             other => other,
         })?;
+    // Read again under the meeting lock: the group may have been dissolved
+    // (in Group) between the first read and the lock.
+    reflection_group::Entity::find_by_id(group_id)
+        .filter(reflection_group::Column::MeetingId.eq(meeting.id))
+        .one(&txn)
+        .await?
+        .ok_or(AppError::NotFound("group_not_found"))?;
     if meeting.status != MeetingStatus::Active {
         return Err(AppError::Conflict("meeting_ended"));
     }
@@ -241,13 +283,13 @@ pub async fn vote(
             user_id: Set(actor),
             group_id: Set(group_id),
             created_at: Set(OffsetDateTime::now_utc()),
+            ..Default::default()
         }
         .insert(&txn)
         .await?;
     } else {
         let latest = on_group
-            .order_by_desc(vote::Column::CreatedAt)
-            .order_by_desc(vote::Column::Id)
+            .order_by_desc(vote::Column::Ordinal)
             .one(&txn)
             .await?
             .ok_or(AppError::Conflict("no_vote_to_remove"))?;
@@ -279,7 +321,7 @@ async fn trim(
             format!(
                 "DELETE FROM votes v USING ( \
                    SELECT id, row_number() OVER (PARTITION BY {partition} \
-                                                 ORDER BY created_at, id) AS n \
+                                                 ORDER BY ordinal) AS n \
                    FROM votes WHERE meeting_id = $1) ranked \
                  WHERE v.id = ranked.id AND ranked.n > $2 \
                  RETURNING v.user_id"
@@ -378,12 +420,8 @@ mod tests {
             json!({ "groupId": id, "count": 2 })
         );
         assert_eq!(
-            serde_json::to_value(VoteUsageDto {
-                spent: 5,
-                max_on_group: 3
-            })
-            .unwrap(),
-            json!({ "spent": 5, "maxOnGroup": 3 })
+            serde_json::to_value(VoteImpactDto { affected: 2 }).unwrap(),
+            json!({ "affected": 2 })
         );
     }
 }

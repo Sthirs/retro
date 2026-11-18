@@ -3,10 +3,10 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
 };
 use serde::Deserialize;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
         meetings::{MeetingStateDto, state_of},
     },
     auth::CurrentUser,
-    domain::votes,
+    domain::votes::{self, VoteImpactDto},
     error::{AppResult, Problem},
     state::AppState,
 };
@@ -30,8 +30,9 @@ pub struct VoteRequest {
 
 /// Gives a group one more of the caller's votes, or takes one back
 /// (participants, during Vote).
+/// Not idempotent (POST): each request is one more vote, or one fewer.
 #[utoipa::path(
-    put,
+    post,
     path = "/api/v1/groups/{group_id}/vote",
     tag = "votes",
     security(("bearer" = [])),
@@ -101,4 +102,49 @@ pub async fn update_settings(
     )
     .await?;
     Ok(Json(state_of(&state, meeting_id, user.id).await?))
+}
+
+/// Limits to preview.
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase")]
+#[into_params(parameter_in = Query)]
+pub struct VoteImpactQuery {
+    /// Votes per person, 1–20.
+    pub vote_budget: i32,
+    /// Most votes one person may give the same group, 1–10.
+    pub vote_max_per_group: i32,
+}
+
+/// How many people these limits would take votes from, never who
+/// (facilitator, until Vote ends): the warning of the settings dialog.
+#[utoipa::path(
+    get,
+    path = "/api/v1/meetings/{meeting_id}/settings/impact",
+    tag = "votes",
+    security(("bearer" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Meeting id"), VoteImpactQuery),
+    responses(
+        (status = 200, body = VoteImpactDto, description = "How many people would lose votes"),
+        (status = 400, body = Problem, content_type = "application/problem+json", description = "`invalid_vote_settings`: out of bounds"),
+        (status = 403, body = Problem, content_type = "application/problem+json", description = "`not_facilitator`"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`meeting_not_found`"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`meeting_ended`, or `wrong_phase` (after Vote)"),
+    )
+)]
+pub async fn settings_impact(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(meeting_id): Path<Uuid>,
+    Query(query): Query<VoteImpactQuery>,
+) -> AppResult<Json<VoteImpactDto>> {
+    Ok(Json(
+        votes::impact(
+            &state.db,
+            meeting_id,
+            user.id,
+            query.vote_budget,
+            query.vote_max_per_group,
+        )
+        .await?,
+    ))
 }

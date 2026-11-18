@@ -153,6 +153,13 @@ struct CountRow {
     count: i64,
 }
 
+/// One person's votes in a meeting: in all, and on one group.
+#[derive(Debug, FromQueryResult)]
+struct UsageRow {
+    total: i64,
+    on_group: i64,
+}
+
 /// Votes cast overall, as one number (spec §9.4). Only the facilitator gets
 /// it, and only while the meeting is in Vote; `None` for everyone else.
 pub async fn votes_cast(
@@ -284,15 +291,20 @@ pub async fn vote(
         return Err(AppError::Conflict("wrong_phase"));
     }
     require_participant(&txn, meeting.id, actor).await?;
-    let mine = vote::Entity::find()
-        .filter(vote::Column::MeetingId.eq(meeting.id))
-        .filter(vote::Column::UserId.eq(actor));
-    let on_group = mine.clone().filter(vote::Column::GroupId.eq(group_id));
     if delta > 0 {
-        if mine.count(&txn).await? >= u64::try_from(meeting.vote_budget).unwrap_or(0) {
+        let usage = UsageRow::find_by_statement(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT COUNT(*) AS total, COUNT(*) FILTER (WHERE group_id = $3) AS on_group \
+             FROM votes WHERE meeting_id = $1 AND user_id = $2",
+            [meeting.id.into(), actor.into(), group_id.into()],
+        ))
+        .one(&txn)
+        .await?
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("vote usage: no row")))?;
+        if usage.total >= i64::from(meeting.vote_budget) {
             return Err(AppError::Conflict("vote_budget_exhausted"));
         }
-        if on_group.count(&txn).await? >= u64::try_from(meeting.vote_max_per_group).unwrap_or(0) {
+        if usage.on_group >= i64::from(meeting.vote_max_per_group) {
             return Err(AppError::Conflict("vote_group_limit"));
         }
         vote::ActiveModel {
@@ -306,7 +318,10 @@ pub async fn vote(
         .insert(&txn)
         .await?;
     } else {
-        let latest = on_group
+        let latest = vote::Entity::find()
+            .filter(vote::Column::MeetingId.eq(meeting.id))
+            .filter(vote::Column::UserId.eq(actor))
+            .filter(vote::Column::GroupId.eq(group_id))
             .order_by_desc(vote::Column::Ordinal)
             .one(&txn)
             .await?

@@ -1,9 +1,9 @@
 import { createPinia, setActivePinia } from 'pinia';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 
 import { CLIENT_ID } from '@/api/clientId';
-import { useMeetingStore } from '@/stores/meeting';
+import { useMeetingStore, VOTE_TIMEOUT_MS } from '@/stores/meeting';
 import { useSessionStore } from '@/stores/session';
 
 import { ALICE, BOB, MEETING_ID, meetingState, mockFetch, problem } from './helpers';
@@ -66,6 +66,7 @@ async function opened(state = voting(), routes = {}) {
 
 describe('meeting store in Vote', () => {
   beforeEach(() => setActivePinia(createPinia()));
+  afterEach(() => vi.useRealTimers());
 
   it('counts the viewer’s own votes and what is left', async () => {
     const { store } = await opened(withVotes([['g1', 2]]));
@@ -363,6 +364,52 @@ describe('meeting store in Vote', () => {
     await expect(queued).resolves.toBe(false);
     expect(calls.filter(isVote).map((c) => c.path)).toEqual(['/api/v1/groups/g1/vote']);
     expect(store.myVotes.size).toBe(0);
+  });
+
+  it('lets the next votes go once a vote request hangs too long', async () => {
+    const never = new Promise<never>(() => {});
+    let reads = 0;
+    const { store, calls } = await opened(voting(), {
+      'POST /api/v1/groups/g1/vote': () => never,
+      'POST /api/v1/groups/g2/vote': { status: 200, body: withVotes([['g2', 1]]) },
+      // The hung vote never committed.
+      [`GET ${BASE}/state`]: () => (++reads, { status: 200, body: withVotes([['g2', 1]]) }),
+    });
+    vi.useFakeTimers();
+    const hung = store.vote('g1', 1);
+    const next = store.vote('g2', 1);
+    await vi.advanceTimersByTimeAsync(VOTE_TIMEOUT_MS - 1);
+    expect(calls.filter(isVote)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(hung).resolves.toBe(false);
+    await expect(next).resolves.toBe(true);
+    expect(calls.filter(isVote).map((c) => c.path)).toEqual([
+      '/api/v1/groups/g1/vote',
+      '/api/v1/groups/g2/vote',
+    ]);
+    // The lost one is unsure: read again, and shown as the server has it.
+    await vi.runOnlyPendingTimersAsync();
+    expect(reads).toBeGreaterThan(0);
+    expect(store.myVotes.get('g1')).toBeUndefined();
+    expect(store.myVotes.get('g2')).toBe(1);
+  });
+
+  it('sends a vote at once after another account signs in, even if one hung', async () => {
+    const never = new Promise<never>(() => {});
+    const { store, calls } = await opened(voting(), {
+      'POST /api/v1/groups/g1/vote': () => never,
+      'POST /api/v1/groups/g2/vote': { status: 200, body: withVotes([['g2', 1]]) },
+    });
+    void store.vote('g1', 1);
+    await tick();
+    useSessionStore().setUser({ ...BOB, pictureVersion: null });
+    await nextTick();
+    await store.open(MEETING_ID);
+    await expect(store.vote('g2', 1)).resolves.toBe(true);
+    expect(calls.filter(isVote).map((c) => c.path)).toEqual([
+      '/api/v1/groups/g1/vote',
+      '/api/v1/groups/g2/vote',
+    ]);
   });
 
   it('keeps a vote taken meanwhile when a Ready is refused', async () => {

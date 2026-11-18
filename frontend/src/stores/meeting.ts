@@ -23,6 +23,11 @@ import type { RealtimeEvent } from '@/api/realtime';
 import { useSessionStore } from '@/stores/session';
 
 export const PHASES = Object.values(MeetingPhase);
+/**
+ * How long a vote request may take before it counts as lost (its answer may
+ * still have committed: a re-read tells). Later votes wait for it.
+ */
+export const VOTE_TIMEOUT_MS = 15_000;
 const COLUMNS = Object.values(ReflectionColumn);
 
 /** A card whose group changed, as `group.*` events carry it (spec §11.2). */
@@ -310,6 +315,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     resyncWanted = false;
     generation++;
     pendingVotes = [];
+    // A request that never comes back must not hold up the next account's.
+    voteChain = Promise.resolve();
     voteSending = false;
     confirmedVotes = [];
     confirmedCast = null;
@@ -338,6 +345,15 @@ export const useMeetingStore = defineStore('meeting', () => {
     () => session.user?.id,
     () => reset(),
   );
+
+  /** `request`, or a failure once it took longer than `VOTE_TIMEOUT_MS`. */
+  function withTimeout<T>(request: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('timeout')), VOTE_TIMEOUT_MS);
+    });
+    return Promise.race([request, late]).finally(() => clearTimeout(timer));
+  }
 
   /** Runs a request for a snapshot, logging the events applied meanwhile. */
   async function logged<T>(call: () => Promise<T>): Promise<{ res: T; log: RealtimeEvent[] }> {
@@ -819,7 +835,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       let log: RealtimeEvent[] = [];
       let failure: unknown = null;
       try {
-        ({ res, log } = await logged(() => api.vote(groupId, { delta })));
+        ({ res, log } = await logged(() => withTimeout(api.vote(groupId, { delta }))));
         if (res.status !== 200) throw apiError(res);
       } catch (e) {
         failure = e;

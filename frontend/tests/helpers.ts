@@ -15,7 +15,10 @@ export interface FakeRoute {
 
 /** Routes `fetch` calls by "METHOD path" to canned responses (JSON, or a `Blob` body as is). */
 export function mockFetch(
-  routes: Record<string, FakeRoute | (() => FakeRoute | Promise<FakeRoute>)>,
+  routes: Record<
+    string,
+    FakeRoute | ((request: { url: URL; body: unknown }) => FakeRoute | Promise<FakeRoute>)
+  >,
 ) {
   const calls: { method: string; path: string; body: unknown; headers: Headers }[] = [];
   const fetchMock = vi.fn(async (input: Request) => {
@@ -37,7 +40,7 @@ export function mockFetch(
       headers: input.headers,
     });
     const route = routes[key];
-    const resolved = typeof route === 'function' ? await route() : route;
+    const resolved = typeof route === 'function' ? await route({ url, body }) : route;
     if (!resolved) return new Response(null, { status: 404 });
     if (resolved.body instanceof Blob) {
       return new Response(resolved.body, {
@@ -272,6 +275,10 @@ export const meetingState = (overrides: Record<string, unknown> = {}) => ({
   },
   groups: [],
   drags: [],
+  voteBudget: 5,
+  voteMaxPerGroup: 3,
+  myVotes: [],
+  votesCast: null,
   seq: 2,
   createdAt: '2026-11-10T17:02:00Z',
   endedAt: null,

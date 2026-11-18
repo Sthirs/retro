@@ -22,6 +22,7 @@ use crate::{
         meetings::{self, MeetingView, Participant},
         reflections::{self, ReflectionCountsDto, ReflectionsSnapshot},
         timer::{Timer, TimerAction},
+        votes::{self, MyVoteDto},
     },
     entities::{
         meeting::{MeetingPhase, MeetingStatus},
@@ -185,6 +186,16 @@ pub struct MeetingStateDto {
     pub groups: Vec<GroupDto>,
     /// Cards being dragged right now, and by whom (Group).
     pub drags: Vec<DragDto>,
+    /// Votes each participant may give in all (spec §9.4).
+    pub vote_budget: i32,
+    /// Most votes one participant may give the same group.
+    pub vote_max_per_group: i32,
+    /// From Vote on, the caller's own votes per group. Nobody sees anyone
+    /// else's votes.
+    pub my_votes: Vec<MyVoteDto>,
+    /// During Vote, for the facilitator only: votes cast overall, as one
+    /// number (nothing per group or per person). `null` for everyone else.
+    pub votes_cast: Option<i32>,
     /// Last event `seq` included in this snapshot on `meeting:{id}`.
     pub seq: i64,
     #[serde(with = "time::serde::rfc3339")]
@@ -206,6 +217,7 @@ impl MeetingStateDto {
         writing: WritingCounts,
         groups: Vec<GroupDto>,
         drags: Vec<DragDto>,
+        votes: VotesSnapshot,
     ) -> Self {
         let participants = participants(&view, online);
         let m = view.meeting;
@@ -256,12 +268,22 @@ impl MeetingStateDto {
             writing: writing.into(),
             groups,
             drags,
+            vote_budget: m.vote_budget,
+            vote_max_per_group: m.vote_max_per_group,
+            my_votes: votes.mine,
+            votes_cast: votes.cast,
             seq: m.event_seq,
             created_at: m.created_at,
             ended_at: m.ended_at,
             server_now: OffsetDateTime::now_utc(),
         }
     }
+}
+
+/// The votes part of a state, as its viewer may see it.
+struct VotesSnapshot {
+    mine: Vec<MyVoteDto>,
+    cast: Option<i32>,
 }
 
 /// The meeting's current state, as `actor` sees it. Its reads share one
@@ -281,6 +303,10 @@ pub(crate) async fn state_of(
     let view = meetings::view(&txn, meeting_id, actor).await?;
     let reflections = reflections::snapshot(&txn, &view.meeting, actor).await?;
     let groups = groups::snapshot(&txn, &view.meeting).await?;
+    let votes = VotesSnapshot {
+        mine: votes::my_votes(&txn, &view.meeting, actor).await?,
+        cast: votes::votes_cast(&txn, &view.meeting, actor).await?,
+    };
     txn.commit().await?;
     let online = state.hub.online(meeting_id);
     // An ended meeting has no editors open, whatever sockets still say.
@@ -296,6 +322,7 @@ pub(crate) async fn state_of(
         writing,
         groups,
         drags,
+        votes,
     ))
 }
 

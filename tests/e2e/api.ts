@@ -245,6 +245,12 @@ export interface MeetingState {
   phase: string;
   reflections: { id: string; content: string; mine: boolean; groupId: string | null }[];
   groups: { id: string; column: string; name: string }[];
+  voteBudget: number;
+  voteMaxPerGroup: number;
+  /** The viewer's own votes only. */
+  myVotes: { groupId: string; count: number }[];
+  /** Votes cast overall: the facilitator's one number during Vote, else null. */
+  votesCast: number | null;
 }
 
 /** The meeting state as `login` sees it. */
@@ -254,6 +260,85 @@ export async function meetingState(login: string, meetingId: string): Promise<Me
     const res = await api.get(`/api/v1/meetings/${meetingId}/state`);
     if (!res.ok()) throw new Error(`state: ${res.status()} ${await res.text()}`);
     return (await res.json()) as MeetingState;
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Drops the card `reflectionId` onto the card `targetId` (Group); returns the group id. */
+export async function groupCards(
+  login: string,
+  meetingId: string,
+  targetId: string,
+  reflectionId: string,
+): Promise<string> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/meetings/${meetingId}/groups`, {
+      data: { targetId, reflectionId },
+    });
+    if (!res.ok())
+      throw new Error(`group cards: ${res.status()} ${await res.text()}`);
+    const state = (await res.json()) as MeetingState;
+    return state.reflections.find((r) => r.id === targetId)!.groupId!;
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Names a group (Group). */
+export async function renameGroup(
+  login: string,
+  groupId: string,
+  name: string,
+): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.patch(`/api/v1/groups/${groupId}`, {
+      data: { name },
+    });
+    if (!res.ok())
+      throw new Error(`rename group: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Adds (1) or takes back (-1) a vote as `login`; returns the status and error code. */
+export async function castVote(
+  login: string,
+  groupId: string,
+  delta: number,
+): Promise<{ status: number; code: string | null }> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/groups/${groupId}/vote`, {
+      data: { delta },
+    });
+    const body = (await res.json()) as { code?: string };
+    return {
+      status: res.status(),
+      code: res.ok() ? null : (body.code ?? null),
+    };
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Sets the vote budget and the most votes per group (`login` facilitates). */
+export async function setVoteSettings(
+  login: string,
+  meetingId: string,
+  voteBudget: number,
+  voteMaxPerGroup: number,
+): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.patch(`/api/v1/meetings/${meetingId}/settings`, {
+      data: { voteBudget, voteMaxPerGroup },
+    });
+    if (!res.ok())
+      throw new Error(`vote settings: ${res.status()} ${await res.text()}`);
   } finally {
     await api.dispose();
   }

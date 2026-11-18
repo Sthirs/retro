@@ -1546,3 +1546,205 @@ async fn group_changes_reach_everyone_in_order() {
         ])
     );
 }
+
+// --- Vote: own votes only, cast count to the facilitator ------------------
+
+/// A meeting in Vote: alice facilitates, bob (two cards) and dana take part.
+/// Returns the group of bob's first card.
+async fn voting(app: &TestApp) -> (String, String, String, String, String) {
+    let (alice, bob, _, m, one, _) = grouping(app).await;
+    let dana = app.token_for("dana").await;
+    let team = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json()["teamId"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    join_team(app, &alice, team, &dana).await;
+    let res = app
+        .call("POST", &format!("/api/v1/meetings/{m}/join"), &dana, None)
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    to_reflect(app, &alice, &m).await;
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &bob, None)
+        .await
+        .json();
+    let group = state["reflections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == one.as_str())
+        .unwrap()["groupId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    (alice, bob, dana, m, group)
+}
+
+async fn put_vote(app: &TestApp, token: &str, group: &str, tab: &str) {
+    let res = app
+        .call_with(
+            "POST",
+            &format!("/api/v1/groups/{group}/vote"),
+            token,
+            Some(json!({ "delta": 1 })),
+            &[("x-client-id", tab)],
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+}
+
+/// The events `socket` receives before the next `kind`, presence aside: a
+/// checkpoint published after the event under test, so a late delivery of
+/// that event still shows up here.
+async fn events_before(socket: &mut Socket, kind: &str) -> Vec<Value> {
+    let mut seen = Vec::new();
+    loop {
+        let event = next(socket).await;
+        if event["type"] == kind {
+            return seen;
+        }
+        if event["type"] != "presence.changed" {
+            seen.push(event);
+        }
+    }
+}
+
+fn kinds(events: &[Value]) -> Vec<&str> {
+    events.iter().map(|e| e["type"].as_str().unwrap()).collect()
+}
+
+#[tokio::test]
+async fn votes_reach_the_voter_and_the_count_reaches_the_facilitator() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, dana, m, group) = voting(&app).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+    let mut dana_socket = connect(&addr, &ticket(&app, &dana).await).await;
+    subscribe(&mut dana_socket, &channel).await;
+
+    let bob_tab = Uuid::now_v7().to_string();
+    put_vote(&app, &bob, &group, &bob_tab).await;
+    rename(&app, &alice, &m, "After bob's vote").await;
+
+    // Bob's tabs learn that his votes changed, and which tab did it: no
+    // group, no count, no seq.
+    let before = events_before(&mut bob_socket, "meeting.renamed").await;
+    assert_eq!(kinds(&before), vec!["vote.changed"], "{before:?}");
+    assert_eq!(before[0]["payload"], json!({ "clientId": bob_tab }));
+    assert_eq!(before[0]["seq"], Value::Null);
+    assert!(before[0].get("user").is_none());
+    // The facilitator gets only the new total, with no re-read to do.
+    let before = events_before(&mut alice_socket, "meeting.renamed").await;
+    assert_eq!(kinds(&before), vec!["vote.cast_changed"], "{before:?}");
+    assert_eq!(
+        before[0]["payload"],
+        json!({ "votesCast": 1, "clientId": bob_tab })
+    );
+    assert_eq!(before[0]["seq"], Value::Null);
+    assert!(before[0].get("user").is_none());
+    // Dana hears nothing of bob's vote, before the checkpoint or late.
+    let before = events_before(&mut dana_socket, "meeting.renamed").await;
+    assert!(before.is_empty(), "unexpected: {before:?}");
+
+    // Dana's vote reaches dana, and its total alice, never bob.
+    let dana_tab = Uuid::now_v7().to_string();
+    put_vote(&app, &dana, &group, &dana_tab).await;
+    rename(&app, &alice, &m, "After dana's vote").await;
+    let before = events_before(&mut dana_socket, "meeting.renamed").await;
+    assert_eq!(kinds(&before), vec!["vote.changed"], "{before:?}");
+    assert_eq!(before[0]["payload"], json!({ "clientId": dana_tab }));
+    let before = events_before(&mut alice_socket, "meeting.renamed").await;
+    assert_eq!(kinds(&before), vec!["vote.cast_changed"], "{before:?}");
+    assert_eq!(
+        before[0]["payload"],
+        json!({ "votesCast": 2, "clientId": dana_tab })
+    );
+    let before = events_before(&mut bob_socket, "meeting.renamed").await;
+    assert!(before.is_empty(), "unexpected: {before:?}");
+
+    // The facilitator's own vote: their other tabs re-read, and get the total.
+    let alice_tab = Uuid::now_v7().to_string();
+    put_vote(&app, &alice, &group, &alice_tab).await;
+    rename(&app, &alice, &m, "After alice's vote").await;
+    let before = events_before(&mut alice_socket, "meeting.renamed").await;
+    assert_eq!(
+        kinds(&before),
+        vec!["vote.changed", "vote.cast_changed"],
+        "{before:?}"
+    );
+    assert_eq!(before[1]["payload"]["votesCast"], 3);
+    for socket in [&mut bob_socket, &mut dana_socket] {
+        let before = events_before(socket, "meeting.renamed").await;
+        assert!(before.is_empty(), "unexpected: {before:?}");
+    }
+}
+
+#[tokio::test]
+async fn new_vote_settings_reach_everyone_and_trimmed_voters_reload() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, dana, m, group) = voting(&app).await;
+    let tab = Uuid::now_v7().to_string();
+    put_vote(&app, &bob, &group, &tab).await;
+    put_vote(&app, &bob, &group, &tab).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+    let mut dana_socket = connect(&addr, &ticket(&app, &dana).await).await;
+    subscribe(&mut dana_socket, &channel).await;
+    let seq = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &dana, None)
+        .await
+        .json()["seq"]
+        .as_i64()
+        .unwrap();
+
+    let settings_tab = Uuid::now_v7().to_string();
+    let res = app
+        .call_with(
+            "PATCH",
+            &format!("/api/v1/meetings/{m}/settings"),
+            &alice,
+            Some(json!({ "voteBudget": 1, "voteMaxPerGroup": 1 })),
+            &[("x-client-id", &settings_tab)],
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    rename(&app, &alice, &m, "After the settings").await;
+
+    for socket in [&mut bob_socket, &mut dana_socket] {
+        let changed = next_of(socket, "vote.settings_changed").await;
+        assert_eq!(changed["seq"], seq + 1);
+        assert_eq!(
+            changed["payload"],
+            json!({ "budget": 1, "maxPerGroup": 1, "clientId": settings_tab })
+        );
+    }
+    // Bob lost a vote: his tabs re-read. Dana lost none, now or late.
+    let before = events_before(&mut bob_socket, "meeting.renamed").await;
+    assert_eq!(kinds(&before), vec!["vote.changed"], "{before:?}");
+    assert_eq!(before[0]["payload"], json!({ "clientId": settings_tab }));
+    let before = events_before(&mut dana_socket, "meeting.renamed").await;
+    assert!(before.is_empty(), "unexpected: {before:?}");
+    // The facilitator gets the total left after the trim.
+    let before = events_before(&mut alice_socket, "meeting.renamed").await;
+    assert_eq!(
+        kinds(&before),
+        vec!["vote.settings_changed", "vote.cast_changed"],
+        "{before:?}"
+    );
+    assert_eq!(
+        before[1]["payload"],
+        json!({ "votesCast": 1, "clientId": settings_tab })
+    );
+}

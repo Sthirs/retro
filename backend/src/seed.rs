@@ -113,6 +113,26 @@ pub const DEV_USERS: &[DevUser] = &[
         email: "pia@retro.local",
         display_name: "Pia Longo",
     },
+    DevUser {
+        username: "quinn",
+        email: "quinn@retro.local",
+        display_name: "Quinn Serra",
+    },
+    DevUser {
+        username: "rosa",
+        email: "rosa@retro.local",
+        display_name: "Rosa Villa",
+    },
+    DevUser {
+        username: "sami",
+        email: "sami@retro.local",
+        display_name: "Sami Caruso",
+    },
+    DevUser {
+        username: "tess",
+        email: "tess@retro.local",
+        display_name: "Tess Barbieri",
+    },
 ];
 
 /// Creates the dev users, or resets their name and password. Idempotent.

@@ -343,6 +343,14 @@ export const MeetingPhase = {
 } as const;
 
 /**
+ * The viewer's own votes on one group.
+ */
+export interface MyVoteDto {
+  count: number;
+  groupId: string;
+}
+
+/**
  * A participant of a meeting.
  */
 export interface ParticipantDto {
@@ -460,6 +468,11 @@ export interface MeetingStateDto {
   icebreaker: IcebreakerDto;
   id: string;
   /**
+   * From Vote on, the caller's own votes per group. Nobody sees anyone
+   * else's votes.
+   */
+  myVotes: MyVoteDto[];
+  /**
    * Everyone in the meeting room right now, including people whose join
    * is still on its way.
    */
@@ -484,6 +497,16 @@ export interface MeetingStateDto {
   teamName: string;
   timer?: Timer | null;
   title: string;
+  /** Votes each participant may give in all (spec §9.4). */
+  voteBudget: number;
+  /** Most votes one participant may give the same group. */
+  voteMaxPerGroup: number;
+  /**
+   * During Vote, for the facilitator only: votes cast overall, as one
+   * number (nothing per group or per person). `null` for everyone else.
+   * @nullable
+   */
+  votesCast?: number | null;
   /** Reflections being written right now, per column. */
   writing: WritingDto;
 }
@@ -687,6 +710,40 @@ export interface UpdateTaskRequest {
 }
 
 /**
+ * What lower limits would do: how many people would lose votes, never who.
+ */
+export interface VoteImpactDto {
+  /** People with at least one vote the limits would remove. */
+  affected: number;
+}
+
+/**
+ * One more vote, or one fewer.
+ */
+export interface VoteRequest {
+  /** `1` adds a vote; `-1` takes back the caller's most recent vote on the group. */
+  delta: number;
+}
+
+/**
+ * The meeting's vote settings.
+ */
+export interface VoteSettingsRequest {
+  /**
+   * Votes per person.
+   * @minimum 1
+   * @maximum 20
+   */
+  voteBudget: number;
+  /**
+   * Most votes one person may give the same group.
+   * @minimum 1
+   * @maximum 10
+   */
+  voteMaxPerGroup: number;
+}
+
+/**
  * A ticket to open the real-time WebSocket.
  */
 export interface WsTicketDto {
@@ -706,6 +763,21 @@ export type OidcCallbackParams = {
   code?: string;
   state?: string;
   error?: string;
+};
+
+export type SettingsImpactParams = {
+  /**
+   * Votes per person.
+   * @minimum 1
+   * @maximum 20
+   */
+  voteBudget: number;
+  /**
+   * Most votes one person may give the same group.
+   * @minimum 1
+   * @maximum 10
+   */
+  voteMaxPerGroup: number;
 };
 
 export type ListMeetingsParams = {
@@ -1079,6 +1151,83 @@ export const renameGroup = async (
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(renameGroupRequest),
+  });
+};
+
+export type voteResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type voteResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type voteResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type voteResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type voteResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type voteResponseSuccess = voteResponse200 & {
+  headers: Headers;
+};
+export type voteResponseError = (
+  voteResponse400 | voteResponse403 | voteResponse404 | voteResponse409
+) & {
+  headers: Headers;
+};
+
+export type voteResponse = voteResponseSuccess | voteResponseError;
+
+export const getVoteUrl = (groupId: string) => {
+  return `/api/v1/groups/${groupId}/vote`;
+};
+
+/**
+ * @summary Gives a group one more of the caller's votes, or takes one back
+(participants, during Vote).
+Not idempotent (POST): each request is one more vote, or one fewer.
+ */
+export const vote = async (
+  groupId: string,
+  voteRequest: VoteRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<voteResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<voteResponse>(getVoteUrl(groupId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(voteRequest),
   });
 };
 
@@ -2231,6 +2380,156 @@ export const createReflection = async (
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(createReflectionRequest),
+  });
+};
+
+export type updateSettingsResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type updateSettingsResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type updateSettingsResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type updateSettingsResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type updateSettingsResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type updateSettingsResponseSuccess = updateSettingsResponse200 & {
+  headers: Headers;
+};
+export type updateSettingsResponseError = (
+  | updateSettingsResponse400
+  | updateSettingsResponse403
+  | updateSettingsResponse404
+  | updateSettingsResponse409
+) & {
+  headers: Headers;
+};
+
+export type updateSettingsResponse = updateSettingsResponseSuccess | updateSettingsResponseError;
+
+export const getUpdateSettingsUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/settings`;
+};
+
+/**
+ * @summary Sets the vote budget and the most votes per group (facilitator, until
+Vote ends). Lower limits remove each person's most recent votes beyond
+them.
+ */
+export const updateSettings = async (
+  meetingId: string,
+  voteSettingsRequest: VoteSettingsRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<updateSettingsResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<updateSettingsResponse>(getUpdateSettingsUrl(meetingId), {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(voteSettingsRequest),
+  });
+};
+
+export type settingsImpactResponse200 = {
+  data: VoteImpactDto;
+  status: 200;
+};
+
+export type settingsImpactResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type settingsImpactResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type settingsImpactResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type settingsImpactResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type settingsImpactResponseSuccess = settingsImpactResponse200 & {
+  headers: Headers;
+};
+export type settingsImpactResponseError = (
+  | settingsImpactResponse400
+  | settingsImpactResponse403
+  | settingsImpactResponse404
+  | settingsImpactResponse409
+) & {
+  headers: Headers;
+};
+
+export type settingsImpactResponse = settingsImpactResponseSuccess | settingsImpactResponseError;
+
+export const getSettingsImpactUrl = (meetingId: string, params: SettingsImpactParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/meetings/${meetingId}/settings/impact?${stringifiedParams}`
+    : `/api/v1/meetings/${meetingId}/settings/impact`;
+};
+
+/**
+ * @summary How many people these limits would take votes from, never who
+(facilitator, until Vote ends): the warning of the settings dialog.
+ */
+export const settingsImpact = async (
+  meetingId: string,
+  params: SettingsImpactParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<settingsImpactResponse> => {
+  return apiFetch<settingsImpactResponse>(getSettingsImpactUrl(meetingId, params), {
+    ...options,
+    method: 'GET',
   });
 };
 

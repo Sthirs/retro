@@ -3,6 +3,7 @@ import { computed, ref, toRaw, watch } from 'vue';
 
 import {
   api,
+  ApiError,
   apiError,
   errorCode,
   MeetingPhase,
@@ -11,6 +12,7 @@ import {
   ReflectionColumn,
   type GroupDto,
   type MeetingStateDto,
+  type MyVoteDto,
   type ParticipantDto,
   type ReflectionDto,
   type Timer,
@@ -21,6 +23,11 @@ import type { RealtimeEvent } from '@/api/realtime';
 import { useSessionStore } from '@/stores/session';
 
 export const PHASES = Object.values(MeetingPhase);
+/**
+ * How long a vote request may take before it counts as lost (its answer may
+ * still have committed: a re-read tells). Later votes wait for it.
+ */
+export const VOTE_TIMEOUT_MS = 15_000;
 const COLUMNS = Object.values(ReflectionColumn);
 
 /** A card whose group changed, as `group.*` events carry it (spec §11.2). */
@@ -52,6 +59,20 @@ function leaveGroup(m: MeetingStateDto, card: ReflectionDto): void {
   if (left.length > 1) return;
   for (const r of left) r.groupId = null;
   m.groups = m.groups.filter((g) => g.id !== old);
+}
+
+/** One vote change this tab sent and the server has not answered yet. */
+interface PendingVote {
+  groupId: string;
+  delta: 1 | -1;
+}
+
+/** Adds `delta` to the viewer's own votes on a group (an optimistic copy). */
+function bumpVote(m: MeetingStateDto, groupId: string, delta: number): void {
+  const mine = m.myVotes.find((v) => v.groupId === groupId);
+  if (mine) mine.count += delta;
+  else if (delta > 0) m.myVotes.push({ groupId, count: delta });
+  m.myVotes = m.myVotes.filter((v) => v.count > 0);
 }
 
 /** A notice in the room: a new facilitator, or this tab's drafts discarded. */
@@ -106,6 +127,36 @@ export const useMeetingStore = defineStore('meeting', () => {
   let resyncWanted = false;
   /** Optimistic actions waiting for the server's answer. */
   let optimisticInFlight = 0;
+  /**
+   * Votes not answered yet (queued or sent), oldest first. They go out one
+   * at a time, and are shown on top of the confirmed votes until answered,
+   * so quick clicks neither flicker nor overtake each other.
+   */
+  let pendingVotes: PendingVote[] = [];
+  let voteChain: Promise<unknown> = Promise.resolve();
+  /** Whether a vote request is on its way (at most one, see `voteChain`). */
+  let voteSending = false;
+  /**
+   * Bumped whenever a vote goes out or comes back. A snapshot requested
+   * before a bump may or may not hold that vote, so its votes are not taken.
+   */
+  let voteEpoch = 0;
+  /**
+   * The viewer's votes, and the facilitator's cast count, as the server last
+   * surely had them; what the room shows is these plus `pendingVotes`.
+   */
+  let confirmedVotes: MyVoteDto[] = [];
+  let confirmedCast: number | null = null;
+  /** A snapshot's votes were unsure: reload once the votes are answered. */
+  let voteResyncWanted = false;
+  /**
+   * The phase changed and its snapshot has not come yet: what is shown is
+   * still the previous phase's (e.g. loose cards at Vote start, or no
+   * reflections at Group start), so the room waits for it.
+   */
+  const phaseLoading = ref(false);
+  /** Bumped on every reset (e.g. another account): stale work stops. */
+  let generation = 0;
   /**
    * Server time minus local time, in ms, from the last `serverNow` seen: the
    * timer counts down on server time, whatever the local clock says.
@@ -214,6 +265,21 @@ export const useMeetingStore = defineStore('meeting', () => {
     return items;
   });
 
+  /** The viewer's own votes per group id (spec §9.4): nobody sees others'. */
+  const myVotes = computed(
+    () => new Map((meeting.value?.myVotes ?? []).map((v) => [v.groupId, v.count])),
+  );
+  const voteBudget = computed(() => meeting.value?.voteBudget ?? 0);
+  const voteMaxPerGroup = computed(() => meeting.value?.voteMaxPerGroup ?? 0);
+  const votesUsed = computed(() => {
+    let used = 0;
+    for (const count of myVotes.value.values()) used += count;
+    return used;
+  });
+  const votesLeft = computed(() => Math.max(0, voteBudget.value - votesUsed.value));
+  /** Votes cast overall: the facilitator's view during Vote, else `null`. */
+  const votesCast = computed(() => meeting.value?.votesCast ?? null);
+
   /** Who else is dragging each card right now (spec §9.3), by card id. */
   const draggers = computed(() => {
     const by = new Map<string, ParticipantDto>();
@@ -250,15 +316,51 @@ export const useMeetingStore = defineStore('meeting', () => {
     loadError.value = null;
     actionError.value = null;
     notice.value = null;
+    phaseLoading.value = false;
     queued = [];
     online = new Set();
     resyncWanted = false;
+    generation++;
+    pendingVotes = [];
+    // A request that never comes back must not hold up the next account's.
+    voteChain = Promise.resolve();
+    voteSending = false;
+    confirmedVotes = [];
+    confirmedCast = null;
+    voteResyncWanted = false;
+  }
+
+  /** Shows the confirmed votes with the pending ones on top. */
+  function renderVotes(): void {
+    const m = meeting.value;
+    if (!m) return;
+    m.myVotes = confirmedVotes.map((v) => ({ ...v }));
+    for (const pending of pendingVotes) bumpVote(m, pending.groupId, pending.delta);
+    m.votesCast =
+      confirmedCast === null
+        ? null
+        : confirmedCast + pendingVotes.reduce((sum, v) => sum + v.delta, 0);
+  }
+
+  /** Reloads now, or once the votes on their way are answered. */
+  function resyncVotes(): void {
+    if (voteSending || pendingVotes.length > 0) voteResyncWanted = true;
+    else void resync();
   }
 
   watch(
     () => session.user?.id,
     () => reset(),
   );
+
+  /** `request`, or a failure once it took longer than `VOTE_TIMEOUT_MS`. */
+  function withTimeout<T>(request: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('timeout')), VOTE_TIMEOUT_MS);
+    });
+    return Promise.race([request, late]).finally(() => clearTimeout(timer));
+  }
 
   /** Runs a request for a snapshot, logging the events applied meanwhile. */
   async function logged<T>(call: () => Promise<T>): Promise<{ res: T; log: RealtimeEvent[] }> {
@@ -276,10 +378,23 @@ export const useMeetingStore = defineStore('meeting', () => {
    * (those that arrived while it was on its way) it may predate: sequenced
    * events past its `seq`, and every unsequenced one (writing, presence),
    * which is newer than what the snapshot holds.
+   *
+   * `since` is `voteEpoch` when the request went out: if a vote went out or
+   * came back meanwhile, the snapshot's votes may be older than the ones
+   * confirmed, or already hold a pending one, so they are not taken.
    */
-  function accept(state: MeetingStateDto, log: RealtimeEvent[] = []): void {
+  function accept(state: MeetingStateDto, log: RealtimeEvent[], since: number): void {
     if (state.id !== meetingId.value) return;
     const seen = meeting.value?.seq ?? 0;
+    if (since === voteEpoch && !voteSending) {
+      confirmedVotes = state.myVotes.map((v) => ({ ...v }));
+      confirmedCast = state.votesCast ?? null;
+    } else {
+      // No count at all is sure: not the facilitator, or not in Vote.
+      if (state.votesCast == null) confirmedCast = null;
+      else confirmedCast ??= state.votesCast;
+      resyncVotes();
+    }
     meeting.value = state;
     online = new Set(state.onlineIds);
     markOnline();
@@ -290,6 +405,9 @@ export const useMeetingStore = defineStore('meeting', () => {
     } finally {
       replaying = false;
     }
+    renderVotes();
+    // A phase change replayed on it needs the new phase's snapshot (asked).
+    phaseLoading.value = meeting.value?.phase !== state.phase;
     // The log should bring it back to every event seen; reload if it did not.
     if (meeting.value && meeting.value.seq < seen) void resync();
   }
@@ -301,6 +419,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       meetingId.value = id;
     }
     const seq = ++loadSeq;
+    const since = voteEpoch;
     loading.value = true;
     loadError.value = null;
     try {
@@ -310,7 +429,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       if (res.status !== 200) throw apiError(res);
       if (seq !== loadSeq) return;
       meeting.value = null;
-      accept(res.data);
+      accept(res.data, [], since);
       const pending = queued;
       queued = [];
       for (const event of pending) apply(event);
@@ -340,11 +459,12 @@ export const useMeetingStore = defineStore('meeting', () => {
       return;
     }
     const seq = ++loadSeq;
+    const since = voteEpoch;
     try {
       const { res, log } = await logged(() => api.getMeetingState(id));
       if (res.status !== 200) throw apiError(res);
       if (seq !== loadSeq) return;
-      accept(res.data, log);
+      accept(res.data, log, since);
     } catch (e) {
       if (seq === loadSeq) loadError.value = errorCode(e);
     }
@@ -363,6 +483,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     if (event.type === 'error') {
       loadSeq++;
       meeting.value = null;
+      phaseLoading.value = false;
       queued = [];
       resyncWanted = false;
       loading.value = false;
@@ -403,13 +524,22 @@ export const useMeetingStore = defineStore('meeting', () => {
         m.facilitatorId = p.facilitatorId as string;
         const name = participantsById.value.get(m.facilitatorId)?.displayName ?? '';
         notice.value = { kind: 'facilitator', userId: m.facilitatorId, name };
+        // Only the facilitator sees how many votes were cast: hide it at
+        // once from the one who left the role, re-read it for the new one.
+        if (m.facilitatorId !== me.value) {
+          confirmedCast = null;
+          m.votesCast = null;
+        }
+        if (m.phase === MeetingPhase.vote && !replaying) void resync();
         break;
       }
       case 'phase.changed':
         m.phase = p.phase as MeetingStateDto['phase'];
         // Ready flags reset with every phase; the snapshot of the new phase
-        // (e.g. every reflection, from Group on) comes from the server.
+        // (e.g. every reflection, from Group on) comes from the server, and
+        // the room waits for it.
         for (const participant of m.participants) participant.ready = false;
+        phaseLoading.value = true;
         void resync();
         break;
       case 'timer.updated':
@@ -447,6 +577,26 @@ export const useMeetingStore = defineStore('meeting', () => {
         // Another tab of ours changed one of our reflections.
         if (!isOwnEvent(p)) void resync();
         break;
+      case 'vote.changed':
+        // Our own votes changed (another tab of ours, or a settings change
+        // removed some): re-read them. This tab's own came with the answer.
+        if (!isOwnEvent(p)) void resync();
+        break;
+      case 'vote.cast_changed':
+        // The facilitator's total, absolute: taken as it is, this tab's own
+        // too (it may arrive after the answer). Events arrive in commit
+        // order, so the last one, replayed or not, is the newest total.
+        if (m.facilitatorId !== me.value) break;
+        // It may or may not hold a vote of this tab on its way: that vote's
+        // answer brings a sure total, and replays this event after it.
+        if (voteSending || pendingVotes.length > 0) break;
+        confirmedCast = p.votesCast as number;
+        if (!replaying) renderVotes();
+        break;
+      case 'vote.settings_changed':
+        m.voteBudget = p.budget as number;
+        m.voteMaxPerGroup = p.maxPerGroup as number;
+        break;
       case 'icebreaker.person_changed':
         m.icebreaker.index = p.index as number;
         break;
@@ -465,7 +615,16 @@ export const useMeetingStore = defineStore('meeting', () => {
     call: () => Promise<{ status: number; data: unknown }>,
     optimistic?: () => void,
   ): Promise<boolean> {
+    return (await actResult(call, optimistic)).ok;
+  }
+
+  /** As `act()`, and says why it failed. */
+  async function actResult(
+    call: () => Promise<{ status: number; data: unknown }>,
+    optimistic?: () => void,
+  ): Promise<{ ok: true } | { ok: false; error: unknown }> {
     const before = meeting.value ? structuredClone(toRaw(meeting.value)) : null;
+    const since = voteEpoch;
     actionError.value = null;
     if (optimistic) {
       optimisticInFlight++;
@@ -474,12 +633,12 @@ export const useMeetingStore = defineStore('meeting', () => {
     try {
       const { res, log } = await logged(call);
       if (res.status !== 200 && res.status !== 201) throw apiError(res);
-      accept(res.data as MeetingStateDto, log);
-      return true;
+      accept(res.data as MeetingStateDto, log, since);
+      return { ok: true };
     } catch (e) {
       if (optimistic && before) undo(before);
       actionError.value = errorCode(e);
-      return false;
+      return { ok: false, error: e };
     } finally {
       if (optimistic) optimisticInFlight--;
     }
@@ -495,9 +654,12 @@ export const useMeetingStore = defineStore('meeting', () => {
     const now = meeting.value;
     if (now && now.id === before.id && now.seq === before.seq && optimisticInFlight === 1) {
       // Presence, writing and drags carry no seq: keep the current ones.
+      // Nor do votes, which the refused action did not touch.
       // (Raw: the next action clones the state, which a proxy would break.)
       before.writing = toRaw(now.writing);
       before.drags = toRaw(now.drags);
+      before.myVotes = toRaw(now.myVotes);
+      before.votesCast = now.votesCast;
       meeting.value = before;
       markOnline();
     } else if (now?.id === before.id) {
@@ -664,11 +826,105 @@ export const useMeetingStore = defineStore('meeting', () => {
     );
   }
 
+  /**
+   * Gives a group one more of the viewer's votes, or takes one back (spec
+   * §9.4). Refused locally when over a limit; requests go out in order.
+   */
+  function vote(groupId: string, delta: 1 | -1): Promise<boolean> {
+    const m = meeting.value;
+    if (!m) return Promise.resolve(false);
+    const mine = myVotes.value.get(groupId) ?? 0;
+    if (delta > 0 && (votesLeft.value <= 0 || mine >= m.voteMaxPerGroup)) {
+      return Promise.resolve(false);
+    }
+    if (delta < 0 && mine <= 0) return Promise.resolve(false);
+    const id = m.id;
+    // The account and meeting the click was made in: if either changes
+    // before it goes out or comes back, it is dropped.
+    const gen = generation;
+    const entry: PendingVote = { groupId, delta };
+    pendingVotes.push(entry);
+    renderVotes();
+    actionError.value = null;
+    const run = voteChain.then(async () => {
+      if (gen !== generation) return false;
+      voteSending = true;
+      voteEpoch++;
+      let res: Awaited<ReturnType<typeof api.vote>> | null = null;
+      let log: RealtimeEvent[] = [];
+      let failure: unknown = null;
+      try {
+        ({ res, log } = await logged(() => withTimeout(api.vote(groupId, { delta }))));
+        if (res.status !== 200) throw apiError(res);
+      } catch (e) {
+        failure = e;
+      }
+      if (gen !== generation) return false;
+      voteSending = false;
+      voteEpoch++;
+      pendingVotes = pendingVotes.filter((v) => v !== entry);
+      if (failure === null && res?.status === 200) {
+        // The answer holds every vote up to this one: sure.
+        accept(res.data, log, voteEpoch);
+      } else {
+        // Take the refused vote back at once, keeping later clicks, then
+        // learn why from the server.
+        renderVotes();
+        if (meetingId.value === id) {
+          actionError.value = errorCode(failure);
+          voteResyncWanted = true;
+        }
+      }
+      if (voteResyncWanted && pendingVotes.length === 0 && meetingId.value === id) {
+        voteResyncWanted = false;
+        await resync();
+      }
+      return failure === null;
+    });
+    voteChain = run;
+    return run;
+  }
+
+  /**
+   * Sets the vote budget and the most votes per group (facilitator). When the
+   * answer is lost or broken (not a refusal), the change may have committed
+   * (and trimmed votes): reload the state rather than trust the old one.
+   */
+  async function saveVoteSettings(budget: number, maxPerGroup: number): Promise<boolean> {
+    const id = meetingId.value!;
+    const result = await actResult(() =>
+      api.updateSettings(id, { voteBudget: budget, voteMaxPerGroup: maxPerGroup }),
+    );
+    if (result.ok) return true;
+    const refused = result.error instanceof ApiError && result.error.status < 500;
+    if (!refused && meetingId.value === id) void resync();
+    return false;
+  }
+
+  /**
+   * How many people `budget` and `maxPerGroup` would take votes from
+   * (facilitator; the server counts, never says who). `null` if unknown.
+   */
+  async function voteImpact(budget: number, maxPerGroup: number): Promise<number | null> {
+    const id = meetingId.value;
+    if (!id) return null;
+    try {
+      const res = await api.settingsImpact(id, {
+        voteBudget: budget,
+        voteMaxPerGroup: maxPerGroup,
+      });
+      return res.status === 200 ? res.data.affected : null;
+    } catch {
+      return null;
+    }
+  }
+
   return {
     meeting,
     meetingId,
     loading,
     loadError,
+    phaseLoading,
     actionError,
     notice,
     isFacilitator,
@@ -692,6 +948,12 @@ export const useMeetingStore = defineStore('meeting', () => {
     groupCards,
     columnItems,
     draggers,
+    myVotes,
+    voteBudget,
+    voteMaxPerGroup,
+    votesUsed,
+    votesLeft,
+    votesCast,
     clockOffset,
     serverTime,
     open,
@@ -712,5 +974,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     dropOnCard,
     moveToGroup,
     renameGroup,
+    vote,
+    saveVoteSettings,
+    voteImpact,
   };
 });

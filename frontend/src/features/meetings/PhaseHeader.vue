@@ -7,7 +7,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
-import { api } from '@/api/client';
+import { api, MeetingPhase } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
 import PresenceAvatar from '@/components/PresenceAvatar.vue';
 import AppButton from '@/components/ui/AppButton.vue';
@@ -15,12 +15,16 @@ import { copyText } from '@/lib/clipboard';
 import { PHASES, useMeetingStore } from '@/stores/meeting';
 import { useSessionStore } from '@/stores/session';
 
-const emit = defineEmits<{ transfer: []; end: [] }>();
+const emit = defineEmits<{ settings: []; transfer: []; end: [] }>();
 const { t } = useI18n();
 const store = useMeetingStore();
 const session = useSessionStore();
 const meeting = computed(() => store.meeting!);
 const onlineCount = computed(() => meeting.value.participants.filter((p) => p.online).length);
+/** Vote settings can change until Vote ends (spec §9.4), so before it too. */
+const votingAhead = computed(
+  () => PHASES.indexOf(meeting.value.phase) <= PHASES.indexOf(MeetingPhase.vote),
+);
 
 const inviteStatus = ref('');
 /** The Invite button reads "Copied" for a moment after a successful copy. */
@@ -69,6 +73,16 @@ async function takeOver(): Promise<void> {
       class="toolbar"
       :aria-label="t('meetingRoom.facilitatorActions')"
     >
+      <AppButton
+        v-if="votingAhead"
+        variant="ghost"
+        size="touch"
+        data-testid="vote-settings"
+        @click="emit('settings')"
+      >
+        <AppIcon name="settings" :size="16" />
+        {{ t('vote.settings') }}
+      </AppButton>
       <AppButton variant="ghost" @click="emit('transfer')">
         <AppIcon name="transfer" :size="16" />
         {{ t('meetingRoom.transfer') }}

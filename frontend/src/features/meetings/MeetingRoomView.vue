@@ -28,7 +28,9 @@ import GroupPhase from '@/features/meetings/group/GroupPhase.vue';
 import IcebreakerPhase from '@/features/meetings/phases/IcebreakerPhase.vue';
 import PhasePlaceholder from '@/features/meetings/phases/PhasePlaceholder.vue';
 import ReflectPhase from '@/features/meetings/reflect/ReflectPhase.vue';
-import { useMeetingStore } from '@/stores/meeting';
+import VotePhase from '@/features/meetings/vote/VotePhase.vue';
+import VoteSettingsDialog from '@/features/meetings/vote/VoteSettingsDialog.vue';
+import { PHASES, useMeetingStore } from '@/stores/meeting';
 import { useReflectDraftsStore } from '@/stores/reflectDrafts';
 import { useSessionStore } from '@/stores/session';
 
@@ -48,6 +50,7 @@ const meeting = computed(() =>
     : null,
 );
 const transferOpen = ref(false);
+const settingsOpen = ref(false);
 const endOpen = ref(false);
 // Only once a connection was lost or failed: not while the room first connects.
 const offline = computed(() => realtime.status.value === 'reconnecting');
@@ -67,6 +70,7 @@ watch(
     if (!active) {
       transferOpen.value = false;
       endOpen.value = false;
+      settingsOpen.value = false;
     }
   },
 );
@@ -77,6 +81,17 @@ watch(
     if (!facilitator) {
       transferOpen.value = false;
       endOpen.value = false;
+      settingsOpen.value = false;
+    }
+  },
+);
+
+// Vote settings change until Vote ends: the dialog closes after it.
+watch(
+  () => meeting.value?.phase,
+  (phase) => {
+    if (phase && PHASES.indexOf(phase) > PHASES.indexOf(MeetingPhase.vote)) {
+      settingsOpen.value = false;
     }
   },
 );
@@ -124,12 +139,29 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
     <div class="room__main">
       <ReconnectingBanner v-if="offline" />
       <main class="room__content">
-        <PhaseHeader @transfer="transferOpen = true" @end="endOpen = true" />
+        <PhaseHeader
+          @settings="settingsOpen = true"
+          @transfer="transferOpen = true"
+          @end="endOpen = true"
+        />
         <AppAlert v-if="store.actionError">{{ errorText(store.actionError) }}</AppAlert>
         <div class="room__phase">
-          <IcebreakerPhase v-if="meeting.phase === MeetingPhase.icebreaker" />
+          <!-- Until the new phase's snapshot comes, the old one is shown. -->
+          <template v-if="store.phaseLoading">
+            <div v-if="store.loadError" class="phase-wait">
+              <AppAlert>{{ errorText(store.loadError) }}</AppAlert>
+              <AppButton variant="ghost" size="touch" @click="store.resync()">
+                {{ t('common.retry') }}
+              </AppButton>
+            </div>
+            <p v-else class="loading" aria-busy="true" data-testid="phase-loading">
+              {{ t('meetingRoom.phaseLoading', { phase: t(`phases.${meeting.phase}`) }) }}
+            </p>
+          </template>
+          <IcebreakerPhase v-else-if="meeting.phase === MeetingPhase.icebreaker" />
           <ReflectPhase v-else-if="meeting.phase === MeetingPhase.reflect" />
           <GroupPhase v-else-if="meeting.phase === MeetingPhase.group" />
+          <VotePhase v-else-if="meeting.phase === MeetingPhase.vote" />
           <PhasePlaceholder v-else />
         </div>
       </main>
@@ -141,12 +173,19 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
     <TimesUpToast />
     <TransferDialog :open="transferOpen" @close="transferOpen = false" />
     <EndMeetingDialog :open="endOpen" @close="endOpen = false" />
+    <VoteSettingsDialog :open="settingsOpen" @close="settingsOpen = false" />
   </div>
 </template>
 
 <style scoped>
 .loading {
   color: var(--muted);
+}
+.phase-wait {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
 }
 .room {
   position: relative;

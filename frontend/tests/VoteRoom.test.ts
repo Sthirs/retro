@@ -264,6 +264,52 @@ describe('Vote phase', () => {
     expect(wrapper.get('[data-testid="vote-cast"]').text()).toBe('10 votes cast so far');
   });
 
+  it('the settings warning follows votes cast while the dialog is open', async () => {
+    let affected = 0;
+    const { calls } = mockFetch(
+      routes(ALICE, voting({ votesCast: 4 }), {
+        [`GET ${BASE}/settings/impact`]: () => ({ status: 200, body: { affected } }),
+        [`PATCH ${BASE}/settings`]: {
+          status: 200,
+          body: voting({ votesCast: 4, voteBudget: 4 }),
+        },
+      }),
+    );
+    const { wrapper } = await open();
+    const socket = await openSocket();
+    await wrapper.get('[data-testid="vote-settings"]').trigger('click');
+    await flushPromises();
+    const dialog = wrapper.get('dialog[open]');
+    const save = () => dialog.findAll('button').find((b) => b.text() === 'Save settings')!;
+    await dialog.get('button[aria-label="Decrease: Votes per person"]').trigger('click');
+    await counted();
+    expect(dialog.find('[data-testid="vote-warning"]').exists()).toBe(false);
+
+    // Someone votes over the draft limit: the count is asked again.
+    affected = 1;
+    socket.emit({
+      type: 'vote.cast_changed',
+      channel,
+      seq: null,
+      payload: { votesCast: 5, clientId: 'other-tab' },
+    });
+    await counted();
+    expect(dialog.get('[data-testid="vote-warning"]').text()).toContain('1 person');
+
+    // One more votes just before Save: Save shows the new count, not saves.
+    affected = 2;
+    await save().trigger('click');
+    await flushPromises();
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+    expect(dialog.get('[data-testid="vote-warning"]').text()).toContain('2 people');
+
+    // Seen: the next Save saves.
+    await save().trigger('click');
+    await flushPromises();
+    expect(calls.filter((c) => c.method === 'PATCH')).toHaveLength(1);
+    expect(wrapper.find('dialog[open]').exists()).toBe(false);
+  });
+
   it('an earlier save neither closes nor fails a reopened settings dialog', async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));

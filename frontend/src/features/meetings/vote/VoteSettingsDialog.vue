@@ -4,7 +4,8 @@
  * the votes per person and the most votes per group. Lower limits remove
  * people's most recent votes; the dialog says how many people that touches,
  * never who: the server counts them (the client never sees anyone's usage),
- * and Save waits for that count.
+ * and Save waits for that count. People keep voting while the dialog is
+ * open: the count is asked again on every vote, and once more on Save.
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -47,6 +48,8 @@ const perGroupValid = computed(() => WHOLE.test(perGroupText.value));
 /** People the draft limits would take votes from, for the draft it was asked for. */
 const impact = ref<{ key: string; affected: number | null } | null>(null);
 let impactTimer: ReturnType<typeof setTimeout> | undefined;
+/** Bumped on every count asked: only the last one asked is taken. */
+let impactSeq = 0;
 
 function reset(): void {
   session++;
@@ -117,18 +120,29 @@ const affected = computed(() => (lowers.value ? (current.value?.affected ?? 0) :
 const impactKnown = computed(() => !lowers.value || current.value !== null);
 const impactUnknown = computed(() => lowers.value && current.value?.affected === null);
 
+/**
+ * Asks the server how many people the draft would touch; `null` when the
+ * answer is outdated (a later count was asked, or the dialog reopened).
+ */
+async function askImpact(): Promise<{ key: string; affected: number | null } | null> {
+  const key = draftKey.value;
+  const mine = session;
+  const seq = ++impactSeq;
+  const affected = await store.voteImpact(budget.value, perGroup.value);
+  if (mine !== session || seq !== impactSeq) return null;
+  const answer = { key, affected };
+  impact.value = answer;
+  return answer;
+}
+
+// Asked again on each change of the draft, and on each vote cast meanwhile
+// (the facilitator's total changes): the count shown stays until then.
 watch(
-  [() => props.open, lowers, draftKey],
+  [() => props.open, lowers, draftKey, () => store.votesCast],
   () => {
     clearTimeout(impactTimer);
     if (!props.open || !lowers.value) return;
-    const key = draftKey.value;
-    const mine = session;
-    const [b, m] = [budget.value, perGroup.value];
-    impactTimer = setTimeout(async () => {
-      const count = await store.voteImpact(b, m);
-      if (mine === session) impact.value = { key, affected: count };
-    }, 200);
+    impactTimer = setTimeout(() => void askImpact(), 200);
   },
   { immediate: true },
 );
@@ -146,6 +160,15 @@ async function save(): Promise<void> {
   busy.value = true;
   error.value = null;
   try {
+    if (lowers.value) {
+      // Votes may have come since the count shown: ask once more, and if it
+      // changed, show it instead of saving, so nobody loses votes unwarned.
+      clearTimeout(impactTimer);
+      const shown = current.value?.affected;
+      const fresh = await askImpact();
+      if (mine !== session) return;
+      if (!fresh || fresh.affected !== shown) return;
+    }
     const saved = await store.saveVoteSettings(budget.value, perGroup.value);
     if (mine !== session) return;
     if (saved) emit('close');

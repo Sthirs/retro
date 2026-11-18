@@ -470,6 +470,19 @@ test.describe('vote', () => {
     await expect(rosa.counter).toHaveText('4 of 5 votes left');
   });
 
+  test('the settings warning follows votes cast while the dialog is open', async () => {
+    await quinn.openSettings();
+    await quinn.budgetInput.fill('2');
+    await quinn.perGroupInput.focus();
+    await expect(quinn.warning).toHaveCount(0);
+
+    // Rosa votes over the draft limit while the dialog stays open.
+    const ci = await groupOf(meetingId, FLAKY);
+    for (let i = 0; i < 3; i++) expect((await castVote(ROSA, ci, 1)).status).toBe(200);
+    await expect(quinn.castCount).toHaveText('3 votes cast so far');
+    await expect(quinn.warning).toContainText('1 person has more votes than the new limits allow.');
+  });
+
   test('participants press Ready and the facilitator moves on to Discuss', async ({ browser }) => {
     const rosa = await open(browser, 'rosa');
     const sami = await open(browser, 'sami');

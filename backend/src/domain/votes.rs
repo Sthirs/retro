@@ -6,8 +6,9 @@
 //! lower limit removes are known exactly: those with the highest `ordinal`,
 //! the order the server accepted them in. Changes lock the meeting, which
 //! checks the limits transactionally. Each publishes `vote.changed
-//! {clientId}` (ids only, ADR-0012) to the voter and to the facilitator,
-//! whose tabs re-read the state.
+//! {clientId}` (ids only, ADR-0012) to the voter, whose tabs re-read the
+//! state, and `vote.cast_changed {votesCast, clientId}` to the facilitator,
+//! whose tabs take the new total as it is.
 
 use std::collections::BTreeSet;
 
@@ -158,11 +159,16 @@ pub async fn votes_cast(
     if meeting.phase != MeetingPhase::Vote || meeting.facilitator_id != viewer {
         return Ok(None);
     }
+    Ok(Some(count_cast(db, meeting.id).await?))
+}
+
+/// Votes cast overall in a meeting, with no check of who asks.
+async fn count_cast(db: &impl ConnectionTrait, meeting_id: Uuid) -> Result<i32, AppError> {
     let cast = vote::Entity::find()
-        .filter(vote::Column::MeetingId.eq(meeting.id))
+        .filter(vote::Column::MeetingId.eq(meeting_id))
         .count(db)
         .await?;
-    Ok(Some(i32::try_from(cast).unwrap_or(i32::MAX)))
+    Ok(i32::try_from(cast).unwrap_or(i32::MAX))
 }
 
 /// How many people `budget` and `max_per_group` would take votes from, as
@@ -207,16 +213,16 @@ pub async fn impact(
     })
 }
 
-/// Tells `users` and the facilitator that votes changed: each re-reads its
-/// own state unless the event is its own echo.
+/// Tells `users` that their votes changed (each re-reads its own state
+/// unless the event is its own echo), and the facilitator the new number of
+/// votes cast overall, which their tabs take as it is.
 async fn publish_changed(
     txn: &impl ConnectionTrait,
     meeting: &meeting::Model,
     users: impl IntoIterator<Item = Uuid>,
     client: Option<Uuid>,
 ) -> Result<(), AppError> {
-    let mut to: BTreeSet<Uuid> = users.into_iter().collect();
-    to.insert(meeting.facilitator_id);
+    let to: BTreeSet<Uuid> = users.into_iter().collect();
     for user in to {
         ws::publish_user(
             txn,
@@ -227,6 +233,14 @@ async fn publish_changed(
         )
         .await?;
     }
+    ws::publish_user(
+        txn,
+        meeting.id,
+        meeting.facilitator_id,
+        "vote.cast_changed",
+        json!({ "votesCast": count_cast(txn, meeting.id).await?, "clientId": client }),
+    )
+    .await?;
     Ok(())
 }
 

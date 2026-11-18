@@ -550,9 +550,20 @@ export const useMeetingStore = defineStore('meeting', () => {
         if (!isOwnEvent(p)) void resync();
         break;
       case 'vote.changed':
-        // Our own votes (another tab of ours), or, for the facilitator,
-        // someone's: re-read them. This tab's own came with the answer.
+        // Our own votes changed (another tab of ours, or a settings change
+        // removed some): re-read them. This tab's own came with the answer.
         if (!isOwnEvent(p)) void resync();
+        break;
+      case 'vote.cast_changed':
+        // The facilitator's total, absolute: taken as it is, this tab's own
+        // too (it may arrive after the answer). Events arrive in commit
+        // order, so the last one, replayed or not, is the newest total.
+        if (m.facilitatorId !== me.value) break;
+        // It may or may not hold a vote of this tab on its way: that vote's
+        // answer brings a sure total, and replays this event after it.
+        if (voteSending || pendingVotes.length > 0) break;
+        confirmedCast = p.votesCast as number;
+        if (!replaying) renderVotes();
         break;
       case 'vote.settings_changed':
         m.voteBudget = p.budget as number;

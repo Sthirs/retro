@@ -175,6 +175,74 @@ describe('meeting store in Vote', () => {
     expect(reads()).toBe(before + 1);
   });
 
+  it('takes the facilitator’s total from its event, without a read', async () => {
+    const { store, calls } = await opened(voting({ votesCast: 3 }));
+    const reads = () => calls.filter((c) => c.method === 'GET').length;
+    const before = reads();
+    const cast = (votesCast: number, clientId = 'other-tab') =>
+      store.apply({
+        type: 'vote.cast_changed',
+        channel,
+        seq: null,
+        payload: { votesCast, clientId },
+      });
+    cast(4);
+    cast(5);
+    expect(store.votesCast).toBe(5);
+    // Its own echo too: it may come after the answer, and is in order.
+    cast(6, CLIENT_ID);
+    expect(store.votesCast).toBe(6);
+    await tick();
+    expect(reads()).toBe(before);
+  });
+
+  it('takes the total from the vote’s answer while its own vote is on its way', async () => {
+    const answer = gated({ status: 200, body: withVotes([['g1', 1]], { votesCast: 5 }) });
+    const { store, calls } = await opened(voting({ votesCast: 3 }), {
+      'POST /api/v1/groups/g1/vote': answer.route,
+    });
+    const done = store.vote('g1', 1);
+    await tick();
+    // Someone else voted, then ours committed: while ours is on its way,
+    // neither is taken (unsure whether it holds ours).
+    for (const [votesCast, clientId] of [
+      [4, 'other-tab'],
+      [5, CLIENT_ID],
+    ] as const) {
+      store.apply({
+        type: 'vote.cast_changed',
+        channel,
+        seq: null,
+        payload: { votesCast, clientId },
+      });
+    }
+    expect(store.votesCast).toBe(4);
+    answer.open();
+    await done;
+    await tick();
+    // The answer, then the events replayed in order on it.
+    expect(store.votesCast).toBe(5);
+    store.apply({
+      type: 'vote.cast_changed',
+      channel,
+      seq: null,
+      payload: { votesCast: 6, clientId: 'third-tab' },
+    });
+    expect(store.votesCast).toBe(6);
+    expect(calls.filter((c) => c.method === 'GET')).toHaveLength(0);
+  });
+
+  it('ignores a total when not the facilitator', async () => {
+    const { store } = await opened(voting({ facilitatorId: BOB.id }));
+    store.apply({
+      type: 'vote.cast_changed',
+      channel,
+      seq: null,
+      payload: { votesCast: 5, clientId: 'other-tab' },
+    });
+    expect(store.votesCast).toBeNull();
+  });
+
   it('takes new settings from everyone’s event', async () => {
     const { store } = await opened(withVotes([['g1', 2]]));
     store.apply({

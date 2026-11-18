@@ -287,7 +287,7 @@ The individual meeting phases cannot be replayed.
 - The facilitator can change both values in the meeting **Settings** (budget 1–20, at most 1–10 per group), until Vote ends. Lowering the budget below what a user has already spent removes that user's most recent votes so they fit the new limit; lowering the maximum per group removes each user's most recent votes on any group above it. The settings dialog warns how many people (never who) would lose votes; the server computes that number, so the client never holds anyone's usage.
 - Each group shows **+** and **−** buttons and the user's own vote count on it. **−** takes back the user's most recent vote on that group. A counter shows remaining votes ("2 of 5 votes left").
 - A card never grouped shows as the plain card it was (its implicit single-card group has no name). Clicking a group expands it to read its cards; expanding is local to each viewer.
-- During this phase, users see **only their own votes**. Totals are hidden until Discuss, to avoid bias. The facilitator sees how many votes have been cast overall, as one number: nothing per group or per person.
+- During this phase, users see **only their own votes**. Totals are hidden until Discuss, to avoid bias. The facilitator sees how many votes have been cast overall, as one number: nothing per group or per person. That number updates live: each vote sends the facilitator the new total (`vote.cast_changed`), so their tab does not re-read the state.
 - Participants press **Ready**. The facilitator advances to Discuss.
 
 ### 9.5 Discuss
@@ -353,7 +353,8 @@ The individual meeting phases cannot be replayed.
 | `card.dragging` | every card being dragged and who drags it (ephemeral, no `seq`) | all |
 | `group.created` / `group.updated` / `group.deleted` | group (id, column, position, name; id only when deleted), the cards whose group changed (id, group id, version), `clientId` | all |
 | `vote.settings_changed` | budget, maxPerGroup, `clientId` | all |
-| `vote.changed` | `clientId` only (no `seq`; the receiving tab re-reads the state, ADR-0012) | the voter and the facilitator (who re-reads the cast count); also every user whose votes a settings change removed |
+| `vote.changed` | `clientId` only (no `seq`; the receiving tab re-reads the state, ADR-0012) | the voter; also every user whose votes a settings change removed |
+| `vote.cast_changed` | votesCast (the absolute number of votes cast overall), `clientId` (no `seq`; the tab takes the number as it is, without re-reading the state) | the facilitator only, after every change of votes |
 | `vote.totals_revealed` | totals per group | all (Discuss start) |
 | `discuss.group_changed` | group id | all |
 | `reaction.changed` | reflection, emoji, count | all |
@@ -487,7 +488,10 @@ reflection_groups(id, meeting_id → meetings,
                   created_at, updated_at)
 
 votes(id, meeting_id → meetings, user_id → users, group_id → reflection_groups,
+      ordinal BIGINT GENERATED ALWAYS AS IDENTITY, -- the order the server accepted votes in
       created_at)                                 -- one row per vote, so "most recent" is exact
+    -- "most recent" = highest ordinal, never created_at (clocks and equal timestamps)
+    -- index (meeting_id, ordinal)
     -- budget and maximum per group enforced in the application, under the meeting lock
     -- votes on single ungrouped cards: a group of one is created implicitly at Vote start
 

@@ -50,6 +50,10 @@ We will extend the hub as follows:
   receiving tab re-reads the state unless the event's `clientId` is its own (the echo
   suppression of ADR-0011). Reflection changes publish `reflection.changed {id, clientId}` to
   the author, and `reflection.count_changed {counts}` with a `seq` to everyone.
+  A user-targeted event may also carry an absolute aggregate that its receiver is allowed to
+  see (no ids of others, no per-person data). The receiver takes it as it is and does not
+  re-read the state. Example: `vote.cast_changed {votesCast, clientId}` to the facilitator
+  (spec §9.4).
 
 ## Alternatives considered
 

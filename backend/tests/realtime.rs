@@ -1447,6 +1447,31 @@ async fn only_cards_of_a_meeting_in_group_can_be_dragged() {
 }
 
 #[tokio::test]
+async fn only_participants_drag_cards() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, team, m) = team_with_meeting(&app).await;
+    to_reflect(&app, &alice, &m).await;
+    let card = send_reflection(&app, &bob, &m, "delta").await;
+    to_reflect(&app, &alice, &m).await;
+    // Carol is in the team and in the room, but did not join the meeting.
+    let carol = app.create_user("carol", "carol@example.com", "Carol").await;
+    join_team(&app, &alice, team, &carol).await;
+    let channel = format!("meeting:{m}");
+    let mut carol_socket = connect(&addr, &ticket(&app, &carol).await).await;
+    subscribe(&mut carol_socket, &channel).await;
+
+    send_drag(&mut carol_socket, &m, json!(card)).await;
+    let error = next_of(&mut carol_socket, "error").await;
+    assert_eq!(error["payload"]["code"], "not_draggable");
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    assert_eq!(state["drags"], json!([]));
+}
+
+#[tokio::test]
 async fn group_changes_reach_everyone_in_order() {
     let app = TestApp::new().await;
     let addr = app.spawn_server().await;

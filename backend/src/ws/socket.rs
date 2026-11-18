@@ -14,7 +14,7 @@ use axum::{
     response::Response,
 };
 use futures_util::{SinkExt, StreamExt};
-use sea_orm::EntityTrait;
+use sea_orm::{ConnectionTrait, DbBackend, EntityTrait, Statement};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::{
@@ -27,8 +27,8 @@ use super::{AccessChange, Channel, WritingMode, hub::Outbound, ticket};
 use crate::{
     domain::teams,
     entities::{
-        meeting::{self, MeetingPhase, MeetingStatus},
-        reflection::{self, ReflectionColumn},
+        meeting::{self, MeetingStatus},
+        reflection::ReflectionColumn,
     },
     error::AppError,
     state::AppState,
@@ -322,11 +322,11 @@ async fn dragging(
 ) -> Result<(), &'static str> {
     let subscription = subscriptions.get_mut(channel).ok_or("not_subscribed")?;
     let (meeting, _) = subscription.presence.ok_or("not_draggable")?;
-    // Dropping needs no check; picking up needs a card of this meeting,
-    // running in Group. A refused pick-up also drops what the socket held.
+    // Dropping needs no check; picking up needs a participant and a card of
+    // this meeting, running in Group. A refused pick-up also drops what the socket held.
     let allowed = match card {
         None => true,
-        Some(card) => can_drag(state, meeting, card).await,
+        Some(card) => can_drag(state, meeting, user_id, card).await,
     };
     let to = if allowed { card } else { None };
     let from = std::mem::replace(&mut subscription.dragging, to);
@@ -338,23 +338,30 @@ async fn dragging(
     }
 }
 
-/// Whether `card` belongs to the meeting and the meeting runs in Group;
-/// false when they cannot be read.
-async fn can_drag(state: &AppState, meeting_id: Uuid, card: Uuid) -> bool {
-    let found = async {
-        let meeting = meeting::Entity::find_by_id(meeting_id)
-            .one(&state.db)
-            .await?;
-        let reflection = reflection::Entity::find_by_id(card).one(&state.db).await?;
-        Ok::<_, sea_orm::DbErr>((meeting, reflection))
-    };
-    match found.await {
-        Ok((Some(meeting), Some(reflection))) => {
-            meeting.status == MeetingStatus::Active
-                && meeting.phase == MeetingPhase::Group
-                && reflection.meeting_id == meeting_id
-        }
-        Ok(_) => false,
+/// Whether `card` belongs to the meeting, the meeting runs in Group and
+/// `user` joined it (spec §9.3: only participants group cards); false when
+/// they cannot be read.
+async fn can_drag(state: &AppState, meeting_id: Uuid, user: Uuid, card: Uuid) -> bool {
+    let found = state
+        .db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r#"SELECT EXISTS (
+                 SELECT 1 FROM reflections r
+                 JOIN meetings m ON m.id = r.meeting_id
+                 JOIN meeting_participants p ON p.meeting_id = m.id AND p.user_id = $3
+                 WHERE r.id = $2 AND m.id = $1
+                   AND m.status = 'active' AND m.phase = 'group'
+               ) AS allowed"#,
+            [meeting_id.into(), card.into(), user.into()],
+        ))
+        .await
+        .and_then(|row| match row {
+            Some(row) => row.try_get::<bool>("", "allowed"),
+            None => Ok(false),
+        });
+    match found {
+        Ok(allowed) => allowed,
         Err(error) => {
             tracing::warn!(%error, "cannot read the dragged card");
             false

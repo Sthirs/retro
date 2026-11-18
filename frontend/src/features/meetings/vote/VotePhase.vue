@@ -12,6 +12,7 @@ import AppIcon from '@/components/AppIcon.vue';
 import { provideGroupView } from '@/features/meetings/group/groupView';
 import { COLUMNS } from '@/features/meetings/reflect/columns';
 import VoteGroup from '@/features/meetings/vote/VoteGroup.vue';
+import { voteLabel } from '@/features/meetings/vote/voteLabel';
 import { useMeetingStore } from '@/stores/meeting';
 
 const { t } = useI18n();
@@ -19,6 +20,38 @@ const store = useMeetingStore();
 
 // Which groups are expanded: local to this viewer.
 provideGroupView(() => {});
+
+/**
+ * For groups whose name another group shares: their column and place, so
+ * their vote controls stay apart for a screen reader. By group id.
+ */
+const where = computed(() => {
+  const words = { untitled: t('group.untitled'), image: t('group.image') };
+  const placed: { id: string; label: string; column: string; n: number }[] = [];
+  for (const column of COLUMNS) {
+    let n = 0;
+    for (const item of store.columnItems.get(column) ?? []) {
+      if (item.kind !== 'group') continue;
+      n++;
+      placed.push({
+        id: item.group.id,
+        label: voteLabel(item.group, item.cards, words),
+        column,
+        n,
+      });
+    }
+  }
+  const uses = new Map<string, number>();
+  for (const p of placed) uses.set(p.label, (uses.get(p.label) ?? 0) + 1);
+  return new Map(
+    placed
+      .filter((p) => (uses.get(p.label) ?? 0) > 1)
+      .map((p) => [
+        p.id,
+        t('vote.where', { column: t(`reflect.columns.${p.column}.name`), n: p.n }),
+      ]),
+  );
+});
 
 /** One thumb per vote of the budget: filled while still left to give. */
 const thumbs = computed(() =>
@@ -49,7 +82,7 @@ const thumbs = computed(() =>
         </i18n-t>
       </span>
       <span class="budget__hint">{{ t('vote.hint', { max: store.voteMaxPerGroup }) }}</span>
-      <template v-if="store.votesCast !== null">
+      <template v-if="store.isFacilitator && store.votesCast !== null">
         <span class="budget__spacer" />
         <span class="budget__cast" data-testid="vote-cast">
           <AppIcon name="users" :size="16" />
@@ -79,6 +112,7 @@ const thumbs = computed(() =>
             :key="item.group.id"
             :group="item.group"
             :cards="item.cards"
+            :where="where.get(item.group.id)"
           />
         </template>
       </section>

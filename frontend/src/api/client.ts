@@ -26,7 +26,7 @@ export type {
   UpdateMeRequest,
   UpdateTaskRequest,
   UserDto as User,
-  VoteUsageDto,
+  VoteImpactDto,
   WritingDto,
 } from './generated';
 export {

@@ -141,7 +141,7 @@ describe('Vote phase', () => {
   it('votes with + and sends the change', async () => {
     const { calls } = mockFetch(
       routes(BOB, voting(), {
-        'PUT /api/v1/groups/g1/vote': {
+        'POST /api/v1/groups/g1/vote': {
           status: 200,
           body: voting({ myVotes: [{ groupId: 'g1', count: 1 }] }),
         },
@@ -150,7 +150,7 @@ describe('Vote phase', () => {
     const { wrapper } = await open();
     await add(wrapper, 'Flaky CI').trigger('click');
     await flushPromises();
-    expect(calls.find((c) => c.method === 'PUT')?.body).toEqual({ delta: 1 });
+    expect(calls.find((c) => c.path.endsWith('/vote'))?.body).toEqual({ delta: 1 });
     expect(group(wrapper, 'Flaky CI').get('[data-testid="vote-count"]').text()).toBe('1');
     expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('4 of 5 votes left');
   });
@@ -169,17 +169,7 @@ describe('Vote phase', () => {
   });
 
   it('shows the facilitator the cast count and the Settings button', async () => {
-    mockFetch(
-      routes(
-        ALICE,
-        voting({
-          voteUsage: [
-            { spent: 5, maxOnGroup: 3 },
-            { spent: 1, maxOnGroup: 1 },
-          ],
-        }),
-      ),
-    );
+    mockFetch(routes(ALICE, voting({ votesCast: 6 })));
     const { wrapper } = await open();
     expect(wrapper.get('[data-testid="vote-cast"]').text()).toBe('6 votes cast so far');
     expect(wrapper.find('[data-testid="vote-settings"]').exists()).toBe(true);
@@ -200,17 +190,88 @@ describe('Vote phase', () => {
     expect(wrapper.text()).toContain('Up to 2 on one group');
   });
 
-  it('the settings dialog warns how many people a lower limit trims, and saves', async () => {
-    const usage = [
-      { spent: 5, maxOnGroup: 3 },
-      { spent: 5, maxOnGroup: 2 },
-      { spent: 2, maxOnGroup: 1 },
-    ];
+  it('the settings dialog warns how many people lower limits touch, and saves', async () => {
+    // The server counts; the client never sees anyone's usage.
+    const affected: Record<string, number> = { '4/3': 2, '4/2': 2, '1/3': 3 };
     const { calls } = mockFetch(
-      routes(ALICE, voting({ voteUsage: usage }), {
+      routes(ALICE, voting({ votesCast: 12 }), {
+        [`GET ${BASE}/settings/impact`]: ({ url }: { url: URL }) => ({
+          status: 200,
+          body: {
+            affected:
+              affected[
+                `${url.searchParams.get('voteBudget')}/${url.searchParams.get('voteMaxPerGroup')}`
+              ] ?? 0,
+          },
+        }),
         [`PATCH ${BASE}/settings`]: {
           status: 200,
-          body: voting({ voteUsage: usage, voteBudget: 4, voteMaxPerGroup: 3 }),
+          // The server trimmed two votes.
+          body: voting({ votesCast: 10, voteBudget: 4, voteMaxPerGroup: 3 }),
+        },
+      }),
+    );
+    const { wrapper } = await open();
+    expect(wrapper.get('[data-testid="vote-cast"]').text()).toBe('12 votes cast so far');
+    await wrapper.get('[data-testid="vote-settings"]').trigger('click');
+    await flushPromises();
+    const dialog = wrapper.get('dialog[open]');
+    expect(dialog.text()).toContain('Vote settings');
+    const budget = dialog.get<HTMLInputElement>('#vote-budget');
+    const save = () => dialog.findAll('button').find((b) => b.text() === 'Save settings')!;
+    expect(budget.element.value).toBe('5');
+    expect(dialog.find('[data-testid="vote-warning"]').exists()).toBe(false);
+    expect(save().attributes('disabled')).toBeUndefined();
+
+    // A lower limit waits for the server's count before Save.
+    await dialog.get('button[aria-label="Decrease: Votes per person"]').trigger('click');
+    expect(budget.element.value).toBe('4');
+    expect(save().attributes('disabled')).toBeDefined();
+    await counted();
+    expect(dialog.get('[data-testid="vote-warning"]').text()).toContain(
+      '2 people have more votes than the new limits allow.',
+    );
+    expect(save().attributes('disabled')).toBeUndefined();
+
+    // The warning follows typing, before the field is left.
+    await budget.setValue('1');
+    await counted();
+    expect(dialog.get('[data-testid="vote-warning"]').text()).toContain('3 people');
+
+    // Anything but a whole number blocks Save, rather than save a part of it.
+    await budget.setValue('1x');
+    await budget.trigger('blur');
+    expect(budget.element.value).toBe('1x');
+    expect(dialog.text()).toContain('Enter a whole number.');
+    expect(save().attributes('disabled')).toBeDefined();
+
+    // A whole number is clamped to the bounds.
+    await budget.setValue('99');
+    await budget.trigger('blur');
+    expect(budget.element.value).toBe('20');
+    await budget.setValue('4');
+    await budget.trigger('blur');
+    await counted();
+
+    await save().trigger('click');
+    await flushPromises();
+    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({
+      voteBudget: 4,
+      voteMaxPerGroup: 3,
+    });
+    // The room takes the server's trimmed count.
+    expect(wrapper.find('dialog[open]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="vote-cast"]').text()).toBe('10 votes cast so far');
+  });
+
+  it('an earlier save neither closes nor fails a reopened settings dialog', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    mockFetch(
+      routes(ALICE, voting({ votesCast: 0 }), {
+        [`PATCH ${BASE}/settings`]: async () => {
+          await gate;
+          return { status: 200, body: voting({ votesCast: 0, voteBudget: 6 }) };
         },
       }),
     );
@@ -218,42 +279,102 @@ describe('Vote phase', () => {
     await wrapper.get('[data-testid="vote-settings"]').trigger('click');
     await flushPromises();
     const dialog = wrapper.get('dialog[open]');
-    expect(dialog.text()).toContain('Vote settings');
-    const budget = dialog.get<HTMLInputElement>('#vote-budget');
-    expect(budget.element.value).toBe('5');
-    expect(dialog.find('[data-testid="vote-warning"]').exists()).toBe(false);
-
-    await dialog.get('button[aria-label="Decrease: Votes per person"]').trigger('click');
-    expect(budget.element.value).toBe('4');
-    expect(dialog.get('[data-testid="vote-warning"]').text()).toContain(
-      '2 people have already used more votes than the new budget of 4.',
-    );
-    await dialog.get('button[aria-label="Decrease: Max votes per group"]').trigger('click');
-    expect(dialog.get('[data-testid="vote-warning"]').text()).toContain(
-      '1 person gave one group more votes than the new maximum of 2.',
-    );
-    await dialog.get('button[aria-label="Increase: Max votes per group"]').trigger('click');
-
-    // The warning follows typing, before the field is left (so Save never
-    // moves under the pointer as it is clicked).
-    await budget.setValue('1');
-    expect(dialog.get('[data-testid="vote-warning"]').text()).toContain(
-      '3 people have already used more votes than the new budget of 1.',
-    );
-
-    // A typed value is clamped to the bounds.
-    await budget.setValue('99');
-    await budget.trigger('blur');
-    expect(budget.element.value).toBe('20');
-    await budget.setValue('4');
-    await budget.trigger('blur');
-
-    const save = dialog.findAll('button').find((b) => b.text() === 'Save settings')!;
-    await save.trigger('click');
+    await dialog.get('button[aria-label="Increase: Votes per person"]').trigger('click');
+    await dialog
+      .findAll('button')
+      .find((b) => b.text() === 'Save settings')!
+      .trigger('click');
+    await dialog
+      .findAll('button')
+      .find((b) => b.text() === 'Cancel')!
+      .trigger('click');
     await flushPromises();
-    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({
-      voteBudget: 4,
-      voteMaxPerGroup: 3,
+    await wrapper.get('[data-testid="vote-settings"]').trigger('click');
+    await flushPromises();
+    release();
+    await flushPromises();
+    expect(wrapper.find('dialog[open]').exists()).toBe(true);
+  });
+
+  it('offers the facilitator the settings before Vote too', async () => {
+    mockFetch(
+      routes(
+        ALICE,
+        voting({
+          phase: 'group',
+          myVotes: [],
+        }),
+      ),
+    );
+    const { wrapper } = await open();
+    expect(wrapper.get('h1').text()).toBe('Group');
+    expect(wrapper.find('[data-testid="vote-settings"]').exists()).toBe(true);
+  });
+
+  it('names the vote controls of same-named groups apart', async () => {
+    mockFetch(
+      routes(
+        BOB,
+        voting({
+          reflections: [
+            card('d1', 'delta', 0, 'Flaky e2e tests blocked merges', 'g1'),
+            card('d2', 'delta', 1, 'CI takes 25 minutes', 'g1'),
+            card('i1', 'ideas', 0, 'Demo slot', 'g2'),
+            card('i2', 'ideas', 1, 'Friday standup', 'g2'),
+          ],
+          groups: [
+            { id: 'g1', column: 'delta', position: 0, name: '' },
+            { id: 'g2', column: 'ideas', position: 0, name: '' },
+          ],
+        }),
+      ),
+    );
+    const { wrapper } = await open();
+    add(wrapper, 'Untitled group (Delta, group 1)');
+    add(wrapper, 'Untitled group (Ideas, group 1)');
+  });
+
+  it('waits for the Vote snapshot before showing the ballot', async () => {
+    let reads = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    // Group: d1 and d2 grouped, i1 loose.
+    const grouping = voting({
+      phase: 'group',
+      reflections: [
+        card('d1', 'delta', 0, 'Flaky e2e tests blocked merges', 'g1'),
+        card('d2', 'delta', 1, 'CI takes 25 minutes', 'g1'),
+        { ...card('i1', 'ideas', 0, 'Add a demo slot to the Friday standup', 'g2'), groupId: null },
+      ],
+      groups: [{ id: 'g1', column: 'delta', position: 0, name: 'Flaky CI' }],
     });
+    mockFetch(
+      routes(BOB, grouping, {
+        [`GET ${BASE}/state`]: async () => {
+          if (++reads === 1) return { status: 200, body: grouping };
+          await gate;
+          return { status: 200, body: voting({ seq: 3 }) };
+        },
+      }),
+    );
+    const { wrapper } = await open();
+    const socket = await openSocket();
+    socket.emit({ type: 'subscribed', channel });
+    await flushPromises();
+    socket.emit({ type: 'phase.changed', channel, seq: 3, payload: { phase: 'vote' } });
+    await flushPromises();
+    expect(wrapper.get('h1').text()).toBe('Vote');
+    expect(wrapper.find('[data-testid="vote-loading"]').exists()).toBe(true);
+    expect(wrapper.findAll('[data-testid="vote-group"]')).toHaveLength(0);
+    release();
+    await flushPromises();
+    expect(wrapper.find('[data-testid="vote-loading"]').exists()).toBe(false);
+    expect(wrapper.findAll('[data-testid="vote-group"]')).toHaveLength(2);
   });
 });
+
+/** Lets the settings dialog ask for, and get, the count of its draft. */
+async function counted(): Promise<void> {
+  await new Promise((r) => setTimeout(r, 250));
+  await flushPromises();
+}

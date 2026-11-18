@@ -366,11 +366,11 @@
       }
     },
     "/api/v1/groups/{group_id}/vote": {
-      "put": {
+      "post": {
         "tags": [
           "votes"
         ],
-        "summary": "Gives a group one more of the caller's votes, or takes one back\n(participants, during Vote).",
+        "summary": "Gives a group one more of the caller's votes, or takes one back\n(participants, during Vote).\nNot idempotent (POST): each request is one more vote, or one fewer.",
         "operationId": "vote",
         "parameters": [
           {
@@ -1877,6 +1877,104 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_vote_settings`: out of bounds",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, or `wrong_phase` (after Vote)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meetings/{meeting_id}/settings/impact": {
+      "get": {
+        "tags": [
+          "votes"
+        ],
+        "summary": "How many people these limits would take votes from, never who\n(facilitator, until Vote ends): the warning of the settings dialog.",
+        "operationId": "settings_impact",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "voteBudget",
+            "in": "query",
+            "description": "Votes per person, 1–20.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          {
+            "name": "voteMaxPerGroup",
+            "in": "query",
+            "description": "Most votes one person may give the same group, 1–10.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "How many people would lose votes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoteImpactDto"
                 }
               }
             }
@@ -4436,15 +4534,13 @@
             "format": "int32",
             "description": "Most votes one participant may give the same group."
           },
-          "voteUsage": {
+          "votesCast": {
             "type": [
-              "array",
+              "integer",
               "null"
             ],
-            "items": {
-              "$ref": "#/components/schemas/VoteUsageDto"
-            },
-            "description": "During Vote, for the facilitator only: every voter's usage,\nanonymous (votes cast overall, and who lower limits would trim)."
+            "format": "int32",
+            "description": "During Vote, for the facilitator only: votes cast overall, as one\nnumber (nothing per group or per person). `null` for everyone else."
           },
           "writing": {
             "$ref": "#/components/schemas/WritingDto",
@@ -5286,6 +5382,20 @@
           }
         }
       },
+      "VoteImpactDto": {
+        "type": "object",
+        "description": "What lower limits would do: how many people would lose votes, never who.",
+        "required": [
+          "affected"
+        ],
+        "properties": {
+          "affected": {
+            "type": "integer",
+            "format": "int32",
+            "description": "People with at least one vote the limits would remove."
+          }
+        }
+      },
       "VoteRequest": {
         "type": "object",
         "description": "One more vote, or one fewer.",
@@ -5317,26 +5427,6 @@
             "type": "integer",
             "format": "int32",
             "description": "Most votes one person may give the same group, 1–10."
-          }
-        }
-      },
-      "VoteUsageDto": {
-        "type": "object",
-        "description": "How far one participant has used their votes, anonymous: what the\nfacilitator sees (votes cast overall, and who a lower limit would trim).",
-        "required": [
-          "spent",
-          "maxOnGroup"
-        ],
-        "properties": {
-          "maxOnGroup": {
-            "type": "integer",
-            "format": "int32",
-            "description": "The most votes given to a single group."
-          },
-          "spent": {
-            "type": "integer",
-            "format": "int32",
-            "description": "Votes given in all."
           }
         }
       },

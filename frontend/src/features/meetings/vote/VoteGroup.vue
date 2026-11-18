@@ -14,28 +14,33 @@ import AppIcon from '@/components/AppIcon.vue';
 import RichText from '@/components/RichText.vue';
 import { useGroupView } from '@/features/meetings/group/groupView';
 import { plainText } from '@/features/meetings/group/plainText';
+import { voteLabel } from '@/features/meetings/vote/voteLabel';
 import VoteStepper from '@/features/meetings/vote/VoteStepper.vue';
 import { useMeetingStore } from '@/stores/meeting';
 
-const props = defineProps<{ group: GroupDto; cards: ReflectionDto[] }>();
+const props = defineProps<{
+  group: GroupDto;
+  cards: ReflectionDto[];
+  /**
+   * What tells this group from another of the same name (its column and
+   * place), for its vote controls; empty when the name is unique.
+   */
+  where?: string;
+}>();
 const { t } = useI18n();
 const store = useMeetingStore();
 const view = useGroupView();
-
-/** Longest card text used as the name of a single card, in characters. */
-const SHORT_NAME = 40;
 
 const single = computed(() => props.cards.length === 1 && !props.group.name);
 const preview = computed(() =>
   props.cards[0] ? plainText(props.cards[0].content, t('group.image')) : '',
 );
-/** What the stepper and the region are called. */
-const label = computed(() => {
-  if (props.group.name) return props.group.name;
-  if (!single.value) return t('group.untitled');
-  const chars = [...preview.value];
-  return chars.length > SHORT_NAME ? `${chars.slice(0, SHORT_NAME).join('')}…` : preview.value;
-});
+/** What the region is called. */
+const label = computed(() =>
+  voteLabel(props.group, props.cards, { untitled: t('group.untitled'), image: t('group.image') }),
+);
+/** What the vote controls are called: unique in the room. */
+const controlName = computed(() => (props.where ? `${label.value} (${props.where})` : label.value));
 const voted = computed(() => (store.myVotes.get(props.group.id) ?? 0) > 0);
 const expanded = computed(() => view.expanded.has(props.group.id));
 
@@ -64,7 +69,7 @@ async function toggle(): Promise<void> {
     </span>
     <RichText class="vcard__text" :html="cards[0]!.content" />
     <div class="vgroup__stepper">
-      <VoteStepper :group-id="group.id" :name="label" />
+      <VoteStepper :group-id="group.id" :name="controlName" />
     </div>
   </article>
   <section
@@ -106,7 +111,7 @@ async function toggle(): Promise<void> {
           <RichText class="vcard__text" :html="card.content" />
         </div>
         <div class="vgroup__stepper">
-          <VoteStepper :group-id="group.id" :name="label" />
+          <VoteStepper :group-id="group.id" :name="controlName" />
         </div>
       </template>
       <template v-else>
@@ -120,7 +125,7 @@ async function toggle(): Promise<void> {
               :style="{ background: `var(--col-${card.column}-fg)` }"
             />
           </span>
-          <VoteStepper :group-id="group.id" :name="label" />
+          <VoteStepper :group-id="group.id" :name="controlName" />
         </div>
       </template>
     </div>

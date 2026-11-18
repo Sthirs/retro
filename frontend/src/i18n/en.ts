@@ -410,6 +410,8 @@ export default {
     yourVotes: 'Your votes on {name}: {count} of {max}',
     add: 'Add a vote to {name}',
     remove: 'Remove a vote from {name}',
+    where: '{column}, group {n}',
+    loading: 'Loading the ballot…',
     settings: 'Settings',
     settingsTitle: 'Vote settings',
     budgetLabel: 'Votes per person',
@@ -417,10 +419,10 @@ export default {
     default: 'Default {n}',
     decrease: 'Decrease',
     increase: 'Increase',
-    warnBudget:
-      '1 person has already used more votes than the new budget of {n}. | {count} people have already used more votes than the new budget of {n}.',
-    warnMax:
-      '1 person gave one group more votes than the new maximum of {n}. | {count} people gave one group more votes than the new maximum of {n}.',
+    warnAffected:
+      '1 person has more votes than the new limits allow. | {count} people have more votes than the new limits allow.',
+    warnUnknown: 'Some people may have more votes than the new limits allow.',
+    wholeNumber: 'Enter a whole number.',
     warnTrim: 'Their most recent votes will be removed to fit the new limits.',
     cancel: 'Cancel',
     save: 'Save settings',

@@ -21,6 +21,10 @@ const store = useMeetingStore();
 const session = useSessionStore();
 const meeting = computed(() => store.meeting!);
 const onlineCount = computed(() => meeting.value.participants.filter((p) => p.online).length);
+/** Vote settings can change until Vote ends (spec §9.4), so before it too. */
+const votingAhead = computed(
+  () => PHASES.indexOf(meeting.value.phase) <= PHASES.indexOf(MeetingPhase.vote),
+);
 
 const inviteStatus = ref('');
 /** The Invite button reads "Copied" for a moment after a successful copy. */
@@ -70,8 +74,9 @@ async function takeOver(): Promise<void> {
       :aria-label="t('meetingRoom.facilitatorActions')"
     >
       <AppButton
-        v-if="meeting.phase === MeetingPhase.vote"
+        v-if="votingAhead"
         variant="ghost"
+        size="touch"
         data-testid="vote-settings"
         @click="emit('settings')"
       >

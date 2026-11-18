@@ -442,17 +442,6 @@ export interface Timer {
 }
 
 /**
- * How far one participant has used their votes, anonymous: what the
- * facilitator sees (votes cast overall, and who a lower limit would trim).
- */
-export interface VoteUsageDto {
-  /** The most votes given to a single group. */
-  maxOnGroup: number;
-  /** Votes given in all. */
-  spent: number;
-}
-
-/**
  * Reflections being written, per column, as clients see them (snapshot and
  * `reflection.writing`; spec §9.2).
  */
@@ -513,11 +502,11 @@ export interface MeetingStateDto {
   /** Most votes one participant may give the same group. */
   voteMaxPerGroup: number;
   /**
-   * During Vote, for the facilitator only: every voter's usage,
-   * anonymous (votes cast overall, and who lower limits would trim).
+   * During Vote, for the facilitator only: votes cast overall, as one
+   * number (nothing per group or per person). `null` for everyone else.
    * @nullable
    */
-  voteUsage?: VoteUsageDto[] | null;
+  votesCast?: number | null;
   /** Reflections being written right now, per column. */
   writing: WritingDto;
 }
@@ -721,6 +710,14 @@ export interface UpdateTaskRequest {
 }
 
 /**
+ * What lower limits would do: how many people would lose votes, never who.
+ */
+export interface VoteImpactDto {
+  /** People with at least one vote the limits would remove. */
+  affected: number;
+}
+
+/**
  * One more vote, or one fewer.
  */
 export interface VoteRequest {
@@ -758,6 +755,13 @@ export type OidcCallbackParams = {
   code?: string;
   state?: string;
   error?: string;
+};
+
+export type SettingsImpactParams = {
+  /** Votes per person, 1–20. */
+  voteBudget: number;
+  /** Most votes one person may give the same group, 1–10. */
+  voteMaxPerGroup: number;
 };
 
 export type ListMeetingsParams = {
@@ -1177,6 +1181,7 @@ export const getVoteUrl = (groupId: string) => {
 /**
  * @summary Gives a group one more of the caller's votes, or takes one back
 (participants, during Vote).
+Not idempotent (POST): each request is one more vote, or one fewer.
  */
 export const vote = async (
   groupId: string,
@@ -1204,7 +1209,7 @@ export const vote = async (
   };
   return apiFetch<voteResponse>(getVoteUrl(groupId), {
     ...options,
-    method: 'PUT',
+    method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(voteRequest),
   });
@@ -2439,6 +2444,76 @@ export const updateSettings = async (
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(voteSettingsRequest),
+  });
+};
+
+export type settingsImpactResponse200 = {
+  data: VoteImpactDto;
+  status: 200;
+};
+
+export type settingsImpactResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type settingsImpactResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type settingsImpactResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type settingsImpactResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type settingsImpactResponseSuccess = settingsImpactResponse200 & {
+  headers: Headers;
+};
+export type settingsImpactResponseError = (
+  | settingsImpactResponse400
+  | settingsImpactResponse403
+  | settingsImpactResponse404
+  | settingsImpactResponse409
+) & {
+  headers: Headers;
+};
+
+export type settingsImpactResponse = settingsImpactResponseSuccess | settingsImpactResponseError;
+
+export const getSettingsImpactUrl = (meetingId: string, params: SettingsImpactParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value));
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/v1/meetings/${meetingId}/settings/impact?${stringifiedParams}`
+    : `/api/v1/meetings/${meetingId}/settings/impact`;
+};
+
+/**
+ * @summary How many people these limits would take votes from, never who
+(facilitator, until Vote ends): the warning of the settings dialog.
+ */
+export const settingsImpact = async (
+  meetingId: string,
+  params: SettingsImpactParams,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<settingsImpactResponse> => {
+  return apiFetch<settingsImpactResponse>(getSettingsImpactUrl(meetingId, params), {
+    ...options,
+    method: 'GET',
   });
 };
 

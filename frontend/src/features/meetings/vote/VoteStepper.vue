@@ -24,14 +24,40 @@ const addButton = ref<HTMLButtonElement | null>(null);
 const removeButton = ref<HTMLButtonElement | null>(null);
 
 /**
+ * Keeps the keyboard in the stepper: when the focused button turned disabled
+ * (or the focus fell off it), moves to the other one if that is enabled.
+ * Focus the viewer moved elsewhere stays where it is.
+ */
+function keepFocus(preferred: HTMLButtonElement | null, other: HTMLButtonElement | null): void {
+  const active = document.activeElement;
+  const lost = active === null || active === document.body;
+  for (const button of [preferred, other]) {
+    if (!button || button.disabled) continue;
+    if (
+      lost ||
+      (active instanceof HTMLButtonElement &&
+        active.disabled &&
+        [addButton.value, removeButton.value].includes(active))
+    ) {
+      button.focus();
+    }
+    return;
+  }
+}
+
+/**
  * Votes, keeping the keyboard in the stepper: a button that turns disabled
- * would drop the focus, so it moves to the other one.
+ * would drop the focus, so it moves to the other one; and back again if the
+ * server refused the vote.
  */
 async function change(delta: 1 | -1): Promise<void> {
-  void store.vote(props.groupId, delta);
+  const done = store.vote(props.groupId, delta);
   await nextTick();
   const [own, other] = delta > 0 ? [addButton, removeButton] : [removeButton, addButton];
   if (own.value?.disabled && document.activeElement !== other.value) other.value?.focus();
+  if (await done) return;
+  await nextTick();
+  keepFocus(own.value, other.value);
 }
 </script>
 
@@ -89,8 +115,8 @@ async function change(delta: 1 | -1): Promise<void> {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border: none;
   border-radius: var(--radius-pill);

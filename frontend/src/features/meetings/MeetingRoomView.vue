@@ -30,7 +30,7 @@ import PhasePlaceholder from '@/features/meetings/phases/PhasePlaceholder.vue';
 import ReflectPhase from '@/features/meetings/reflect/ReflectPhase.vue';
 import VotePhase from '@/features/meetings/vote/VotePhase.vue';
 import VoteSettingsDialog from '@/features/meetings/vote/VoteSettingsDialog.vue';
-import { useMeetingStore } from '@/stores/meeting';
+import { PHASES, useMeetingStore } from '@/stores/meeting';
 import { useReflectDraftsStore } from '@/stores/reflectDrafts';
 import { useSessionStore } from '@/stores/session';
 
@@ -86,12 +86,23 @@ watch(
   },
 );
 
-// Vote settings belong to Vote: the dialog closes when the phase moves on.
+// Vote settings change until Vote ends: the dialog closes after it.
 watch(
   () => meeting.value?.phase,
   (phase) => {
-    if (phase !== MeetingPhase.vote) settingsOpen.value = false;
+    if (phase && PHASES.indexOf(phase) > PHASES.indexOf(MeetingPhase.vote)) {
+      settingsOpen.value = false;
+    }
   },
+);
+
+/**
+ * Whether the snapshot is Vote's: every card in a group. Right after the
+ * phase changes, the Group snapshot (with loose cards) is still shown until
+ * the new one arrives; the ballot waits for it rather than hide those cards.
+ */
+const ballotReady = computed(
+  () => meeting.value?.reflections.every((r) => r.groupId !== null) ?? false,
 );
 
 /** "Marco Bianchi is now the facilitator" (or drafts discarded), for a few seconds. */
@@ -147,7 +158,18 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
           <IcebreakerPhase v-if="meeting.phase === MeetingPhase.icebreaker" />
           <ReflectPhase v-else-if="meeting.phase === MeetingPhase.reflect" />
           <GroupPhase v-else-if="meeting.phase === MeetingPhase.group" />
-          <VotePhase v-else-if="meeting.phase === MeetingPhase.vote" />
+          <template v-else-if="meeting.phase === MeetingPhase.vote">
+            <VotePhase v-if="ballotReady" />
+            <div v-else-if="store.loadError" class="ballot-wait">
+              <AppAlert>{{ errorText(store.loadError) }}</AppAlert>
+              <AppButton variant="ghost" size="touch" @click="store.resync()">
+                {{ t('common.retry') }}
+              </AppButton>
+            </div>
+            <p v-else class="loading" aria-busy="true" data-testid="vote-loading">
+              {{ t('vote.loading') }}
+            </p>
+          </template>
           <PhasePlaceholder v-else />
         </div>
       </main>
@@ -166,6 +188,12 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
 <style scoped>
 .loading {
   color: var(--muted);
+}
+.ballot-wait {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
 }
 .room {
   position: relative;

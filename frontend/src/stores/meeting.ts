@@ -3,6 +3,7 @@ import { computed, ref, toRaw, watch } from 'vue';
 
 import {
   api,
+  ApiError,
   apiError,
   errorCode,
   MeetingPhase,
@@ -11,6 +12,7 @@ import {
   ReflectionColumn,
   type GroupDto,
   type MeetingStateDto,
+  type MyVoteDto,
   type ParticipantDto,
   type ReflectionDto,
   type Timer,
@@ -121,12 +123,29 @@ export const useMeetingStore = defineStore('meeting', () => {
   /** Optimistic actions waiting for the server's answer. */
   let optimisticInFlight = 0;
   /**
-   * Votes sent and not answered yet, oldest first. They go out one at a
-   * time, and every snapshot gets them on top until answered, so quick
-   * clicks neither flicker nor overtake each other.
+   * Votes not answered yet (queued or sent), oldest first. They go out one
+   * at a time, and are shown on top of the confirmed votes until answered,
+   * so quick clicks neither flicker nor overtake each other.
    */
   let pendingVotes: PendingVote[] = [];
   let voteChain: Promise<unknown> = Promise.resolve();
+  /** Whether a vote request is on its way (at most one, see `voteChain`). */
+  let voteSending = false;
+  /**
+   * Bumped whenever a vote goes out or comes back. A snapshot requested
+   * before a bump may or may not hold that vote, so its votes are not taken.
+   */
+  let voteEpoch = 0;
+  /**
+   * The viewer's votes, and the facilitator's cast count, as the server last
+   * surely had them; what the room shows is these plus `pendingVotes`.
+   */
+  let confirmedVotes: MyVoteDto[] = [];
+  let confirmedCast: number | null = null;
+  /** A snapshot's votes were unsure: reload once the votes are answered. */
+  let voteResyncWanted = false;
+  /** Bumped on every reset (e.g. another account): stale work stops. */
+  let generation = 0;
   /**
    * Server time minus local time, in ms, from the last `serverNow` seen: the
    * timer counts down on server time, whatever the local clock says.
@@ -248,10 +267,7 @@ export const useMeetingStore = defineStore('meeting', () => {
   });
   const votesLeft = computed(() => Math.max(0, voteBudget.value - votesUsed.value));
   /** Votes cast overall: the facilitator's view during Vote, else `null`. */
-  const votesCast = computed(() => {
-    const usage = meeting.value?.voteUsage;
-    return usage ? usage.reduce((sum, u) => sum + u.spent, 0) : null;
-  });
+  const votesCast = computed(() => meeting.value?.votesCast ?? null);
 
   /** Who else is dragging each card right now (spec §9.3), by card id. */
   const draggers = computed(() => {
@@ -292,7 +308,30 @@ export const useMeetingStore = defineStore('meeting', () => {
     queued = [];
     online = new Set();
     resyncWanted = false;
+    generation++;
     pendingVotes = [];
+    voteSending = false;
+    confirmedVotes = [];
+    confirmedCast = null;
+    voteResyncWanted = false;
+  }
+
+  /** Shows the confirmed votes with the pending ones on top. */
+  function renderVotes(): void {
+    const m = meeting.value;
+    if (!m) return;
+    m.myVotes = confirmedVotes.map((v) => ({ ...v }));
+    for (const pending of pendingVotes) bumpVote(m, pending.groupId, pending.delta);
+    m.votesCast =
+      confirmedCast === null
+        ? null
+        : confirmedCast + pendingVotes.reduce((sum, v) => sum + v.delta, 0);
+  }
+
+  /** Reloads now, or once the votes on their way are answered. */
+  function resyncVotes(): void {
+    if (voteSending || pendingVotes.length > 0) voteResyncWanted = true;
+    else void resync();
   }
 
   watch(
@@ -316,10 +355,23 @@ export const useMeetingStore = defineStore('meeting', () => {
    * (those that arrived while it was on its way) it may predate: sequenced
    * events past its `seq`, and every unsequenced one (writing, presence),
    * which is newer than what the snapshot holds.
+   *
+   * `since` is `voteEpoch` when the request went out: if a vote went out or
+   * came back meanwhile, the snapshot's votes may be older than the ones
+   * confirmed, or already hold a pending one, so they are not taken.
    */
-  function accept(state: MeetingStateDto, log: RealtimeEvent[] = []): void {
+  function accept(state: MeetingStateDto, log: RealtimeEvent[], since: number): void {
     if (state.id !== meetingId.value) return;
     const seen = meeting.value?.seq ?? 0;
+    if (since === voteEpoch && !voteSending) {
+      confirmedVotes = state.myVotes.map((v) => ({ ...v }));
+      confirmedCast = state.votesCast ?? null;
+    } else {
+      // No count at all is sure: not the facilitator, or not in Vote.
+      if (state.votesCast == null) confirmedCast = null;
+      else confirmedCast ??= state.votesCast;
+      resyncVotes();
+    }
     meeting.value = state;
     online = new Set(state.onlineIds);
     markOnline();
@@ -330,9 +382,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     } finally {
       replaying = false;
     }
-    // Votes still on their way are not in the snapshot yet.
-    const now = meeting.value;
-    if (now) for (const pending of pendingVotes) bumpVote(now, pending.groupId, pending.delta);
+    renderVotes();
     // The log should bring it back to every event seen; reload if it did not.
     if (meeting.value && meeting.value.seq < seen) void resync();
   }
@@ -344,6 +394,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       meetingId.value = id;
     }
     const seq = ++loadSeq;
+    const since = voteEpoch;
     loading.value = true;
     loadError.value = null;
     try {
@@ -353,7 +404,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       if (res.status !== 200) throw apiError(res);
       if (seq !== loadSeq) return;
       meeting.value = null;
-      accept(res.data);
+      accept(res.data, [], since);
       const pending = queued;
       queued = [];
       for (const event of pending) apply(event);
@@ -383,11 +434,12 @@ export const useMeetingStore = defineStore('meeting', () => {
       return;
     }
     const seq = ++loadSeq;
+    const since = voteEpoch;
     try {
       const { res, log } = await logged(() => api.getMeetingState(id));
       if (res.status !== 200) throw apiError(res);
       if (seq !== loadSeq) return;
-      accept(res.data, log);
+      accept(res.data, log, since);
     } catch (e) {
       if (seq === loadSeq) loadError.value = errorCode(e);
     }
@@ -446,7 +498,12 @@ export const useMeetingStore = defineStore('meeting', () => {
         m.facilitatorId = p.facilitatorId as string;
         const name = participantsById.value.get(m.facilitatorId)?.displayName ?? '';
         notice.value = { kind: 'facilitator', userId: m.facilitatorId, name };
-        // Only the facilitator sees how many votes were cast: re-read it.
+        // Only the facilitator sees how many votes were cast: hide it at
+        // once from the one who left the role, re-read it for the new one.
+        if (m.facilitatorId !== me.value) {
+          confirmedCast = null;
+          m.votesCast = null;
+        }
         if (m.phase === MeetingPhase.vote && !replaying) void resync();
         break;
       }
@@ -520,6 +577,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     optimistic?: () => void,
   ): Promise<boolean> {
     const before = meeting.value ? structuredClone(toRaw(meeting.value)) : null;
+    const since = voteEpoch;
     actionError.value = null;
     if (optimistic) {
       optimisticInFlight++;
@@ -528,11 +586,12 @@ export const useMeetingStore = defineStore('meeting', () => {
     try {
       const { res, log } = await logged(call);
       if (res.status !== 200 && res.status !== 201) throw apiError(res);
-      accept(res.data as MeetingStateDto, log);
+      accept(res.data as MeetingStateDto, log, since);
       return true;
     } catch (e) {
       if (optimistic && before) undo(before);
       actionError.value = errorCode(e);
+      lastFailure = e;
       return false;
     } finally {
       if (optimistic) optimisticInFlight--;
@@ -549,9 +608,12 @@ export const useMeetingStore = defineStore('meeting', () => {
     const now = meeting.value;
     if (now && now.id === before.id && now.seq === before.seq && optimisticInFlight === 1) {
       // Presence, writing and drags carry no seq: keep the current ones.
+      // Nor do votes, which the refused action did not touch.
       // (Raw: the next action clones the state, which a proxy would break.)
       before.writing = toRaw(now.writing);
       before.drags = toRaw(now.drags);
+      before.myVotes = toRaw(now.myVotes);
+      before.votesCast = now.votesCast;
       meeting.value = before;
       markOnline();
     } else if (now?.id === before.id) {
@@ -731,37 +793,87 @@ export const useMeetingStore = defineStore('meeting', () => {
     }
     if (delta < 0 && mine <= 0) return Promise.resolve(false);
     const id = m.id;
+    // The account and meeting the click was made in: if either changes
+    // before it goes out or comes back, it is dropped.
+    const gen = generation;
     const entry: PendingVote = { groupId, delta };
     pendingVotes.push(entry);
-    bumpVote(m, groupId, delta);
+    renderVotes();
     actionError.value = null;
-    const settle = (): void => {
-      pendingVotes = pendingVotes.filter((v) => v !== entry);
-    };
     const run = voteChain.then(async () => {
+      if (gen !== generation) return false;
+      voteSending = true;
+      voteEpoch++;
+      let res: Awaited<ReturnType<typeof api.vote>> | null = null;
+      let log: RealtimeEvent[] = [];
+      let failure: unknown = null;
       try {
-        const { res, log } = await logged(() => api.vote(groupId, { delta }));
-        settle();
+        ({ res, log } = await logged(() => api.vote(groupId, { delta })));
         if (res.status !== 200) throw apiError(res);
-        accept(res.data, log);
-        return true;
       } catch (e) {
-        settle();
-        if (meetingId.value === id) {
-          actionError.value = errorCode(e);
-          await resync();
-        }
-        return false;
+        failure = e;
       }
+      if (gen !== generation) return false;
+      voteSending = false;
+      voteEpoch++;
+      pendingVotes = pendingVotes.filter((v) => v !== entry);
+      if (failure === null && res?.status === 200) {
+        // The answer holds every vote up to this one: sure.
+        accept(res.data, log, voteEpoch);
+      } else {
+        // Take the refused vote back at once, keeping later clicks, then
+        // learn why from the server.
+        renderVotes();
+        if (meetingId.value === id) {
+          actionError.value = errorCode(failure);
+          voteResyncWanted = true;
+        }
+      }
+      if (voteResyncWanted && pendingVotes.length === 0 && meetingId.value === id) {
+        voteResyncWanted = false;
+        await resync();
+      }
+      return failure === null;
     });
     voteChain = run;
     return run;
   }
 
-  /** Sets the vote budget and the most votes per group (facilitator). */
-  function saveVoteSettings(budget: number, maxPerGroup: number): Promise<boolean> {
+  /** The last failure `act()` caught. */
+  let lastFailure: unknown = null;
+
+  /**
+   * Sets the vote budget and the most votes per group (facilitator). When the
+   * answer is lost or broken (not a refusal), the change may have committed
+   * (and trimmed votes): reload the state rather than trust the old one.
+   */
+  async function saveVoteSettings(budget: number, maxPerGroup: number): Promise<boolean> {
     const id = meetingId.value!;
-    return act(() => api.updateSettings(id, { voteBudget: budget, voteMaxPerGroup: maxPerGroup }));
+    lastFailure = null;
+    const saved = await act(() =>
+      api.updateSettings(id, { voteBudget: budget, voteMaxPerGroup: maxPerGroup }),
+    );
+    const refused = lastFailure instanceof ApiError && lastFailure.status < 500;
+    if (!saved && !refused && meetingId.value === id) void resync();
+    return saved;
+  }
+
+  /**
+   * How many people `budget` and `maxPerGroup` would take votes from
+   * (facilitator; the server counts, never says who). `null` if unknown.
+   */
+  async function voteImpact(budget: number, maxPerGroup: number): Promise<number | null> {
+    const id = meetingId.value;
+    if (!id) return null;
+    try {
+      const res = await api.settingsImpact(id, {
+        voteBudget: budget,
+        voteMaxPerGroup: maxPerGroup,
+      });
+      return res.status === 200 ? res.data.affected : null;
+    } catch {
+      return null;
+    }
   }
 
   return {
@@ -820,5 +932,6 @@ export const useMeetingStore = defineStore('meeting', () => {
     renameGroup,
     vote,
     saveVoteSettings,
+    voteImpact,
   };
 });

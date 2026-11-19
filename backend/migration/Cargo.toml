@@ -9,4 +9,4 @@ publish.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-sea-orm-migration = { version = "2.0.4", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls"] }
+sea-orm-migration = { version = "=2.0.4", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls"] }

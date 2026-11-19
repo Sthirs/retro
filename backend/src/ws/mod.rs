@@ -118,15 +118,17 @@ async fn next_seq(db: &impl ConnectionTrait, table: &str, id: Uuid) -> Result<i6
     row.try_get("", "event_seq")
 }
 
-/// Publishes a persisted event on a meeting's channel, with its next `seq`.
+/// Publishes a persisted event on a meeting's channel, with its next `seq`,
+/// and returns that `seq`.
 pub async fn publish_meeting(
     db: &impl ConnectionTrait,
     meeting_id: Uuid,
     kind: &str,
     payload: Value,
-) -> Result<(), DbErr> {
+) -> Result<i64, DbErr> {
     let seq = next_meeting_seq(db, meeting_id).await?;
-    publish(db, Channel::Meeting(meeting_id), Some(seq), kind, payload).await
+    publish(db, Channel::Meeting(meeting_id), Some(seq), kind, payload).await?;
+    Ok(seq)
 }
 
 /// Publishes a persisted event on a team's channel, with its next `seq`.

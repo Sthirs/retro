@@ -49,19 +49,28 @@ watch(
   { immediate: true },
 );
 
-const draft = ref('');
+/** Kept in the store per group: a move to another group does not lose it. */
+const draft = computed({
+  get: () => store.taskDrafts[props.groupId] ?? '',
+  set: (html: string) => store.setTaskDraft(props.groupId, html),
+});
 const busy = ref(false);
 const uploading = ref(false);
-/** Remounts the editor once a task is added, so it starts empty. */
+/**
+ * Remounts the editor once a task is added, so it starts empty, and on
+ * another group, so it shows that group's text.
+ */
 const editorKey = ref(0);
 const canAdd = computed(() => hasContent(draft.value) && !busy.value && !uploading.value);
 
 async function add(): Promise<void> {
   if (!canAdd.value) return;
   busy.value = true;
+  // The group may change while the task is on its way: clear only its draft.
+  const groupId = props.groupId;
   try {
-    if (await store.createTask(props.groupId, draft.value)) {
-      draft.value = '';
+    if (await store.createTask(groupId, draft.value)) {
+      store.setTaskDraft(groupId, '');
       editorKey.value++;
     }
   } finally {
@@ -81,7 +90,7 @@ async function add(): Promise<void> {
     </div>
     <div v-if="!readonly" class="composer">
       <RichTextEditor
-        :key="editorKey"
+        :key="`${groupId}:${editorKey}`"
         v-model="draft"
         kind="task"
         :members="members"

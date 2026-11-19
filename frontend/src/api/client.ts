@@ -17,6 +17,7 @@ export type {
   PendingInvitationDto,
   PersonDto,
   Problem,
+  ReactionAnswerDto,
   ReactionDto,
   ReflectionDto,
   SessionResponse,

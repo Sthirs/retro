@@ -113,7 +113,7 @@ async function discussThis(id: string): Promise<void> {
           </article>
         </div>
       </section>
-      <DiscussTasks :key="groupId" :group-id="groupId" :readonly="readonly" />
+      <DiscussTasks :group-id="groupId" :readonly="readonly" />
     </div>
   </div>
 </template>

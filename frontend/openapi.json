@@ -2605,11 +2605,11 @@
         ],
         "responses": {
           "200": {
-            "description": "The emoji on that card, with its new count",
+            "description": "The emoji on that card, with its new count and the event seq it is valid at",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReactionDto"
+                  "$ref": "#/components/schemas/ReactionAnswerDto"
                 }
               }
             }
@@ -2690,11 +2690,11 @@
         ],
         "responses": {
           "200": {
-            "description": "The emoji on that card, with its new count",
+            "description": "The emoji on that card, with its new count and the event seq it is valid at",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReactionDto"
+                  "$ref": "#/components/schemas/ReactionAnswerDto"
                 }
               }
             }
@@ -5266,6 +5266,26 @@
             "description": "URI reference identifying the problem type."
           }
         }
+      },
+      "ReactionAnswerDto": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ReactionDto"
+          },
+          {
+            "type": "object",
+            "required": [
+              "seq"
+            ],
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "format": "int64"
+              }
+            }
+          }
+        ],
+        "description": "The answer to a reaction toggle: the emoji on that card, and the meeting\nevent `seq` its count is valid at. A `reaction.changed` with a higher\n`seq` is newer, whichever arrives first."
       },
       "ReactionDto": {
         "type": "object",

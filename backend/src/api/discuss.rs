@@ -18,7 +18,7 @@ use crate::{
     auth::CurrentUser,
     domain::{
         discuss,
-        reactions::{self, ReactionDto},
+        reactions::{self, ReactionAnswerDto},
     },
     error::{AppResult, Problem},
     state::AppState,
@@ -119,7 +119,7 @@ pub async fn create_task(
         ("emoji" = String, Path, description = "One Unicode emoji, percent-encoded"),
     ),
     responses(
-        (status = 200, body = ReactionDto, description = "The emoji on that card, with its new count"),
+        (status = 200, body = ReactionAnswerDto, description = "The emoji on that card, with its new count and the event seq it is valid at"),
         (status = 400, body = Problem, content_type = "application/problem+json", description = "`invalid_emoji`"),
         (status = 403, body = Problem, content_type = "application/problem+json", description = "`not_participant`"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "`reflection_not_found`"),
@@ -131,7 +131,7 @@ pub async fn add_reaction(
     CurrentUser(user): CurrentUser,
     ClientId(client): ClientId,
     Path((reflection_id, emoji)): Path<(Uuid, String)>,
-) -> AppResult<Json<ReactionDto>> {
+) -> AppResult<Json<ReactionAnswerDto>> {
     Ok(Json(
         reactions::set(&state.db, reflection_id, user.id, &emoji, true, client).await?,
     ))
@@ -148,7 +148,7 @@ pub async fn add_reaction(
         ("emoji" = String, Path, description = "One Unicode emoji, percent-encoded"),
     ),
     responses(
-        (status = 200, body = ReactionDto, description = "The emoji on that card, with its new count"),
+        (status = 200, body = ReactionAnswerDto, description = "The emoji on that card, with its new count and the event seq it is valid at"),
         (status = 400, body = Problem, content_type = "application/problem+json", description = "`invalid_emoji`"),
         (status = 403, body = Problem, content_type = "application/problem+json", description = "`not_participant`"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "`reflection_not_found`"),
@@ -160,7 +160,7 @@ pub async fn remove_reaction(
     CurrentUser(user): CurrentUser,
     ClientId(client): ClientId,
     Path((reflection_id, emoji)): Path<(Uuid, String)>,
-) -> AppResult<Json<ReactionDto>> {
+) -> AppResult<Json<ReactionAnswerDto>> {
     Ok(Json(
         reactions::set(&state.db, reflection_id, user.id, &emoji, false, client).await?,
     ))

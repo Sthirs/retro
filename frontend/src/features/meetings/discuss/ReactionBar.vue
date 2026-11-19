@@ -111,6 +111,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown,
   gap: 6px;
 }
 .chip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -124,6 +125,17 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown,
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+}
+.chip::before,
+.add::before {
+  /* 44 px touch target. */
+  content: '';
+  position: absolute;
+  inset: -7px;
+}
+.chip::before {
+  /* Chips are wider than 44 px: only taller, clear of their neighbours. */
+  inset: -7px 0;
 }
 .chip:disabled {
   cursor: default;
@@ -141,6 +153,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown,
   display: inline-flex;
 }
 .add {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;

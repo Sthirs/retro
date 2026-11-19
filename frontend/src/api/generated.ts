@@ -675,6 +675,15 @@ export interface Problem {
 }
 
 /**
+ * The answer to a reaction toggle: the emoji on that card, and the meeting
+ * event `seq` its count is valid at. A `reaction.changed` with a higher
+ * `seq` is newer, whichever arrives first.
+ */
+export type ReactionAnswerDto = ReactionDto & {
+  seq: number;
+};
+
+/**
  * A group's new name.
  */
 export interface RenameGroupRequest {
@@ -3060,7 +3069,7 @@ export const moveCard = async (
 };
 
 export type addReactionResponse200 = {
-  data: ReactionDto;
+  data: ReactionAnswerDto;
   status: 200;
 };
 
@@ -3115,7 +3124,7 @@ export const addReaction = async (
 };
 
 export type removeReactionResponse200 = {
-  data: ReactionDto;
+  data: ReactionAnswerDto;
   status: 200;
 };
 

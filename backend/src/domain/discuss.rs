@@ -149,16 +149,14 @@ pub(crate) async fn lock_discussing(
     Ok(meeting)
 }
 
-/// Fails with `not_current_group` unless `group_id` is the current group.
+/// Fails with `not_current_group` unless `group_id` is the current group,
+/// by the same rule as the state everyone sees ([`current`]).
 pub(crate) async fn require_current(
     db: &impl ConnectionTrait,
     meeting: &meeting::Model,
     group_id: Option<Uuid>,
 ) -> Result<(), AppError> {
-    let current = match meeting.discuss_group_id {
-        Some(id) => Some(id),
-        None => order(db, meeting.id).await?.first().map(|g| g.group_id),
-    };
+    let current = current(meeting, &order(db, meeting.id).await?);
     match (group_id, current) {
         (Some(group), Some(current)) if group == current => Ok(()),
         _ => Err(AppError::Conflict("not_current_group")),

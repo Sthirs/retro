@@ -360,7 +360,7 @@ The individual meeting phases cannot be replayed.
 | `discuss.group_changed` | group id, `clientId` | all |
 | `reaction.changed` | reflection, emoji, count (absolute), `clientId` — never who reacted | all |
 | `reaction.mine_changed` | reflection, emoji, mine, `clientId` (no `seq`; the user's other tabs mark the reaction as theirs or not) | the reacting user only |
-| `task.created` / `task.updated` / `task.moved` / `task.deleted` | task id, status, `clientId` of the tab that made the change (from its `X-Client-Id` header, else `null`), so that tab skips its own echo; the meeting room re-reads the state | team channel, and the meeting channel of its meeting while that meeting is active |
+| `task.created` / `task.updated` / `task.moved` / `task.deleted` | task id, status, `clientId` of the tab that made the change (from its `X-Client-Id` header, else `null`), so that tab skips its own echo; the meeting room re-reads the state on a created or updated task (bursts merged into one reload), drops a deleted one, and ignores moves (its Tasks panel shows neither status nor position) | team channel, and the meeting channel of its meeting while that meeting is active |
 | `meeting.renamed` | title | meeting + team channel |
 | `meeting.started` / `meeting.ended` | meeting | team channel (`meeting.ended` also on the meeting channel) |
 | `meeting.updated` | meeting id (phase, facilitator or participants changed) | team channel |
@@ -610,7 +610,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | PATCH | `/groups/{gid}` | `{ name }`: rename a group |
 | PUT | `/reflections/{rid}/group` | `{ groupId \| null }`: move a card into a group, or out of its group |
 | POST | `/groups/{gid}/vote` | `{ "delta": +1 \| -1 }`: one more vote, or take back the most recent (not idempotent) |
-| PUT | `/reflections/{rid}/reactions/{emoji}` | Add a reaction (idempotent); answers `{ reflectionId, emoji, count, mine }` |
+| PUT | `/reflections/{rid}/reactions/{emoji}` | Add a reaction (idempotent); answers `{ reflectionId, emoji, count, mine, seq }`, where `seq` is the meeting event `seq` the count is valid at (that of its own `reaction.changed`, or the latest one when nothing changed), so a client can tell it from older and newer events |
 | DELETE | `/reflections/{rid}/reactions/{emoji}` | Remove a reaction (idempotent); same answer |
 | PUT | `/meetings/{id}/discuss/current` | `{ groupId }`: set the current group (facilitator); answers with the meeting state |
 

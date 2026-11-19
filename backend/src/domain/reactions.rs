@@ -39,6 +39,17 @@ pub struct ReactionDto {
     pub mine: bool,
 }
 
+/// The answer to a reaction toggle: the emoji on that card, and the meeting
+/// event `seq` its count is valid at. A `reaction.changed` with a higher
+/// `seq` is newer, whichever arrives first.
+#[derive(Debug, Clone, Serialize, ToSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReactionAnswerDto {
+    #[serde(flatten)]
+    pub reaction: ReactionDto,
+    pub seq: i64,
+}
+
 /// The fully qualified form of `raw`, or `invalid_emoji` unless it is
 /// exactly one Unicode emoji.
 pub fn normalize(raw: &str) -> Result<&'static str, AppError> {
@@ -83,7 +94,7 @@ pub async fn set(
     raw_emoji: &str,
     on: bool,
     client: Option<Uuid>,
-) -> Result<ReactionDto, AppError> {
+) -> Result<ReactionAnswerDto, AppError> {
     let emoji = normalize(raw_emoji)?;
     let card = reflection::Entity::find_by_id(reflection_id)
         .one(db)
@@ -128,8 +139,10 @@ pub async fn set(
         .count(&txn)
         .await?;
     let count = i32::try_from(count).unwrap_or(i32::MAX);
-    if changed {
-        ws::publish_meeting(
+    // Reaction writes hold the team lock: no other one lands between the
+    // count and its seq.
+    let seq = if changed {
+        let seq = ws::publish_meeting(
             &txn,
             meeting.id,
             "reaction.changed",
@@ -144,14 +157,33 @@ pub async fn set(
             json!({ "reflectionId": card.id, "emoji": emoji, "mine": on, "clientId": client }),
         )
         .await?;
-    }
+        seq
+    } else {
+        current_seq(&txn, meeting.id).await?
+    };
     txn.commit().await?;
-    Ok(ReactionDto {
-        reflection_id: card.id,
-        emoji: emoji.to_owned(),
-        count,
-        mine: on,
+    Ok(ReactionAnswerDto {
+        reaction: ReactionDto {
+            reflection_id: card.id,
+            emoji: emoji.to_owned(),
+            count,
+            mine: on,
+        },
+        seq,
     })
+}
+
+/// The meeting's last event `seq`, as committed now.
+async fn current_seq(db: &impl ConnectionTrait, meeting_id: Uuid) -> Result<i64, AppError> {
+    let row = db
+        .query_one_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT event_seq FROM meetings WHERE id = $1",
+            [meeting_id.into()],
+        ))
+        .await?
+        .ok_or(AppError::NotFound("reflection_not_found"))?;
+    Ok(row.try_get("", "event_seq")?)
 }
 
 #[cfg(test)]
@@ -193,6 +225,19 @@ mod tests {
             })
             .unwrap(),
             json!({ "reflectionId": id, "emoji": "🎉", "count": 2, "mine": true })
+        );
+        assert_eq!(
+            serde_json::to_value(ReactionAnswerDto {
+                reaction: ReactionDto {
+                    reflection_id: id,
+                    emoji: "🎉".into(),
+                    count: 2,
+                    mine: true
+                },
+                seq: 7,
+            })
+            .unwrap(),
+            json!({ "reflectionId": id, "emoji": "🎉", "count": 2, "mine": true, "seq": 7 })
         );
     }
 }

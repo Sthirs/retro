@@ -11,6 +11,7 @@ import { computed, nextTick, onMounted, ref, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import AppIcon from '@/components/AppIcon.vue';
+import type { IconName } from '@/components/icons';
 import {
   CATEGORY_IDS,
   type CategoryId,
@@ -41,6 +42,16 @@ const query = ref('');
 const search = ref<HTMLInputElement | null>(null);
 const grid = ref<HTMLElement | null>(null);
 type TabId = 'recent' | CategoryId;
+/** Stroke icons of the tabs (AGENTS.md §4.4: never emoji). */
+const TAB_ICONS: Record<TabId, IconName> = {
+  recent: 'clock',
+  smileys: 'smile',
+  people: 'hand',
+  nature: 'leaf',
+  food: 'utensils',
+  objects: 'lightbulb',
+  symbols: 'heart',
+};
 const activeTab = ref<TabId>('recent');
 
 const byEmoji = computed(() => {
@@ -97,14 +108,30 @@ function onScroll(): void {
   activeTab.value = current;
 }
 
-/** Arrow keys between the emoji of the grid (8 per row). */
+/** The emoji per row of the grid holding `button`: 8, or 6 on touch screens. */
+function perRow(button: HTMLElement): number {
+  const tracks = button.parentElement
+    ? getComputedStyle(button.parentElement).gridTemplateColumns.split(' ').filter(Boolean)
+    : [];
+  return tracks.length > 0 ? tracks.length : 8;
+}
+
+/** Arrow keys between the emoji of the grid. */
 function onGridKey(event: KeyboardEvent): void {
-  const steps: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -8, ArrowDown: 8 };
-  const step = steps[event.key];
-  if (step === undefined || !grid.value) return;
+  if (!grid.value) return;
   const buttons = [...grid.value.querySelectorAll<HTMLButtonElement>('button[data-emoji]')];
   const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
-  if (at < 0) return;
+  const current = buttons[at];
+  if (!current) return;
+  const row = perRow(current);
+  const steps: Record<string, number> = {
+    ArrowLeft: -1,
+    ArrowRight: 1,
+    ArrowUp: -row,
+    ArrowDown: row,
+  };
+  const step = steps[event.key];
+  if (step === undefined) return;
   event.preventDefault();
   const next = buttons[Math.min(buttons.length - 1, Math.max(0, at + step))];
   next?.focus();
@@ -196,17 +223,7 @@ onMounted(async () => {
         :title="t(`discuss.picker.${id}`)"
         @click="showTab(id)"
       >
-        {{
-          {
-            recent: '🕘',
-            smileys: '😀',
-            people: '👋',
-            nature: '🌿',
-            food: '🍕',
-            objects: '💡',
-            symbols: '❤️',
-          }[id]
-        }}
+        <AppIcon :name="TAB_ICONS[id]" :size="17" />
       </button>
     </div>
     <div ref="grid" class="picker__grid" @scroll.passive="onScroll" @keydown="onGridKey">
@@ -233,6 +250,7 @@ onMounted(async () => {
             type="button"
             class="picker__emoji"
             :class="{ 'picker__emoji--mine': isMine(e.emoji) }"
+            :aria-pressed="isMine(e.emoji)"
             :aria-label="t('discuss.picker.emoji', { emoji: e.name })"
             :data-emoji="e.emoji"
             @mouseenter="previewed = e.emoji"
@@ -263,6 +281,7 @@ onMounted(async () => {
               type="button"
               class="picker__emoji"
               :class="{ 'picker__emoji--mine': isMine(e.emoji) }"
+              :aria-pressed="isMine(e.emoji)"
               :aria-label="t('discuss.picker.emoji', { emoji: e.name })"
               :data-emoji="e.emoji"
               @mouseenter="previewed = e.emoji"
@@ -375,14 +394,16 @@ onMounted(async () => {
   border-bottom: 1px solid var(--line);
 }
 .picker__tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 1 1 0;
   height: 34px;
   padding: 0;
   border: none;
   border-bottom: 2px solid transparent;
   background: transparent;
-  font-size: 17px;
-  line-height: 1;
+  color: var(--text);
   opacity: 0.6;
   cursor: pointer;
 }
@@ -443,5 +464,27 @@ onMounted(async () => {
 .picker__limit {
   margin-left: auto;
   text-align: right;
+}
+/* Touch screens: 44 px touch targets, fewer emoji per row. */
+@media (pointer: coarse) {
+  .picker__input,
+  .picker__tab {
+    height: 44px;
+  }
+  .picker__quick-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .picker__quick-emoji {
+    width: 100%;
+    height: 44px;
+  }
+  .picker__emoji-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+  .picker__emoji {
+    width: 44px;
+    height: 44px;
+  }
 }
 </style>

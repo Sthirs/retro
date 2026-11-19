@@ -250,11 +250,11 @@ describe('Discuss phase', () => {
       routes(BOB, discussing(), {
         [`PUT ${reactionPath('c1', '😬')}`]: {
           status: 200,
-          body: { reflectionId: 'c1', emoji: '😬', count: 3, mine: true },
+          body: { reflectionId: 'c1', emoji: '😬', count: 3, mine: true, seq: 3 },
         },
         [`DELETE ${reactionPath('c1', '👍')}`]: {
           status: 200,
-          body: { reflectionId: 'c1', emoji: '👍', count: 3, mine: false },
+          body: { reflectionId: 'c1', emoji: '👍', count: 3, mine: false, seq: 4 },
         },
       }),
     );
@@ -302,7 +302,7 @@ describe('Discuss phase', () => {
       routes(BOB, discussing(), {
         [`PUT ${reactionPath('c1', '🚀')}`]: {
           status: 200,
-          body: { reflectionId: 'c1', emoji: '🚀', count: 1, mine: true },
+          body: { reflectionId: 'c1', emoji: '🚀', count: 1, mine: true, seq: 3 },
         },
       }),
     );
@@ -318,6 +318,14 @@ describe('Discuss phase', () => {
     // The viewer's own reactions on this card are pressed.
     expect(quick[2]!.attributes('aria-pressed')).toBe('true');
     expect(quick[0]!.attributes('aria-pressed')).toBe('false');
+    // Category tabs are labelled stroke icons, not emoji.
+    const tabs = picker.findAll('[role="tab"]');
+    expect(tabs).toHaveLength(7);
+    for (const tab of tabs) {
+      expect(tab.find('svg').exists()).toBe(true);
+      expect(tab.text()).toBe('');
+      expect(tab.attributes('aria-label')).toBeTruthy();
+    }
 
     await quick[0]!.trigger('click');
     await flushPromises();
@@ -336,7 +344,7 @@ describe('Discuss phase', () => {
       routes(BOB, discussing(), {
         [`PUT ${reactionPath('c1', '🎉')}`]: {
           status: 200,
-          body: { reflectionId: 'c1', emoji: '🎉', count: 1, mine: true },
+          body: { reflectionId: 'c1', emoji: '🎉', count: 1, mine: true, seq: 3 },
         },
       }),
     );
@@ -360,6 +368,7 @@ describe('Discuss phase', () => {
     const input = picker.get('input[aria-label="Search emoji"]');
     await input.setValue('party popper');
     expect(picker.get('[data-emoji="🎉"]').attributes('aria-label')).toBe('emoji Party popper');
+    expect(picker.get('[data-emoji="🎉"]').attributes('aria-pressed')).toBe('false');
     await picker.get('[data-emoji="🎉"]').trigger('focus');
     expect(picker.text()).toContain(':party_popper: · Enter to react');
     await input.trigger('keydown', { key: 'Enter' });
@@ -405,6 +414,37 @@ describe('Discuss phase', () => {
       expect.stringContaining('Quarantine flaky tests'),
       expect.stringContaining('Split the CI pipeline'),
     ]);
+    expect(wrapper.findComponent(RichTextEditor).props('modelValue')).toBe('');
+  });
+
+  it('keeps an unsent task when the facilitator moves to another group and back', async () => {
+    const { calls } = mockFetch(routes(BOB));
+    const { wrapper } = await open();
+    wrapper.findComponent(RichTextEditor).vm.$emit('update:modelValue', '<p>Half a thought</p>');
+    await flushPromises();
+
+    const socket = await openSocket();
+    socket.emit({
+      type: 'discuss.group_changed',
+      channel,
+      seq: 3,
+      payload: { groupId: 'g2', clientId: null },
+    });
+    await flushPromises();
+    expect(groupTitle(wrapper)).toBe('On-call');
+    expect(wrapper.findComponent(RichTextEditor).props('modelValue')).toBe('');
+
+    socket.emit({
+      type: 'discuss.group_changed',
+      channel,
+      seq: 4,
+      payload: { groupId: 'g1', clientId: null },
+    });
+    await flushPromises();
+    expect(groupTitle(wrapper)).toBe('Flaky CI');
+    expect(wrapper.findComponent(RichTextEditor).props('modelValue')).toBe('<p>Half a thought</p>');
+    // The @-mention candidates are read once, not on every group.
+    expect(calls.filter((c) => c.path === `/api/v1/teams/${TEAM_ID}/members`)).toHaveLength(1);
   });
 
   it('shows an empty Discuss when no group was made', async () => {

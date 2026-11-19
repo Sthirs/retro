@@ -5,6 +5,7 @@
 mod common;
 
 use common::{TestApp, TestResponse};
+use sea_orm::ConnectionTrait;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -461,9 +462,10 @@ async fn reactions_toggle_one_of_each_emoji_per_person() {
     let r = discussing(&app).await;
 
     let first = ok(react(&app, &r.bob, &r.d1, "👍", true).await);
+    let seq = state(&app, &r.bob, &r.meeting).await["seq"].clone();
     assert_eq!(
         first,
-        json!({ "reflectionId": r.d1, "emoji": "👍", "count": 1, "mine": true })
+        json!({ "reflectionId": r.d1, "emoji": "👍", "count": 1, "mine": true, "seq": seq })
     );
     assert_eq!(
         ok(react(&app, &r.erin, &r.d1, "👍", true).await)["count"],
@@ -505,6 +507,60 @@ async fn reactions_toggle_one_of_each_emoji_per_person() {
     ok(react(&app, &r.bob, &r.d1, "🎉", false).await);
     let seen = state(&app, &r.bob, &r.meeting).await;
     assert_eq!(reactions_on(&seen, &r.d1), vec![("👍".into(), 1, false)]);
+}
+
+#[tokio::test]
+async fn reaction_answers_carry_the_seq_their_count_is_valid_at() {
+    let app = TestApp::new().await;
+    let r = discussing(&app).await;
+    let before = state(&app, &r.bob, &r.meeting).await["seq"]
+        .as_i64()
+        .unwrap();
+
+    // A change answers the seq of its own `reaction.changed`.
+    let on = ok(react(&app, &r.bob, &r.d1, "👍", true).await);
+    assert_eq!(on["seq"], before + 1);
+    let other = ok(react(&app, &r.erin, &r.d1, "👍", true).await);
+    assert_eq!(
+        (other["count"].clone(), other["seq"].clone()),
+        (json!(2), json!(before + 2))
+    );
+    // Nothing changed: the newest seq, with the count as of then.
+    let again = ok(react(&app, &r.bob, &r.d1, "👍", true).await);
+    assert_eq!(
+        (again["count"].clone(), again["seq"].clone()),
+        (json!(2), json!(before + 2))
+    );
+    let seen = state(&app, &r.bob, &r.meeting).await;
+    assert_eq!(seen["seq"], before + 2);
+}
+
+#[tokio::test]
+async fn reactions_follow_the_current_group_everyone_sees() {
+    let app = TestApp::new().await;
+    let r = discussing(&app).await;
+    // A stored current group that is not in the order (no cards): the room
+    // shows the first group of the order, and it takes reactions and tasks.
+    let empty = Uuid::now_v7();
+    app.db
+        .execute_unprepared(&format!(
+            "INSERT INTO reflection_groups (id, meeting_id, \"column\", position, name, created_at, updated_at) \
+             VALUES ('{empty}', '{}', 'delta', 99, '', now(), now()); \
+             UPDATE meetings SET discuss_group_id = '{empty}' WHERE id = '{}'",
+            r.meeting, r.meeting
+        ))
+        .await
+        .unwrap();
+    let seen = state(&app, &r.bob, &r.meeting).await;
+    assert_eq!(seen["discussGroupId"], r.g_d1.as_str());
+    ok(react(&app, &r.bob, &r.d1, "👍", true).await);
+    let res = task(&app, &r.bob, &r.meeting, &r.g_d1, "<p>Fix it</p>").await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    fails(
+        &react(&app, &r.bob, &r.p1, "👍", true).await,
+        409,
+        "not_current_group",
+    );
 }
 
 #[tokio::test]

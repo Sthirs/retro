@@ -5,6 +5,7 @@ import { expect, test, type Browser, type BrowserContext, type Page } from '@pla
 import {
   createTeam,
   deleteTeam,
+  joinMeeting,
   joinTeam,
   meetingAction,
   meetingState,
@@ -63,7 +64,7 @@ test.describe('reflect', () => {
     await joinTeam(LENA, teamId, MILO);
     await joinTeam(LENA, teamId, NORA);
     meetingId = await startMeeting(LENA, teamId);
-    await meetingAction(MILO, meetingId, 'join');
+    await joinMeeting(MILO, teamId, meetingId);
     await meetingAction(LENA, meetingId, 'phase/next');
     cspViolations.push(await watchCsp(page));
     await signIn(page, 'lena');

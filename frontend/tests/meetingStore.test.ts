@@ -5,10 +5,19 @@ import { nextTick } from 'vue';
 import { useMeetingStore } from '@/stores/meeting';
 import { useSessionStore } from '@/stores/session';
 
-import { ALICE, BOB, MEETING_ID, meetingState, mockFetch, participant, problem } from './helpers';
+import {
+  ALICE,
+  BOB,
+  MEETING_ID,
+  meetingState,
+  mockFetch,
+  participant,
+  problem,
+  TEAM_ID,
+} from './helpers';
 
 const STATE = `GET /api/v1/meetings/${MEETING_ID}/state`;
-const JOIN = `POST /api/v1/meetings/${MEETING_ID}/join`;
+const JOIN = `POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`;
 const channel = `meeting:${MEETING_ID}`;
 
 async function opened(routes: Parameters<typeof mockFetch>[0] = {}) {
@@ -17,7 +26,7 @@ async function opened(routes: Parameters<typeof mockFetch>[0] = {}) {
   useSessionStore().setUser({ ...ALICE, pictureVersion: null });
   // A new user resets the store: let that happen before opening.
   await nextTick();
-  await store.open(MEETING_ID);
+  await store.open(MEETING_ID, TEAM_ID);
   return { store, ...fetch };
 }
 
@@ -187,7 +196,7 @@ describe('meeting store', () => {
       [JOIN]: { status: 200, body: meetingState({ seq: 2 }) },
       [STATE]: { status: 200, body: meetingState({ seq: 3, title: 'Renamed' }) },
     });
-    const opening = store.open(MEETING_ID);
+    const opening = store.open(MEETING_ID, TEAM_ID);
     // The subscription is acknowledged, and an event lands, before the join answers.
     store.apply({ type: 'resync', channel, seq: null, payload: {} });
     store.apply({ type: 'phase.changed', channel, seq: 3, payload: { phase: 'reflect' } });
@@ -305,7 +314,7 @@ describe('meeting store', () => {
     useSessionStore().setUser({ ...ALICE, pictureVersion: null });
     await nextTick();
     mockFetch({ [JOIN]: { status: 200, body: meetingState() } });
-    const opening = store.open(MEETING_ID);
+    const opening = store.open(MEETING_ID, TEAM_ID);
     store.apply({ type: 'error', channel, seq: null, payload: { code: 'internal' } });
     expect(store.loadError).toBe('internal');
     await opening;

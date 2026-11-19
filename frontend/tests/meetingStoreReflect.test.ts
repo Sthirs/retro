@@ -7,21 +7,21 @@ import { CLIENT_ID } from '@/api/clientId';
 import { useMeetingStore } from '@/stores/meeting';
 import { useSessionStore } from '@/stores/session';
 
-import { ALICE, BOB, MEETING_ID, meetingState, mockFetch, participant } from './helpers';
+import { ALICE, BOB, MEETING_ID, meetingState, mockFetch, participant, TEAM_ID } from './helpers';
 
 const BASE = `/api/v1/meetings/${MEETING_ID}`;
 const channel = `meeting:${MEETING_ID}`;
 
 async function opened(state = meetingState({ phase: 'reflect' }), routes = {}) {
   const fetch = mockFetch({
-    [`POST ${BASE}/join`]: { status: 200, body: state },
+    [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: { status: 200, body: state },
     [`GET ${BASE}/state`]: { status: 200, body: state },
     ...routes,
   });
   const store = useMeetingStore();
   useSessionStore().setUser({ ...ALICE, pictureVersion: null });
   await nextTick();
-  await store.open(MEETING_ID);
+  await store.open(MEETING_ID, TEAM_ID);
   return { store, ...fetch };
 }
 

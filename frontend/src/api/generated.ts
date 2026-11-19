@@ -117,6 +117,113 @@ export interface DragDto {
 }
 
 /**
+ * A user reduced to what other team members may see next to their avatar.
+ */
+export interface PersonDto {
+  displayName: string;
+  id: string;
+  /**
+   * Content hash of the uploaded picture; `null` when there is none.
+   * @nullable
+   */
+  pictureVersion?: string | null;
+}
+
+/**
+ * A reflection as the summary shows it: anonymous.
+ */
+export interface SummaryReflectionDto {
+  column: ReflectionColumn;
+  /** Sanitized rich text. */
+  content: string;
+  id: string;
+}
+
+/**
+ * A group with its vote total and its reflections. A card that was never
+ * grouped is a group of one, with no name.
+ */
+export interface SummaryGroupDto {
+  /** The group's id, or the card's for a card that was never grouped. */
+  id: string;
+  /** Empty when unnamed ("Untitled group", or a lone card's text). */
+  name: string;
+  /** By column (Plus, Delta, Ideas, Thanks), then place. */
+  reflections: SummaryReflectionDto[];
+  /**
+   * `null` when the meeting ended before Discuss: nobody saw the totals.
+   * @nullable
+   */
+  votes?: number | null;
+}
+
+/**
+ * Where a task sits on the board (spec §9).
+ */
+export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
+
+export const TaskStatus = {
+  future: 'future',
+  stuck: 'stuck',
+  active: 'active',
+  done: 'done',
+} as const;
+
+/**
+ * A task on the board.
+ */
+export interface TaskDto {
+  author: PersonDto;
+  /** Sanitized rich text. */
+  contentHtml: string;
+  createdAt: string;
+  /**
+   * The group of that meeting it was written for (Discuss).
+   * @nullable
+   */
+  groupId?: string | null;
+  id: string;
+  /** @nullable */
+  meetingId?: string | null;
+  mentions: PersonDto[];
+  /** Ordering key within the column; compare as plain strings. */
+  position: string;
+  status: TaskStatus;
+}
+
+/**
+ * An ended meeting's read-only summary (spec §8.3).
+ */
+export interface EndedMeetingSummaryDto {
+  createdAt: string;
+  endedAt: string;
+  facilitator: PersonDto;
+  /**
+   * Most votes first (Discuss order). Empty when the meeting ended
+   * during Reflect: its reflections were never revealed. Ended during
+   * Group or Vote: by size, then id, with no totals.
+   */
+  groups: SummaryGroupDto[];
+  id: string;
+  /** In joining order, including people who left the team since. */
+  participants: PersonDto[];
+  /**
+   * The tasks written in the meeting, oldest first, with their current
+   * board status.
+   */
+  tasks: TaskDto[];
+  teamId: string;
+  teamName: string;
+  title: string;
+  /**
+   * Votes cast overall; `null` when the meeting ended before Discuss:
+   * nobody saw the totals.
+   * @nullable
+   */
+  votesCast?: number | null;
+}
+
+/**
  * "Hello" in the meeting's language.
  */
 export interface GreetingDto {
@@ -158,19 +265,6 @@ export interface IcebreakerDto {
 export interface IcebreakerGotoRequest {
   /** Someone who already had their turn. */
   userId: string;
-}
-
-/**
- * A user reduced to what other team members may see next to their avatar.
- */
-export interface PersonDto {
-  displayName: string;
-  id: string;
-  /**
-   * Content hash of the uploaded picture; `null` when there is none.
-   * @nullable
-   */
-  pictureVersion?: string | null;
 }
 
 /**
@@ -451,40 +545,6 @@ export const MeetingStatus = {
   active: 'active',
   ended: 'ended',
 } as const;
-
-/**
- * Where a task sits on the board (spec §9).
- */
-export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
-
-export const TaskStatus = {
-  future: 'future',
-  stuck: 'stuck',
-  active: 'active',
-  done: 'done',
-} as const;
-
-/**
- * A task on the board.
- */
-export interface TaskDto {
-  author: PersonDto;
-  /** Sanitized rich text. */
-  contentHtml: string;
-  createdAt: string;
-  /**
-   * The group of that meeting it was written for (Discuss).
-   * @nullable
-   */
-  groupId?: string | null;
-  id: string;
-  /** @nullable */
-  meetingId?: string | null;
-  mentions: PersonDto[];
-  /** Ordering key within the column; compare as plain strings. */
-  position: string;
-  status: TaskStatus;
-}
 
 /**
  * Whether the countdown is running.
@@ -2287,47 +2347,6 @@ export const regenerateInviteLink = async (
   });
 };
 
-export type joinMeetingResponse200 = {
-  data: MeetingStateDto;
-  status: 200;
-};
-
-export type joinMeetingResponse404 = {
-  data: Problem;
-  status: 404;
-};
-
-export type joinMeetingResponse409 = {
-  data: Problem;
-  status: 409;
-};
-
-export type joinMeetingResponseSuccess = joinMeetingResponse200 & {
-  headers: Headers;
-};
-export type joinMeetingResponseError = (joinMeetingResponse404 | joinMeetingResponse409) & {
-  headers: Headers;
-};
-
-export type joinMeetingResponse = joinMeetingResponseSuccess | joinMeetingResponseError;
-
-export const getJoinMeetingUrl = (meetingId: string) => {
-  return `/api/v1/meetings/${meetingId}/join`;
-};
-
-/**
- * @summary Joins a running meeting as a participant (idempotent).
- */
-export const joinMeeting = async (
-  meetingId: string,
-  options?: Parameters<typeof apiFetch>[1],
-): Promise<joinMeetingResponse> => {
-  return apiFetch<joinMeetingResponse>(getJoinMeetingUrl(meetingId), {
-    ...options,
-    method: 'POST',
-  });
-};
-
 export type nextPhaseResponse200 = {
   data: MeetingStateDto;
   status: 200;
@@ -2713,6 +2732,56 @@ export const getMeetingState = async (
   options?: Parameters<typeof apiFetch>[1],
 ): Promise<getMeetingStateResponse> => {
   return apiFetch<getMeetingStateResponse>(getGetMeetingStateUrl(meetingId), {
+    ...options,
+    method: 'GET',
+  });
+};
+
+export type getMeetingSummaryResponse200 = {
+  data: EndedMeetingSummaryDto;
+  status: 200;
+};
+
+export type getMeetingSummaryResponse401 = {
+  data: Problem;
+  status: 401;
+};
+
+export type getMeetingSummaryResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type getMeetingSummaryResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type getMeetingSummaryResponseSuccess = getMeetingSummaryResponse200 & {
+  headers: Headers;
+};
+export type getMeetingSummaryResponseError = (
+  getMeetingSummaryResponse401 | getMeetingSummaryResponse404 | getMeetingSummaryResponse409
+) & {
+  headers: Headers;
+};
+
+export type getMeetingSummaryResponse =
+  getMeetingSummaryResponseSuccess | getMeetingSummaryResponseError;
+
+export const getGetMeetingSummaryUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/summary`;
+};
+
+/**
+ * @summary The summary of an ended meeting: facts, groups by votes with their
+anonymous reflections, and its tasks with their current status.
+ */
+export const getMeetingSummary = async (
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<getMeetingSummaryResponse> => {
+  return apiFetch<getMeetingSummaryResponse>(getGetMeetingSummaryUrl(meetingId), {
     ...options,
     method: 'GET',
   });
@@ -4056,6 +4125,48 @@ export const startMeeting = async (
   options?: Parameters<typeof apiFetch>[1],
 ): Promise<startMeetingResponse> => {
   return apiFetch<startMeetingResponse>(getStartMeetingUrl(teamId), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type joinMeetingResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type joinMeetingResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type joinMeetingResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type joinMeetingResponseSuccess = joinMeetingResponse200 & {
+  headers: Headers;
+};
+export type joinMeetingResponseError = (joinMeetingResponse404 | joinMeetingResponse409) & {
+  headers: Headers;
+};
+
+export type joinMeetingResponse = joinMeetingResponseSuccess | joinMeetingResponseError;
+
+export const getJoinMeetingUrl = (teamId: string, meetingId: string) => {
+  return `/api/v1/teams/${teamId}/meetings/${meetingId}/join`;
+};
+
+/**
+ * @summary Joins a running meeting of the team as a participant (idempotent).
+ */
+export const joinMeeting = async (
+  teamId: string,
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<joinMeetingResponse> => {
+  return apiFetch<joinMeetingResponse>(getJoinMeetingUrl(teamId, meetingId), {
     ...options,
     method: 'POST',
   });

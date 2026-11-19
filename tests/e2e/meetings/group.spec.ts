@@ -3,6 +3,7 @@ import { expect, test, type Browser, type BrowserContext, type Page } from '@pla
 import {
   createTeam,
   deleteTeam,
+  joinMeeting,
   joinTeam,
   meetingAction,
   meetingState,
@@ -69,7 +70,7 @@ test.describe('group', () => {
     teamId = await createTeam(OMAR, TEAM);
     await joinTeam(OMAR, teamId, PIA);
     meetingId = await startMeeting(OMAR, teamId);
-    await meetingAction(PIA, meetingId, 'join');
+    await joinMeeting(PIA, teamId, meetingId);
     await meetingAction(OMAR, meetingId, 'phase/next');
     await writeReflection(OMAR, meetingId, 'plus', `<p>${TRAIN}</p>`);
     await writeReflection(PIA, meetingId, 'delta', `<p>${FLAKY}</p>`);

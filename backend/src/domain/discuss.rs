@@ -39,17 +39,17 @@ pub struct DiscussGroupDto {
 
 /// What `order` sorts: a group with its totals and name.
 #[derive(Debug, Clone, FromQueryResult)]
-struct Ranked {
-    id: Uuid,
-    name: String,
-    votes: i64,
-    cards: i64,
+pub(crate) struct Ranked {
+    pub(crate) id: Uuid,
+    pub(crate) name: String,
+    pub(crate) votes: i64,
+    pub(crate) cards: i64,
 }
 
 /// Most votes first; ties go to the bigger group, then by name (named
 /// groups before untitled ones, case-insensitively), then by id, which
 /// follows the order the groups were made in.
-fn rank(rows: &mut [Ranked]) {
+pub(crate) fn rank(rows: &mut [Ranked]) {
     rows.sort_by(|a, b| {
         b.votes
             .cmp(&a.votes)

@@ -27,7 +27,10 @@ describe('Meeting invite link', () => {
       'POST /api/v1/meeting-invites/tok/accept': accepted(true),
       'GET /api/v1/me': me([team({ role: 'member' })]),
       'POST /api/v1/ws-ticket': wsTicket(),
-      [`POST /api/v1/meetings/${MEETING_ID}/join`]: { status: 200, body: meetingState() },
+      [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: {
+        status: 200,
+        body: meetingState(),
+      },
     });
     const { wrapper, router } = await renderAt('/m/tok');
     expect(wrapper.find('h1').text()).toBe('Joining Retro #3…');
@@ -65,7 +68,10 @@ describe('Meeting invite link', () => {
       'POST /api/v1/meeting-invites/tok/accept': accepted(false),
       'GET /api/v1/me': me([team()]),
       'POST /api/v1/ws-ticket': wsTicket(),
-      [`POST /api/v1/meetings/${MEETING_ID}/join`]: { status: 200, body: meetingState() },
+      [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: {
+        status: 200,
+        body: meetingState(),
+      },
     });
     const { wrapper, router } = await renderAt('/m/tok');
     await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('meeting-room'));

@@ -5,6 +5,7 @@ import {
   createTeam,
   deleteTeam,
   groupCards,
+  joinMeeting,
   joinTeam,
   meetingAction,
   meetingState,
@@ -98,8 +99,8 @@ test.describe('vote', () => {
     teamId = await createTeam(QUINN, TEAM);
     for (const user of [ROSA, SAMI, TESS]) await joinTeam(QUINN, teamId, user);
     meetingId = await startMeeting(QUINN, teamId);
-    await meetingAction(ROSA, meetingId, 'join');
-    await meetingAction(SAMI, meetingId, 'join');
+    await joinMeeting(ROSA, teamId, meetingId);
+    await joinMeeting(SAMI, teamId, meetingId);
     await meetingAction(QUINN, meetingId, 'phase/next');
     await writeReflection(QUINN, meetingId, 'plus', `<p>${TRAIN}</p>`);
     await writeReflection(ROSA, meetingId, 'plus', `<p>${PAIRING}</p>`);

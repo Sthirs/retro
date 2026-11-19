@@ -109,7 +109,11 @@ pub fn router(state: AppState) -> Router {
             get(api::meetings::get_meeting_state),
         )
         .route(
-            "/meetings/{meeting_id}/join",
+            "/meetings/{meeting_id}/summary",
+            get(api::meetings::get_meeting_summary),
+        )
+        .route(
+            "/teams/{team_id}/meetings/{meeting_id}/join",
             post(api::meetings::join_meeting),
         )
         .route(

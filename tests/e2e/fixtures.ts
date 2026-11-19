@@ -39,6 +39,11 @@ export const USERS = {
   vera: { username: 'vera', email: 'vera@retro.local', name: 'Vera Mancini' },
   walt: { username: 'walt', email: 'walt@retro.local', name: 'Walt Greco' },
   xena: { username: 'xena', email: 'xena@retro.local', name: 'Xena Bruno' },
+  yara: { username: 'yara', email: 'yara@retro.local', name: 'Yara Costa' },
+  zeno: { username: 'zeno', email: 'zeno@retro.local', name: 'Zeno Rinaldi' },
+  abel: { username: 'abel', email: 'abel@retro.local', name: 'Abel Marchetti' },
+  bea: { username: 'bea', email: 'bea@retro.local', name: 'Bea Leone' },
+  noah: { username: 'noah', email: 'noah@retro.local', name: 'Noah Gentile' },
   carol: { username: 'carol', email: 'carol@retro.local', name: 'Carol Verdi' },
 } as const;
 

@@ -207,12 +207,12 @@ Authentication is performed by the **backend**, which issues Retro's own session
 
 Team members can open any ended meeting, which shows a read-only **summary** with:
 
-- date, duration and facilitator;
-- **participants**;
-- **groups**, sorted by votes, each with its name, **vote total** and its anonymous reflections;
-- **tasks** created during the meeting, with their **current** board status and a link to the Tasks board.
+- title, the time it ended, date, duration, facilitator and the number of **votes cast** overall;
+- **participants**, in joining order (including people who have since left the team);
+- **groups**, in Discuss order (sorted by votes, ties broken as in §9.5), each with its name, **vote total** and its anonymous reflections, each shown as rich text with its column label. A card that was never grouped appears as a group of one, with no votes. A meeting ended during Reflect shows no reflections: they were never revealed. A meeting ended during Group or Vote shows its groups and reflections but no vote totals and no votes-cast count, since totals are hidden until Discuss (§9.4); its groups are sorted by size, then id;
+- **tasks** created during the meeting, with their **current** board status, their @mentions, and a link to the Tasks board filtered to the meeting. A task deleted from the board no longer appears.
 
-The individual meeting phases cannot be replayed.
+The summary has its own address inside the team pages (§15.2); opening an ended meeting's room leads there, and opening the summary of a meeting still running leads to its room. The individual meeting phases cannot be replayed.
 
 ### 8.2 Common meeting UI
 
@@ -582,8 +582,8 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/teams/{teamId}/meetings` | Start a meeting |
 | GET | `/meetings/{id}/state` | Full snapshot, filtered by the caller's permissions and the current phase |
 | PATCH | `/meetings/{id}` | `{ title }`: rename (facilitator) |
-| GET | `/meetings/{id}/summary` | Summary of an ended meeting (§8.3) |
-| POST | `/meetings/{id}/join` | Join as participant |
+| GET | `/meetings/{id}/summary` | Summary of an ended meeting (§8.3). Errors: 404 `meeting_not_found` (also for non-members), 409 `meeting_active` |
+| POST | `/teams/{teamId}/meetings/{id}/join` | Join as participant. Errors: 404 `meeting_not_found` (also for a meeting of another team), 409 `meeting_ended` |
 | GET | `/meetings/{id}/invite-link` | Get the meeting invite link |
 | POST | `/meetings/{id}/invite-link` | Regenerate the meeting invite link (facilitator) |
 | POST | `/meeting-invites/{inviteToken}/accept` | Join the team (if needed) and the meeting |
@@ -663,7 +663,8 @@ The group endpoints are open to participants during Group (409 `wrong_phase`, `m
 /join/:joinToken                → join team via link
 /m/:inviteToken                 → join team (if needed) + running meeting
 /teams/:teamId/meetings         → active + past meetings
-/teams/:teamId/meetings/:id     → meeting room (phase-driven view), or summary if ended
+/teams/:teamId/meetings/:id     → meeting room (phase-driven view); redirects to the summary once ended
+/teams/:teamId/meetings/:id/summary → summary of an ended meeting; redirects to the room while active
 /teams/:teamId/tasks            → task board
 /teams/:teamId/settings         → team settings
 /account                        → your account

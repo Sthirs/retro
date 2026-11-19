@@ -191,8 +191,27 @@ pub async fn view(
     meeting_id: Uuid,
     actor: Uuid,
 ) -> Result<MeetingView, AppError> {
+    one_view(db, meeting_id, actor, true).await
+}
+
+/// [`view`] without the task and group counts (left at 0), for callers that
+/// load those rows themselves (the summary).
+pub async fn view_without_counts(
+    db: &impl ConnectionTrait,
+    meeting_id: Uuid,
+    actor: Uuid,
+) -> Result<MeetingView, AppError> {
+    one_view(db, meeting_id, actor, false).await
+}
+
+async fn one_view(
+    db: &impl ConnectionTrait,
+    meeting_id: Uuid,
+    actor: Uuid,
+    with_counts: bool,
+) -> Result<MeetingView, AppError> {
     let (meeting, _) = find_for_member(db, meeting_id, actor, false).await?;
-    views(db, vec![meeting])
+    views_with(db, vec![meeting], with_counts)
         .await?
         .pop()
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("meeting is missing")))
@@ -241,6 +260,15 @@ async fn views(
     db: &impl ConnectionTrait,
     meetings: Vec<meeting::Model>,
 ) -> Result<Vec<MeetingView>, AppError> {
+    views_with(db, meetings, true).await
+}
+
+/// [`views`], with the task and group counts only when `with_counts`.
+async fn views_with(
+    db: &impl ConnectionTrait,
+    meetings: Vec<meeting::Model>,
+    with_counts: bool,
+) -> Result<Vec<MeetingView>, AppError> {
     if meetings.is_empty() {
         return Ok(Vec::new());
     }
@@ -266,8 +294,14 @@ async fn views(
     .all(db)
     .await?;
 
-    let counts = count_by_meeting(db, "tasks", &placeholders, id_values.clone()).await?;
-    let group_counts = count_by_meeting(db, "reflection_groups", &placeholders, id_values).await?;
+    let (counts, group_counts) = if with_counts {
+        (
+            count_by_meeting(db, "tasks", &placeholders, id_values.clone()).await?,
+            count_by_meeting(db, "reflection_groups", &placeholders, id_values).await?,
+        )
+    } else {
+        (HashMap::new(), HashMap::new())
+    };
 
     let team_ids: Vec<Uuid> = meetings.iter().map(|m| m.team_id).collect();
     let team_names: HashMap<Uuid, String> = team::Entity::find()
@@ -462,15 +496,21 @@ async fn team_updated(db: &impl ConnectionTrait, meeting: &meeting::Model) -> Re
     Ok(())
 }
 
-/// Makes `actor` a participant of a running meeting (idempotent). During the
-/// icebreaker a newcomer is added to the speaking order (see [`join_position`]).
+/// Makes `actor` a participant of a running meeting of `team_id` (idempotent).
+/// A meeting of another team is `meeting_not_found`, even when `actor` is a
+/// member of both. During the icebreaker a newcomer is added to the speaking
+/// order (see [`join_position`]).
 pub async fn join(
     db: &(impl TransactionTrait + ConnectionTrait),
+    team_id: Uuid,
     meeting_id: Uuid,
     actor: Uuid,
 ) -> Result<(), AppError> {
     let txn = db.begin().await?;
     let (meeting, role) = find_for_member(&txn, meeting_id, actor, true).await?;
+    if meeting.team_id != team_id {
+        return Err(AppError::NotFound("meeting_not_found"));
+    }
     join_locked(&txn, meeting, actor, Some(role)).await?;
     txn.commit().await?;
     Ok(())

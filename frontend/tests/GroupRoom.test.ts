@@ -64,7 +64,7 @@ function routes(state = grouping(), extra: Record<string, unknown> = {}) {
     'GET /api/v1/me': me([team({ role: 'admin' })], [], ALICE),
     'POST /api/v1/ws-ticket': wsTicket(),
     [`GET /api/v1/teams/${TEAM_ID}/meetings`]: { status: 200, body: [] },
-    [`POST ${BASE}/join`]: { status: 200, body: state },
+    [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: { status: 200, body: state },
     [`GET ${BASE}/state`]: { status: 200, body: state },
     ...extra,
   } as Parameters<typeof mockFetch>[0];

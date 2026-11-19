@@ -80,6 +80,17 @@ async fn act(
     .await
 }
 
+/// `POST /api/v1/teams/{team}/meetings/{id}/join`.
+async fn join(app: &TestApp, token: &str, team: Uuid, meeting: &str) -> common::TestResponse {
+    app.call(
+        "POST",
+        &format!("/api/v1/teams/{team}/meetings/{meeting}/join"),
+        token,
+        None,
+    )
+    .await
+}
+
 async fn state(app: &TestApp, token: &str, meeting: &str) -> Value {
     let res = app
         .call(
@@ -244,7 +255,7 @@ async fn non_members_cannot_see_or_start_meetings() {
         assert_eq!(res.status, 404, "{path}");
         assert_eq!(res.json()["code"], "meeting_not_found");
     }
-    let res = act(&app, &bob, id(&meeting), "join", None).await;
+    let res = join(&app, &bob, team, id(&meeting)).await;
     assert_eq!(res.status, 404);
 }
 
@@ -261,9 +272,9 @@ async fn joining_is_idempotent_and_adds_people_to_the_icebreaker() {
     let m = id(&meeting);
 
     // While alice (first) speaks, newcomers land among those not yet heard.
-    let res = act(&app, &bob, m, "join", None).await;
+    let res = join(&app, &bob, team, m).await;
     assert_eq!(res.status, 200, "{}", res.text());
-    assert_eq!(act(&app, &bob, m, "join", None).await.status, 200);
+    assert_eq!(join(&app, &bob, team, m).await.status, 200);
     let s = state(&app, &bob, m).await;
     assert_eq!(s["participants"].as_array().unwrap().len(), 2);
     assert_eq!(s["icebreaker"]["order"], json!([alice_id, bob_id]));
@@ -273,7 +284,7 @@ async fn joining_is_idempotent_and_adds_people_to_the_icebreaker() {
         act(&app, &alice, m, "icebreaker/next", None).await.status,
         200
     );
-    assert_eq!(act(&app, &carol, m, "join", None).await.status, 200);
+    assert_eq!(join(&app, &carol, team, m).await.status, 200);
     let s = state(&app, &carol, m).await;
     assert_eq!(
         s["icebreaker"]["order"],
@@ -283,13 +294,33 @@ async fn joining_is_idempotent_and_adds_people_to_the_icebreaker() {
 }
 
 #[tokio::test]
+async fn joining_through_another_team_is_not_found() {
+    let app = TestApp::new().await;
+    let (alice, bob, _carol, team) = team_of_three(&app).await;
+    // bob is a member of both teams; the meeting belongs to `other`.
+    let other = create_team(&app, &alice, "Mobile").await;
+    join_team(&app, &alice, other, &bob).await;
+    let meeting = start(&app, &alice, other).await;
+    let m = id(&meeting);
+
+    let res = join(&app, &bob, team, m).await;
+    assert_eq!(res.status, 404, "{}", res.text());
+    assert_eq!(res.json()["code"], "meeting_not_found");
+    let s = state(&app, &alice, m).await;
+    assert_eq!(s["participants"].as_array().unwrap().len(), 1);
+
+    // Through its own team, it joins.
+    assert_eq!(join(&app, &bob, other, m).await.status, 200);
+}
+
+#[tokio::test]
 async fn the_facilitator_moves_through_the_icebreaker() {
     let app = TestApp::new().await;
     let (alice, bob, carol, team) = team_of_three(&app).await;
     let meeting = start(&app, &alice, team).await;
     let m = id(&meeting);
-    act(&app, &bob, m, "join", None).await;
-    act(&app, &carol, m, "join", None).await;
+    join(&app, &bob, team, m).await;
+    join(&app, &carol, team, m).await;
 
     // Only the facilitator.
     let res = act(&app, &bob, m, "icebreaker/next", None).await;
@@ -314,8 +345,8 @@ async fn the_facilitator_goes_back_in_the_icebreaker() {
     let (alice, bob, carol, team) = team_of_three(&app).await;
     let meeting = start(&app, &alice, team).await;
     let m = id(&meeting);
-    act(&app, &bob, m, "join", None).await;
-    act(&app, &carol, m, "join", None).await;
+    join(&app, &bob, team, m).await;
+    join(&app, &carol, team, m).await;
     let order = state(&app, &alice, m).await["icebreaker"]["order"].clone();
     let goto = |who: &Value| Some(json!({ "userId": who }));
 
@@ -360,7 +391,7 @@ async fn phases_advance_forward_only_by_the_facilitator() {
     let (alice, bob, _, team) = team_of_three(&app).await;
     let meeting = start(&app, &alice, team).await;
     let m = id(&meeting);
-    act(&app, &bob, m, "join", None).await;
+    join(&app, &bob, team, m).await;
 
     let res = act(&app, &bob, m, "phase/next", None).await;
     assert_eq!(res.status, 403);
@@ -386,7 +417,7 @@ async fn the_facilitator_hands_the_role_to_a_participant() {
     let (bob_id, carol_id) = (user_id(&app, &bob).await, user_id(&app, &carol).await);
     let meeting = start(&app, &alice, team).await;
     let m = id(&meeting);
-    act(&app, &bob, m, "join", None).await;
+    join(&app, &bob, team, m).await;
 
     // carol has not joined.
     let res = act(
@@ -418,7 +449,7 @@ async fn the_facilitator_hands_the_role_to_a_participant() {
     assert_eq!(s["participants"].as_array().unwrap().len(), 2);
 
     // A plain member cannot take over.
-    act(&app, &carol, m, "join", None).await;
+    join(&app, &carol, team, m).await;
     let res = act(
         &app,
         &carol,
@@ -488,7 +519,7 @@ async fn the_facilitator_renames_the_meeting() {
         .await;
     assert_eq!(res.status, 400);
 
-    act(&app, &bob, m, "join", None).await;
+    join(&app, &bob, team, m).await;
     let res = app
         .call("PATCH", &path, &bob, Some(json!({ "title": "Mine" })))
         .await;
@@ -501,7 +532,7 @@ async fn ending_makes_the_meeting_read_only() {
     let (alice, bob, _, team) = team_of_three(&app).await;
     let meeting = start(&app, &alice, team).await;
     let m = id(&meeting);
-    act(&app, &bob, m, "join", None).await;
+    join(&app, &bob, team, m).await;
 
     let res = act(&app, &bob, m, "end", None).await;
     assert_eq!(res.status, 403);
@@ -517,12 +548,14 @@ async fn ending_makes_the_meeting_read_only() {
         ("phase/next", None),
         ("icebreaker/next", None),
         ("icebreaker/goto", Some(json!({ "userId": Uuid::nil() }))),
-        ("join", None),
     ] {
         let res = act(&app, &alice, m, action, body).await;
         assert_eq!(res.status, 409, "{action}");
         assert_eq!(res.json()["code"], "meeting_ended", "{action}");
     }
+    let res = join(&app, &alice, team, m).await;
+    assert_eq!(res.status, 409);
+    assert_eq!(res.json()["code"], "meeting_ended");
     let res = app
         .call(
             "GET",
@@ -731,13 +764,12 @@ async fn meeting_writes_lock_the_team_before_the_meeting() {
 
     // Joining.
     let (team, m) = fresh_meeting(&app, &alice, &bob, "Join").await;
-    let res =
-        takes_the_team_before_the_meeting(&app, team, &m, act(&app, &bob, &m, "join", None)).await;
+    let res = takes_the_team_before_the_meeting(&app, team, &m, join(&app, &bob, team, &m)).await;
     assert_eq!(res.status, 200, "join: {}", res.text());
 
     // The icebreaker: next person and going back.
     let (team, m) = fresh_meeting(&app, &alice, &bob, "Next").await;
-    act(&app, &bob, &m, "join", None).await;
+    join(&app, &bob, team, &m).await;
     let res = takes_the_team_before_the_meeting(
         &app,
         team,
@@ -764,7 +796,7 @@ async fn meeting_writes_lock_the_team_before_the_meeting() {
 
     // Phase, handover, rename, invite link, end.
     let (team, m) = fresh_meeting(&app, &alice, &bob, "Phase").await;
-    act(&app, &bob, &m, "join", None).await;
+    join(&app, &bob, team, &m).await;
     let res = takes_the_team_before_the_meeting(
         &app,
         team,
@@ -851,7 +883,7 @@ async fn deleting_a_team_while_its_meeting_changes_never_fails() {
             None,
         );
         let writes = futures_util::future::join_all([
-            Box::pin(act(&app, &bob, &m, "join", None))
+            Box::pin(join(&app, &bob, team, &m))
                 as std::pin::Pin<Box<dyn std::future::Future<Output = common::TestResponse>>>,
             Box::pin(act(&app, &alice, &m, "phase/next", None)),
             Box::pin(act(&app, &alice, &m, "invite-link", None)),
@@ -1037,8 +1069,8 @@ async fn the_role_cannot_go_to_someone_who_left_the_team() {
     let carol_id = user_id(&app, &carol).await;
     let meeting = start(&app, &alice, team).await;
     let m = id(&meeting);
-    act(&app, &bob, m, "join", None).await;
-    act(&app, &carol, m, "join", None).await;
+    join(&app, &bob, team, m).await;
+    join(&app, &carol, team, m).await;
 
     assert_eq!(remove(&app, &alice, team, carol_id).await.status, 204);
     let res = act(
@@ -1067,8 +1099,8 @@ async fn the_role_still_goes_to_a_current_member() {
     let carol_id = user_id(&app, &carol).await;
     let meeting = start(&app, &alice, team).await;
     let m = id(&meeting);
-    act(&app, &bob, m, "join", None).await;
-    act(&app, &carol, m, "join", None).await;
+    join(&app, &bob, team, m).await;
+    join(&app, &carol, team, m).await;
     assert_eq!(remove(&app, &alice, team, carol_id).await.status, 204);
 
     let res = act(
@@ -1094,7 +1126,7 @@ async fn an_admin_takes_over_from_a_facilitator_who_left() {
     let bob_id = user_id(&app, &bob).await;
     let meeting = start(&app, &bob, team).await;
     let m = id(&meeting);
-    act(&app, &alice, m, "join", None).await;
+    join(&app, &alice, team, m).await;
 
     assert_eq!(remove(&app, &alice, team, bob_id).await.status, 204);
     let res = act(

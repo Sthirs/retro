@@ -160,7 +160,7 @@ async fn voting_with(app: &TestApp, suffix: &str) -> Room {
         let res = post(
             app,
             token,
-            &format!("/api/v1/meetings/{meeting}/join"),
+            &format!("/api/v1/teams/{team}/meetings/{meeting}/join"),
             None,
         )
         .await;

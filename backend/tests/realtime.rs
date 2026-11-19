@@ -223,7 +223,12 @@ async fn participants_receive_meeting_events_in_order() {
     );
 
     let res = app
-        .call("POST", &format!("/api/v1/meetings/{m}/join"), &bob, None)
+        .call(
+            "POST",
+            &format!("/api/v1/teams/{team}/meetings/{m}/join"),
+            &bob,
+            None,
+        )
         .await;
     assert_eq!(res.status, 200, "{}", res.text());
     let joined = next_of(&mut alice_socket, "participant.joined").await;
@@ -288,8 +293,13 @@ async fn presence_follows_the_participants_sockets() {
         .await
         .json();
     let m = meeting["id"].as_str().unwrap().to_owned();
-    app.call("POST", &format!("/api/v1/meetings/{m}/join"), &bob, None)
-        .await;
+    app.call(
+        "POST",
+        &format!("/api/v1/teams/{team}/meetings/{m}/join"),
+        &bob,
+        None,
+    )
+    .await;
     let channel = format!("meeting:{m}");
 
     let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
@@ -360,8 +370,13 @@ async fn joining_still_updates_the_meetings_list() {
     subscribe(&mut team_socket, &format!("team:{team}")).await;
 
     // A join (no socket in the room) changes the participants.
-    app.call("POST", &format!("/api/v1/meetings/{m}/join"), &bob, None)
-        .await;
+    app.call(
+        "POST",
+        &format!("/api/v1/teams/{team}/meetings/{m}/join"),
+        &bob,
+        None,
+    )
+    .await;
     let updated = next(&mut team_socket).await;
     assert_eq!(updated["type"], "meeting.updated");
     assert_eq!(updated["payload"]["meetingId"], m);
@@ -446,7 +461,12 @@ async fn people_in_the_room_are_present_before_their_join_lands() {
     );
 
     let res = app
-        .call("POST", &format!("/api/v1/meetings/{m}/join"), &bob, None)
+        .call(
+            "POST",
+            &format!("/api/v1/teams/{team}/meetings/{m}/join"),
+            &bob,
+            None,
+        )
         .await;
     let bob_entry = res.json()["participants"]
         .as_array()
@@ -555,7 +575,12 @@ async fn team_with_meeting(app: &TestApp) -> (String, String, String, Uuid, Stri
     join_team(app, &alice, team, &bob).await;
     let m = start_meeting(app, &alice, team).await;
     let res = app
-        .call("POST", &format!("/api/v1/meetings/{m}/join"), &bob, None)
+        .call(
+            "POST",
+            &format!("/api/v1/teams/{team}/meetings/{m}/join"),
+            &bob,
+            None,
+        )
         .await;
     assert_eq!(res.status, 200, "{}", res.text());
     (alice, bob, bob_id, team, m)
@@ -1552,7 +1577,12 @@ async fn voting(app: &TestApp) -> (String, String, String, String, String) {
         .unwrap();
     join_team(app, &alice, team, &dana).await;
     let res = app
-        .call("POST", &format!("/api/v1/meetings/{m}/join"), &dana, None)
+        .call(
+            "POST",
+            &format!("/api/v1/teams/{team}/meetings/{m}/join"),
+            &dana,
+            None,
+        )
         .await;
     assert_eq!(res.status, 200, "{}", res.text());
     to_reflect(app, &alice, &m).await;

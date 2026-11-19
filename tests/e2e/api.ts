@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { request, type APIRequestContext } from '@playwright/test';
 
 import { PASSWORD, USERS } from './fixtures';
@@ -181,7 +183,7 @@ export async function seedTask(
     }
     meeting = await pending;
   }
-  await meetingAction(login, meeting.meetingId, 'join');
+  await joinMeeting(login, teamId, meeting.meetingId);
   const id = await createTask(login, meeting.meetingId, meeting.groupId, task.content);
   if (task.status !== 'active') await moveTask(login, id, task.status);
   return { id };
@@ -321,11 +323,27 @@ export async function meetingAction(
   login: string,
   meetingId: string,
   action: string,
+  /** A JSON body, for actions that take one (e.g. `facilitator`). */
+  data?: unknown,
 ): Promise<void> {
   const { api } = await signedIn(login);
   try {
-    const res = await api.post(`/api/v1/meetings/${meetingId}/${action}`);
+    const res = await api.post(
+      `/api/v1/meetings/${meetingId}/${action}`,
+      data === undefined ? undefined : { data },
+    );
     if (!res.ok()) throw new Error(`${action}: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Joins a running meeting of `teamId` as `login`. */
+export async function joinMeeting(login: string, teamId: string, meetingId: string): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/teams/${teamId}/meetings/${meetingId}/join`);
+    if (!res.ok()) throw new Error(`join: ${res.status()} ${await res.text()}`);
   } finally {
     await api.dispose();
   }
@@ -453,6 +471,68 @@ export async function setVoteSettings(
     });
     if (!res.ok())
       throw new Error(`vote settings: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Uploads an image file to the team as `login`; returns the attachment id. */
+export async function uploadImage(
+  login: string,
+  teamId: string,
+  file: string,
+  contentType: string,
+): Promise<string> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/teams/${teamId}/attachments`, {
+      data: readFileSync(file),
+      headers: { 'Content-Type': contentType },
+    });
+    if (!res.ok()) throw new Error(`upload image: ${res.status()} ${await res.text()}`);
+    return ((await res.json()) as { id: string }).id;
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Rewrites a task's content as `login` (a team member). */
+export async function editTask(login: string, taskId: string, content: string): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.patch(`/api/v1/tasks/${taskId}`, {
+      data: { content },
+    });
+    if (!res.ok()) throw new Error(`edit task: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Deletes a task from the board as `login` (a team member). */
+export async function deleteTask(login: string, taskId: string): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.delete(`/api/v1/tasks/${taskId}`);
+    if (!res.ok()) throw new Error(`delete task: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** `GET /meetings/{id}/summary` as `login`: its status and error code. */
+export async function summaryStatus(
+  login: string,
+  meetingId: string,
+): Promise<{ status: number; code: string | null }> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.get(`/api/v1/meetings/${meetingId}/summary`);
+    const body = (await res.json()) as { code?: string };
+    return {
+      status: res.status(),
+      code: res.ok() ? null : (body.code ?? null),
+    };
   } finally {
     await api.dispose();
   }

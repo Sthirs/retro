@@ -58,6 +58,7 @@ use crate::{
         api::meetings::list_meetings,
         api::meetings::start_meeting,
         api::meetings::get_meeting_state,
+        api::meetings::get_meeting_summary,
         api::meetings::rename_meeting,
         api::meetings::join_meeting,
         api::meetings::icebreaker_next,

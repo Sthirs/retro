@@ -94,7 +94,7 @@ function routes(user = BOB, state = discussing(), extra: Record<string, unknown>
     'POST /api/v1/ws-ticket': wsTicket(),
     [`GET /api/v1/teams/${TEAM_ID}/meetings`]: { status: 200, body: [] },
     [`GET /api/v1/teams/${TEAM_ID}/members`]: { status: 200, body: [] },
-    [`POST ${BASE}/join`]: { status: 200, body: state },
+    [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: { status: 200, body: state },
     [`GET ${BASE}/state`]: { status: 200, body: state },
     ...extra,
   } as Parameters<typeof mockFetch>[0];
@@ -508,7 +508,7 @@ describe('Discuss phase', () => {
   it('is read-only once the meeting ended', async () => {
     mockFetch(routes(BOB, discussing({ status: 'ended', endedAt: '2026-11-10T19:00:00Z' })));
     const { wrapper } = await open();
-    // The ended meeting shows its own view, not the room.
+    // The ended meeting goes to its summary, not the room.
     expect(wrapper.find('[data-testid="add-reaction"]').exists()).toBe(false);
   });
 });

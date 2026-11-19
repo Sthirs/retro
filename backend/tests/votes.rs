@@ -128,7 +128,7 @@ async fn grouping_with(app: &TestApp, suffix: &str) -> (Room, String, String, St
         let res = post(
             app,
             token,
-            &format!("/api/v1/meetings/{meeting}/join"),
+            &format!("/api/v1/teams/{team}/meetings/{meeting}/join"),
             None,
         )
         .await;

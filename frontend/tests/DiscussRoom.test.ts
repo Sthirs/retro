@@ -382,6 +382,40 @@ describe('Discuss phase', () => {
     expect(wrapper.find('[data-testid="emoji-picker"]').exists()).toBe(false);
   });
 
+  it('hangs the picker fixed from its button: below, or above with no room below', async () => {
+    mockFetch(routes(BOB, discussing()));
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(340);
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(450);
+    let anchor = { top: 100, bottom: 130, left: 50, right: 80 };
+    const original = Element.prototype.getBoundingClientRect;
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: Element,
+    ) {
+      return this.matches('[data-testid="add-reaction"]')
+        ? ({ ...anchor, width: 30, height: 30, x: anchor.left, y: anchor.top } as DOMRect)
+        : original.call(this);
+    });
+    const { wrapper } = await open();
+    const style = () => wrapper.get<HTMLElement>('[data-testid="emoji-picker"]').element.style;
+
+    // Room below (jsdom's window is 1024 × 768): under the button, 8 px left of it.
+    await wrapper.get('[data-testid="add-reaction"]').trigger('click');
+    await flushPromises();
+    expect(style().top).toBe('138px');
+    expect(style().left).toBe('42px');
+    expect(style().bottom).toBe('');
+    await wrapper.get('[data-testid="add-reaction"]').trigger('click');
+    await flushPromises();
+
+    // Near the bottom right: above the button, kept 16 px from the right edge.
+    anchor = { top: 600, bottom: 630, left: 900, right: 930 };
+    await wrapper.get('[data-testid="add-reaction"]').trigger('click');
+    await flushPromises();
+    expect(style().bottom).toBe('176px');
+    expect(style().left).toBe('668px');
+    expect(style().top).toBe('');
+  });
+
   it('writes a task for the current group', async () => {
     const created = {
       ...task,

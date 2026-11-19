@@ -99,7 +99,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', onPointerDown,
       >
         <AppIcon name="smile" :size="16" />
       </button>
-      <EmojiPicker v-if="open" :mine="mine" @pick="pick" @close="close()" />
+      <EmojiPicker v-if="open" :mine="mine" :anchor="trigger" @pick="pick" @close="close()" />
     </span>
   </div>
 </template>

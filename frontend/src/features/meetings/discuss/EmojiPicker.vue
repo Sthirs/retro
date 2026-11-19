@@ -6,8 +6,13 @@
  * the emoji, and a preview of the one under the pointer or focus. Picking an
  * emoji reacts (or takes the reaction back) and closes the picker; Esc
  * closes it. Arrow keys move between emoji.
+ *
+ * The picker is `position: fixed`, hung from its anchor (the "Add reaction"
+ * button): the cards sit in a multi-column layout, and an absolutely
+ * positioned picker there would be counted in the columns' balancing (the
+ * cards reflow) and split across columns.
  */
-import { computed, nextTick, onMounted, ref, useId } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import AppIcon from '@/components/AppIcon.vue';
@@ -26,6 +31,8 @@ import { useSessionStore } from '@/stores/session';
 const props = defineProps<{
   /** The viewer's own emoji on the card: shown pressed. */
   mine: string[];
+  /** The button the picker hangs from. */
+  anchor: HTMLElement | null;
 }>();
 const emit = defineEmits<{ pick: [emoji: string]; close: [] }>();
 const { t } = useI18n();
@@ -139,32 +146,59 @@ function onGridKey(event: KeyboardEvent): void {
 
 /** The picker itself, kept on screen. */
 const dialog = ref<HTMLElement | null>(null);
-/** Moves the picker left so it does not run off a narrow screen. */
-const shift = ref(0);
 /** Room kept free at the screen's edges. */
 const EDGE = 16;
+/** Space between the anchor and the picker. */
+const GAP = 8;
+/** Fixed coordinates: below the anchor, or above it when there is more room there. */
+const placement = ref<Record<string, string>>({});
 
-/** Keeps the picker within the screen, and scrolls it into view. */
-function placeOnScreen(): void {
+function place(): void {
   const el = dialog.value;
-  if (!el) return;
-  const rect = el.getBoundingClientRect();
-  const over = rect.right - (window.innerWidth - EDGE);
-  if (over > 0) shift.value = -Math.min(over, Math.max(0, rect.left - EDGE));
-  el.scrollIntoView?.({ block: 'nearest' });
+  const anchor = props.anchor;
+  if (!el || !anchor) return;
+  const rect = anchor.getBoundingClientRect();
+  const width = el.offsetWidth;
+  const height = el.offsetHeight;
+  const left = Math.max(EDGE, Math.min(rect.left - GAP, window.innerWidth - width - EDGE));
+  const below = window.innerHeight - rect.bottom - GAP - EDGE;
+  const above = rect.top - GAP - EDGE;
+  if (height <= below || below >= above) {
+    // Never past the bottom of the screen, nor above its top.
+    const top = Math.max(EDGE, Math.min(rect.bottom + GAP, window.innerHeight - height - EDGE));
+    placement.value = { left: `${left}px`, top: `${top}px` };
+  } else {
+    const bottom = Math.max(
+      EDGE,
+      Math.min(window.innerHeight - rect.top + GAP, window.innerHeight - height - EDGE),
+    );
+    placement.value = { left: `${left}px`, bottom: `${bottom}px` };
+  }
+}
+
+/** The page scrolling or resizing moves the anchor: follow it (the grid's own scroll aside). */
+function onViewportChange(event: Event): void {
+  if (event.target instanceof Node && dialog.value?.contains(event.target)) return;
+  place();
 }
 
 onMounted(async () => {
-  placeOnScreen();
+  place();
+  window.addEventListener('resize', onViewportChange);
+  document.addEventListener('scroll', onViewportChange, true);
   search.value?.focus({ preventScroll: true });
   try {
     categories.value = await loadEmojis();
     loadState.value = 'ready';
     await nextTick();
-    placeOnScreen();
+    place();
   } catch {
     loadState.value = 'failed';
   }
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onViewportChange);
+  document.removeEventListener('scroll', onViewportChange, true);
 });
 </script>
 
@@ -173,7 +207,7 @@ onMounted(async () => {
     ref="dialog"
     role="dialog"
     class="picker"
-    :style="shift ? { transform: `translateX(${shift}px)` } : undefined"
+    :style="placement"
     :aria-label="t('discuss.picker.title')"
     data-testid="emoji-picker"
     @keydown.esc.stop.prevent="emit('close')"
@@ -309,23 +343,21 @@ onMounted(async () => {
 
 <style scoped>
 .picker {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: -8px;
+  position: fixed;
   z-index: 10;
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: 340px;
   max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
   box-sizing: border-box;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-panel);
   background: var(--surface);
   box-shadow: var(--shadow-menu);
-  /* Scrolled into view clear of the sticky meeting footer. */
-  scroll-margin: 16px 16px 96px;
 }
 .picker__quick {
   display: flex;

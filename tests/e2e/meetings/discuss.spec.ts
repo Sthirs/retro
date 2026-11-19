@@ -573,6 +573,51 @@ test.describe('discuss', () => {
     await expect(vera.card(SLOW).getByTestId('reaction-chip')).toHaveCount(0);
   });
 
+  /**
+   * Opens the picker of each card of the group on screen in turn and checks it
+   * floats over the cards, in one piece, without moving any of them.
+   */
+  async function pickerLeavesCardsInPlace(room: DiscussPage, texts: string[]): Promise<void> {
+    const before = await room.cardBoxes();
+    expect(before).toHaveLength(texts.length);
+    for (const text of texts) {
+      await room.openPicker(text);
+      expect(await room.cardBoxes()).toEqual(before);
+      // In one piece: its full size, not split across the cards' columns.
+      const box = (await room.picker.boundingBox())!;
+      expect(box.width).toBe(340);
+      expect(box.height).toBeGreaterThan(300);
+      await expect(room.picker).toBeInViewport({ ratio: 1 });
+      // It hangs from its own card's button.
+      const button = (await room.addReaction(text).boundingBox())!;
+      expect(box.x).toBeLessThanOrEqual(button.x);
+      expect(box.x + box.width).toBeGreaterThan(button.x + button.width);
+      await room.page.keyboard.press('Escape');
+      await expect(room.picker).toBeHidden();
+      expect(await room.cardBoxes()).toEqual(before);
+    }
+  }
+
+  test('the picker floats over the cards without moving them', async ({ browser }) => {
+    await toDiscuss();
+    // Three columns of cards on a wide screen.
+    await uma.goto(teamId, meetingId);
+    await expect(uma.groupTitle).toHaveText(CI);
+    const [first, second] = await uma.cardBoxes();
+    expect(first!.x).toBeLessThan(second!.x);
+    await pickerLeavesCardsInPlace(uma, [FLAKY, SLOW]);
+
+    // Two columns below 1100 px.
+    const medium = await open(browser, 'vera', { viewport: { width: 1000, height: 800 } });
+    await expect(medium.groupTitle).toHaveText(CI);
+    await pickerLeavesCardsInPlace(medium, [FLAKY, SLOW]);
+
+    // One column on a phone: the picker covers the card below rather than pushing it.
+    const narrow = await open(browser, 'walt', { viewport: { width: 390, height: 844 } });
+    await expect(narrow.groupTitle).toHaveText(CI);
+    await pickerLeavesCardsInPlace(narrow, [FLAKY, SLOW]);
+  });
+
   test('tasks: written with a mention, live for everyone, on the board in Active', async ({
     browser,
   }) => {

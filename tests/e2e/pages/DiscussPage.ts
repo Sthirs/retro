@@ -78,6 +78,18 @@ export class DiscussPage extends MeetingRoomPage {
     });
   }
 
+  /** Where each card on screen sits on the page (not the viewport, which scrolls), in order. */
+  async cardBoxes(): Promise<{ x: number; y: number; width: number; height: number }[]> {
+    return this.group
+      .getByRole('article')
+      .evaluateAll((cards) =>
+        cards.map((c) => {
+          const r = c.getBoundingClientRect();
+          return { x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height };
+        }),
+      );
+  }
+
   addReaction(text: string): Locator {
     return this.card(text).getByRole('button', { name: 'Add reaction' });
   }

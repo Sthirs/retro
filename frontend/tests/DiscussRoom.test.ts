@@ -658,8 +658,11 @@ describe('Discuss phase', () => {
 
   it('is read-only once the meeting ended', async () => {
     mockFetch(routes(BOB, discussing({ status: 'ended', endedAt: '2026-11-10T19:00:00Z' })));
-    const { wrapper } = await open();
-    // The ended meeting goes to its summary, not the room.
+    const { wrapper, router } = await open();
+    // The ended meeting goes to its summary, not the room. Waiting for it lets
+    // the lazy shell load before the file's environment is torn down.
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('meeting-summary'));
+    await flushPromises();
     expect(wrapper.find('[data-testid="add-reaction"]').exists()).toBe(false);
   });
 });

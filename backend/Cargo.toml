@@ -22,47 +22,47 @@ path = "src/main.rs"
 
 [dependencies]
 migration = { path = "migration" }
-anyhow = "1.0.104"
-argon2 = "0.6.0"
-axum = { version = "0.8.9", features = ["macros", "ws"] }
-axum-extra = { version = "0.12.6", features = ["cookie", "cookie-private", "cookie-key-expansion"] }
-ammonia = "4.2.5"
-base64 = "0.23.1"
-clap = { version = "4.6.7", features = ["derive", "env"] }
+anyhow = "=1.0.104"
+argon2 = "=0.6.0"
+axum = { version = "=0.8.9", features = ["macros", "ws"] }
+axum-extra = { version = "=0.12.6", features = ["cookie", "cookie-private", "cookie-key-expansion"] }
+ammonia = "=4.2.5"
+base64 = "=0.23.1"
+clap = { version = "=4.6.7", features = ["derive", "env"] }
 # Image attachments (ADR-0013): untrusted bytes are decoded only by these
 # pure-Rust decoders; libwebp (bundled, statically linked) only encodes.
-image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+image = { version = "=0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 # Already used by `image`; read directly for what it does not expose: whether
 # a WebP is lossy, and a GIF's NETSCAPE repeat count (`image` merges "absent"
 # with "forever").
-gif = { version = "0.14.2", default-features = false, features = ["std"] }
-image-webp = { version = "0.2.4", default-features = false }
-webp-animation = { version = "0.10.0", default-features = false, features = ["static"] }
-futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
-jsonwebtoken = { version = "11.1.0", default-features = false, features = ["rust_crypto"] }
-metrics = "0.24"
-metrics-exporter-prometheus = { version = "0.18.3", default-features = false, features = ["http-listener"] }
-openidconnect = { version = "4.1.0", default-features = false, features = ["reqwest", "rustls-tls"] }
-rand = "0.10.3"
-sea-orm = { version = "2.0.4", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-uuid", "with-time", "with-json"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1.0.154"
-sha2 = "0.11.1"
+gif = { version = "=0.14.2", default-features = false, features = ["std"] }
+image-webp = { version = "=0.2.4", default-features = false }
+webp-animation = { version = "=0.10.0", default-features = false, features = ["static"] }
+futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
+jsonwebtoken = { version = "=11.1.0", default-features = false, features = ["rust_crypto"] }
+metrics = "=0.24.6"
+metrics-exporter-prometheus = { version = "=0.18.3", default-features = false, features = ["http-listener"] }
+openidconnect = { version = "=4.1.0", default-features = false, features = ["reqwest", "rustls-tls"] }
+rand = "=0.10.3"
+sea-orm = { version = "=2.0.4", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-uuid", "with-time", "with-json"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
 # Same version as sea-orm uses; only for the LISTEN connection (ADR-0011).
-sqlx = { version = "0.9.0", default-features = false, features = ["postgres", "runtime-tokio"] }
-thiserror = "2.0.21"
-time = { version = "0.3.55", features = ["serde", "formatting", "parsing"] }
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "signal", "net", "sync", "time"] }
-tower = "0.5.3"
-tower-http = { version = "0.7.1", features = ["trace", "request-id", "set-header", "util"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-url = "2"
-utoipa = { version = "6.0.0", features = ["uuid", "time"] }
-uuid = { version = "1.29.2", features = ["v7", "serde"] }
-emojis = "0.9.1"
+sqlx = { version = "=0.9.0", default-features = false, features = ["postgres", "runtime-tokio"] }
+thiserror = "=2.0.21"
+time = { version = "=0.3.55", features = ["serde", "formatting", "parsing"] }
+tokio = { version = "=1.54.1", features = ["macros", "rt-multi-thread", "signal", "net", "sync", "time"] }
+tower = "=0.5.3"
+tower-http = { version = "=0.7.1", features = ["trace", "request-id", "set-header", "util"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter", "json"] }
+url = "=2.5.8"
+utoipa = { version = "=6.0.0", features = ["uuid", "time"] }
+uuid = { version = "=1.29.2", features = ["v7", "serde"] }
+emojis = "=0.9.1"
 
 [dev-dependencies]
-http-body-util = "0.1.5"
-tokio-tungstenite = "0.29"
-testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
+http-body-util = "=0.1.5"
+tokio-tungstenite = "=0.29.0"
+testcontainers-modules = { version = "=0.15.0", features = ["postgres"] }

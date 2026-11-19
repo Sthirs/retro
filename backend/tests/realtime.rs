@@ -2043,6 +2043,13 @@ async fn everyone_sees_who_writes_or_edits_a_task() {
     // A round trip on that socket: its state is in before the first tab stops.
     subscribe(&mut two, &channel).await;
     send_task_writing(&mut one, &m, Value::Null, Value::Null).await;
+    // A round trip on the first tab: its stop is in, yet the second still edits.
+    subscribe(&mut one, &channel).await;
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    assert_eq!(state["taskWriters"], editing);
     unsubscribe(&mut two, &channel).await;
     assert_eq!(task_writers(&mut alice_socket).await, json!([]));
 

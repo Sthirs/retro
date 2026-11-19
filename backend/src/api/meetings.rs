@@ -348,10 +348,17 @@ pub(crate) async fn state_of(
     let online = state.hub.online(meeting_id);
     // An ended meeting has no editors open, whatever sockets still say.
     let live = if view.meeting.status == MeetingStatus::Active {
+        // Task writers belong to Discuss: a phase change racing this
+        // snapshot must not show them alongside an earlier phase.
+        let task_writers = if view.meeting.phase == MeetingPhase::Discuss {
+            state.hub.task_writers(meeting_id)
+        } else {
+            Vec::new()
+        };
         (
             state.hub.writing(meeting_id),
             state.hub.drags(meeting_id),
-            state.hub.task_writers(meeting_id),
+            task_writers,
         )
     } else {
         (WritingCounts::default(), Vec::new(), Vec::new())

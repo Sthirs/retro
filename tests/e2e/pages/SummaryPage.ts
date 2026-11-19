@@ -79,9 +79,9 @@ export class SummaryPage {
     return this.groups.getByRole('heading', { level: 3 });
   }
 
-  /** A group's cards. */
+  /** A group's cards (not the bullets inside a card's text). */
   cards(group: Locator): Locator {
-    return group.getByRole('listitem');
+    return group.locator('.group__cards > .card');
   }
 
   /** A task by (part of) its text. */

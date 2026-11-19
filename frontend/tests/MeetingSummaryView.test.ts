@@ -116,6 +116,25 @@ describe('Meeting summary', () => {
     await flushPromises();
   });
 
+  it('does not open the room once the user has left the summary', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    mockFetch(
+      routes(async () => {
+        await gate;
+        return problem(409, 'meeting_active');
+      }),
+    );
+    const { router } = await open();
+    await router.push({ name: 'team-meetings', params: { teamId: TEAM_ID } });
+    await flushPromises();
+    const replace = vi.spyOn(router, 'replace');
+    release();
+    await flushPromises();
+    expect(replace).not.toHaveBeenCalled();
+    expect(router.currentRoute.value.name).toBe('team-meetings');
+  });
+
   it('explains a meeting that cannot be found', async () => {
     mockFetch(routes(problem(404, 'meeting_not_found')));
     const { wrapper } = await open();

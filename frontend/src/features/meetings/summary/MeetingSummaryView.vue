@@ -5,7 +5,7 @@
  * anonymous reflections; the tasks written in it with their current board
  * status; who took part. A meeting still running opens its room instead.
  */
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink, useRoute, useRouter } from 'vue-router';
 
@@ -62,6 +62,8 @@ async function load(id: string): Promise<void> {
   }
 }
 watch(meetingId, (id) => void load(id), { immediate: true });
+// A response that lands after the user has left must not redirect them.
+onBeforeUnmount(() => loadSeq++);
 
 const duration = computed(() =>
   summary.value ? formatDuration(summary.value.createdAt, summary.value.endedAt) : '',

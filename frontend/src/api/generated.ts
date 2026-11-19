@@ -653,8 +653,8 @@ export interface MeetingStateDto {
   /** Most votes one participant may give the same group. */
   voteMaxPerGroup: number;
   /**
-   * During Vote, for the facilitator only: votes cast overall, as one
-   * number (nothing per group or per person). `null` for everyone else.
+   * During Vote, votes cast overall, as one number (nothing per group or
+   * per person), for everyone. `null` in the other phases.
    * @nullable
    */
   votesCast?: number | null;

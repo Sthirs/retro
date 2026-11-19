@@ -197,8 +197,8 @@ pub struct MeetingStateDto {
     /// From Vote on, the caller's own votes per group. Nobody sees anyone
     /// else's votes.
     pub my_votes: Vec<MyVoteDto>,
-    /// During Vote, for the facilitator only: votes cast overall, as one
-    /// number (nothing per group or per person). `null` for everyone else.
+    /// During Vote, votes cast overall, as one number (nothing per group or
+    /// per person), for everyone. `null` in the other phases.
     pub votes_cast: Option<i32>,
     /// From Discuss on, every group in Discuss order with its vote total
     /// (spec §9.5); empty before, so totals stay hidden until then.
@@ -331,7 +331,7 @@ pub(crate) async fn state_of(
     let groups = groups::snapshot(&txn, &view.meeting).await?;
     let votes = VotesSnapshot {
         mine: votes::my_votes(&txn, &view.meeting, actor).await?,
-        cast: votes::votes_cast(&txn, &view.meeting, actor).await?,
+        cast: votes::votes_cast(&txn, &view.meeting).await?,
     };
     let (order, current) = discuss::snapshot(&txn, &view.meeting).await?;
     let discuss = DiscussSnapshot {

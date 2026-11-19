@@ -5189,7 +5189,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "During Vote, for the facilitator only: votes cast overall, as one\nnumber (nothing per group or per person). `null` for everyone else."
+            "description": "During Vote, votes cast overall, as one number (nothing per group or\nper person), for everyone. `null` in the other phases."
           },
           "writing": {
             "$ref": "#/components/schemas/WritingDto",

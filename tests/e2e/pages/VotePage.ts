@@ -16,10 +16,12 @@ export class VotePage extends MeetingRoomPage {
   readonly ready: Locator;
   readonly readyCount: Locator;
   readonly nextDiscuss: Locator;
-  /** "2 of 5 votes left". */
+  /** "You have 2 of 5 votes left". */
   readonly counter: Locator;
-  /** "18 votes cast so far" (the facilitator only). */
-  readonly castCount: Locator;
+  /** "12/30 votes left": the team's votes not cast yet, for everyone. */
+  readonly teamLeft: Locator;
+  /** The team's votes cast, as a progress bar. */
+  readonly teamBar: Locator;
   readonly budgetBar: Locator;
   readonly settingsButton: Locator;
   readonly settingsDialog: Locator;
@@ -38,7 +40,8 @@ export class VotePage extends MeetingRoomPage {
     });
     this.budgetBar = page.getByTestId('vote-budget');
     this.counter = page.getByTestId('vote-left');
-    this.castCount = page.getByTestId('vote-cast');
+    this.teamLeft = page.getByTestId('vote-team-left');
+    this.teamBar = page.getByRole('progressbar', { name: 'Team votes cast' });
     this.settingsButton = this.facilitatorActions.getByRole('button', {
       name: 'Settings',
     });

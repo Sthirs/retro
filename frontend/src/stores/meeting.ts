@@ -200,7 +200,7 @@ export const useMeetingStore = defineStore('meeting', () => {
    */
   let voteEpoch = 0;
   /**
-   * The viewer's votes, and the facilitator's cast count, as the server last
+   * The viewer's votes, and the votes cast overall, as the server last
    * surely had them; what the room shows is these plus `pendingVotes`.
    */
   let confirmedVotes: MyVoteDto[] = [];
@@ -349,8 +349,12 @@ export const useMeetingStore = defineStore('meeting', () => {
     return used;
   });
   const votesLeft = computed(() => Math.max(0, voteBudget.value - votesUsed.value));
-  /** Votes cast overall: the facilitator's view during Vote, else `null`. */
+  /** Votes cast overall, for everyone during Vote, else `null`. */
   const votesCast = computed(() => meeting.value?.votesCast ?? null);
+  /** The team's votes: every participant's budget (spec §9.4). */
+  const teamVoteBudget = computed(() => participants.value.length * voteBudget.value);
+  /** The team's votes not cast yet. */
+  const teamVotesLeft = computed(() => Math.max(0, teamVoteBudget.value - (votesCast.value ?? 0)));
 
   /** The groups in Discuss order, with their vote totals (spec §9.5). */
   const discussOrder = computed<DiscussGroupDto[]>(() => meeting.value?.discussOrder ?? []);
@@ -518,7 +522,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       confirmedVotes = state.myVotes.map((v) => ({ ...v }));
       confirmedCast = state.votesCast ?? null;
     } else {
-      // No count at all is sure: not the facilitator, or not in Vote.
+      // No count at all is sure: not in Vote.
       if (state.votesCast == null) confirmedCast = null;
       else confirmedCast ??= state.votesCast;
       resyncVotes();
@@ -689,13 +693,6 @@ export const useMeetingStore = defineStore('meeting', () => {
         m.facilitatorId = p.facilitatorId as string;
         const name = participantsById.value.get(m.facilitatorId)?.displayName ?? '';
         notice.value = { kind: 'facilitator', userId: m.facilitatorId, name };
-        // Only the facilitator sees how many votes were cast: hide it at
-        // once from the one who left the role, re-read it for the new one.
-        if (m.facilitatorId !== me.value) {
-          confirmedCast = null;
-          m.votesCast = null;
-        }
-        if (m.phase === MeetingPhase.vote && !replaying) void resync();
         break;
       }
       case 'phase.changed':
@@ -748,10 +745,9 @@ export const useMeetingStore = defineStore('meeting', () => {
         if (!isOwnEvent(p)) void resync();
         break;
       case 'vote.cast_changed':
-        // The facilitator's total, absolute: taken as it is, this tab's own
-        // too (it may arrive after the answer). Events arrive in commit
-        // order, so the last one, replayed or not, is the newest total.
-        if (m.facilitatorId !== me.value) break;
+        // Everyone's total, absolute: taken as it is, this tab's own too
+        // (it may arrive after the answer). Events arrive in commit order,
+        // so the last one, replayed or not, is the newest total.
         // It may or may not hold a vote of this tab on its way: that vote's
         // answer brings a sure total, and replays this event after it.
         if (voteSending || pendingVotes.length > 0) break;
@@ -1286,6 +1282,8 @@ export const useMeetingStore = defineStore('meeting', () => {
     votesUsed,
     votesLeft,
     votesCast,
+    teamVoteBudget,
+    teamVotesLeft,
     discussOrder,
     currentGroupId,
     viewedGroupId,

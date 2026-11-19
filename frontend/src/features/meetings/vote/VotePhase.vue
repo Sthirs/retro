@@ -2,8 +2,8 @@
 /**
  * The Vote phase (Vote artboard, spec §9.4): every group, in its column and
  * place, with the viewer's own votes on it and how many they have left.
- * Nobody sees anyone else's votes; totals stay hidden until Discuss. The
- * facilitator also sees how many votes were cast overall.
+ * Nobody sees anyone else's votes; totals stay hidden until Discuss.
+ * Everyone also sees how many of the team's votes are left overall.
  */
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -57,6 +57,13 @@ const where = computed(() => {
 const thumbs = computed(() =>
   Array.from({ length: store.voteBudget }, (_, i) => i < store.votesLeft),
 );
+
+/** How much of the team's votes are cast, in percent, for the bar. */
+const teamCastPercent = computed(() => {
+  const total = store.teamVoteBudget;
+  if (!total || store.votesCast === null) return 0;
+  return Math.min(100, (store.votesCast / total) * 100);
+});
 </script>
 
 <template>
@@ -82,14 +89,33 @@ const thumbs = computed(() =>
         </i18n-t>
       </span>
       <span class="budget__hint">{{ t('vote.hint', { max: store.voteMaxPerGroup }) }}</span>
-      <template v-if="store.isFacilitator && store.votesCast !== null">
+      <template v-if="store.votesCast !== null">
         <span class="budget__spacer" />
-        <span class="budget__cast" data-testid="vote-cast">
-          <AppIcon name="users" :size="16" />
-          <i18n-t keypath="vote.cast" tag="span" :plural="store.votesCast">
-            <template #count>
-              <strong>{{ store.votesCast }}</strong>
+        <span class="budget__team" data-testid="vote-cast">
+          <span class="budget__team-label">
+            <AppIcon name="users" :size="17" />
+            {{ t('vote.team') }}
+          </span>
+          <span
+            class="budget__bar"
+            role="progressbar"
+            :aria-label="t('vote.teamCast')"
+            aria-valuemin="0"
+            :aria-valuemax="store.teamVoteBudget"
+            :aria-valuenow="Math.min(store.votesCast, store.teamVoteBudget)"
+          >
+            <span class="budget__bar-fill" :style="{ width: `${teamCastPercent}%` }" />
+          </span>
+          <i18n-t
+            keypath="vote.teamLeft"
+            tag="span"
+            class="budget__team-left"
+            data-testid="vote-team-left"
+          >
+            <template #left>
+              <strong>{{ store.teamVotesLeft }}</strong>
             </template>
+            <template #total>{{ store.teamVoteBudget }}</template>
           </i18n-t>
         </span>
       </template>
@@ -170,15 +196,39 @@ const thumbs = computed(() =>
 .budget__spacer {
   flex: 1 1 0;
 }
-.budget__cast {
+.budget__team {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.budget__team-label {
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--muted);
   font-size: 14px;
 }
-.budget__cast strong {
+.budget__bar {
+  display: block;
+  flex: none;
+  width: 120px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--well);
+}
+.budget__bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.budget__team-left {
+  color: var(--muted);
+  font-size: 14px;
+}
+.budget__team-left strong {
   color: var(--text);
+  font-size: 18px;
 }
 .voting__columns {
   display: grid;

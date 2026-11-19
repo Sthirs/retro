@@ -151,7 +151,7 @@ test.describe('vote', () => {
       for (const column of ['Plus', 'Delta', 'Ideas', 'Thanks'] as const) {
         await expect(room.column(column)).toBeVisible();
       }
-      await expect(room.counter).toHaveText('5 of 5 votes left');
+      await expect(room.counter).toHaveText('You have 5 of 5 votes left');
       await expect(room.budgetBar).toContainText(
         'Up to 3 on one group · click a group to read its cards · totals stay hidden until Discuss',
       );
@@ -172,10 +172,14 @@ test.describe('vote', () => {
         await expect(room.stepper(name).add).toBeEnabled();
       }
     }
-    // The facilitator alone sees the cast count and the settings.
-    await expect(quinn.castCount).toHaveText('0 votes cast so far');
+    // Everyone sees the team's votes left: 3 people × 5. Only the
+    // facilitator sees the settings.
+    for (const room of [quinn, rosa]) {
+      await expect(room.teamLeft).toHaveText('15/15 votes left');
+      await expect(room.teamBar).toHaveAttribute('aria-valuenow', '0');
+      await expect(room.teamBar).toHaveAttribute('aria-valuemax', '15');
+    }
     await expect(quinn.settingsButton).toBeVisible();
-    await expect(rosa.castCount).toHaveCount(0);
     await expect(rosa.facilitatorActions).toHaveCount(0);
     await expect(rosa.footer).toContainText("Quinn is facilitating. Press Ready when you're done.");
   });
@@ -190,28 +194,31 @@ test.describe('vote', () => {
       'aria-label',
       `Your votes on ${CI}: 2 of 3`,
     );
-    await expect(rosa.counter).toHaveText('3 of 5 votes left');
+    await expect(rosa.counter).toHaveText('You have 3 of 5 votes left');
 
     await sami.addVotes(SHIPPING, 1);
     await expect(sami.stepper(SHIPPING).count).toHaveText('1');
     // Neither sees the other's votes, live or after a reload.
     await expect(sami.stepper(CI).count).toHaveText('0');
-    await expect(sami.counter).toHaveText('4 of 5 votes left');
+    await expect(sami.counter).toHaveText('You have 4 of 5 votes left');
     await expect(rosa.stepper(SHIPPING).count).toHaveText('0');
     await sami.page.reload();
     await expect(sami.phase).toHaveText('Vote');
     await expect(sami.stepper(CI).count).toHaveText('0');
     await expect(sami.stepper(SHIPPING).count).toHaveText('1');
 
-    // The facilitator sees one number, and has no votes of their own yet.
-    await expect(quinn.castCount).toHaveText('3 votes cast so far');
+    // Everyone sees one number for the team; the facilitator has no votes
+    // of their own yet.
+    await expect(quinn.teamLeft).toHaveText('12/15 votes left');
+    await expect(rosa.teamLeft).toHaveText('12/15 votes left');
+    await expect(sami.teamLeft).toHaveText('12/15 votes left');
     await expect(quinn.stepper(CI).count).toHaveText('0');
-    await expect(quinn.counter).toHaveText('5 of 5 votes left');
+    await expect(quinn.counter).toHaveText('You have 5 of 5 votes left');
 
     // No totals in what the server sends: groups carry no votes.
     const samiState = await meetingState(SAMI, meetingId);
     expect(samiState.myVotes).toEqual([{ groupId: await groupOf(meetingId, TRAIN), count: 1 }]);
-    expect(samiState.votesCast).toBeNull();
+    expect(samiState.votesCast).toBe(3);
     for (const group of samiState.groups) {
       expect(Object.keys(group).sort()).toEqual(['column', 'id', 'name', 'position']);
     }
@@ -230,18 +237,18 @@ test.describe('vote', () => {
     await expect(stepper.remove).toBeDisabled();
     await rosa.addVotes(SHIPPING, 2);
     await expect(stepper.remove).toBeEnabled();
-    await expect(rosa.counter).toHaveText('3 of 5 votes left');
-    // The facilitator sees both, before they go back.
-    await expect(quinn.castCount).toHaveText('2 votes cast so far');
+    await expect(rosa.counter).toHaveText('You have 3 of 5 votes left');
+    // The team sees both, before they go back.
+    await expect(quinn.teamLeft).toHaveText('13/15 votes left');
 
     await rosa.removeVotes(SHIPPING, 1);
     await expect(stepper.count).toHaveText('1');
-    await expect(rosa.counter).toHaveText('4 of 5 votes left');
+    await expect(rosa.counter).toHaveText('You have 4 of 5 votes left');
     await rosa.removeVotes(SHIPPING, 1);
     await expect(stepper.count).toHaveText('0');
     await expect(stepper.remove).toBeDisabled();
-    await expect(rosa.counter).toHaveText('5 of 5 votes left');
-    await expect(quinn.castCount).toHaveText('0 votes cast so far');
+    await expect(rosa.counter).toHaveText('You have 5 of 5 votes left');
+    await expect(quinn.teamLeft).toHaveText('15/15 votes left');
   });
 
   test('a group takes at most 3 of one person’s votes', async ({ browser }) => {
@@ -249,7 +256,7 @@ test.describe('vote', () => {
     await rosa.addVotes(CI, 3);
     await expect(rosa.stepper(CI).count).toHaveText('3');
     await expect(rosa.stepper(CI).add).toBeDisabled();
-    await expect(rosa.counter).toHaveText('2 of 5 votes left');
+    await expect(rosa.counter).toHaveText('You have 2 of 5 votes left');
     // The server refuses a fourth too.
     const refused = await castVote(ROSA, await groupOf(meetingId, FLAKY), 1);
     expect(refused).toEqual({ status: 409, code: 'vote_group_limit' });
@@ -258,14 +265,14 @@ test.describe('vote', () => {
     await expect(rosa.stepper(DEMO).add).toBeEnabled();
     await rosa.addVotes(DEMO, 1);
     await expect(rosa.stepper(DEMO).count).toHaveText('1');
-    await expect(rosa.counter).toHaveText('1 of 5 votes left');
+    await expect(rosa.counter).toHaveText('You have 1 of 5 votes left');
   });
 
   test('a spent budget disables every +, until a vote is taken back', async ({ browser }) => {
     const rosa = await open(browser, 'rosa');
     await rosa.addVotes(CI, 3);
     await rosa.addVotes(SHIPPING, 2);
-    await expect(rosa.counter).toHaveText('0 of 5 votes left');
+    await expect(rosa.counter).toHaveText('You have 0 of 5 votes left');
     for (const name of [SHIPPING, CI, DEMO, THANKS]) {
       await expect(rosa.stepper(name).add).toBeDisabled();
     }
@@ -273,7 +280,7 @@ test.describe('vote', () => {
     expect(refused).toEqual({ status: 409, code: 'vote_budget_exhausted' });
 
     await rosa.removeVotes(SHIPPING, 1);
-    await expect(rosa.counter).toHaveText('1 of 5 votes left');
+    await expect(rosa.counter).toHaveText('You have 1 of 5 votes left');
     await expect(rosa.stepper(SHIPPING).add).toBeEnabled();
     await expect(rosa.stepper(DEMO).add).toBeEnabled();
     await expect(rosa.stepper(THANKS).add).toBeEnabled();
@@ -287,7 +294,7 @@ test.describe('vote', () => {
     await rosa.page.reload();
     await expect(rosa.phase).toHaveText('Vote');
     await expect(rosa.stepper(DEMO).count).toHaveText('2');
-    await expect(rosa.counter).toHaveText('3 of 5 votes left');
+    await expect(rosa.counter).toHaveText('You have 3 of 5 votes left');
 
     // A second tab of Rosa's follows the first live, and the other way round.
     const tab = new VotePage(await rosa.page.context().newPage());
@@ -302,29 +309,30 @@ test.describe('vote', () => {
     await expect(tab.stepper(DEMO).count).toHaveText('2');
     await rosa.addVotes(THANKS, 1);
     await expect(tab.stepper(THANKS).count).toHaveText('1');
-    await expect(tab.counter).toHaveText('2 of 5 votes left');
+    await expect(tab.counter).toHaveText('You have 2 of 5 votes left');
     await tab.removeVotes(DEMO, 1);
     await expect(rosa.stepper(DEMO).count).toHaveText('1');
-    await expect(rosa.counter).toHaveText('3 of 5 votes left');
+    await expect(rosa.counter).toHaveText('You have 3 of 5 votes left');
   });
 
-  test('the facilitator watches the cast count change live', async ({ browser }) => {
+  test('everyone watches the team’s votes left change live', async ({ browser }) => {
     const rosa = await open(browser, 'rosa');
     const sami = await open(browser, 'sami');
-    await expect(quinn.castCount).toHaveText('0 votes cast so far');
+    const team = async (text: string) => {
+      for (const room of [quinn, rosa, sami]) await expect(room.teamLeft).toHaveText(text);
+    };
+    await team('15/15 votes left');
     await rosa.addVotes(SHIPPING, 1);
-    await expect(quinn.castCount).toHaveText('1 vote cast so far');
+    await team('14/15 votes left');
     await sami.addVotes(CI, 2);
-    await expect(quinn.castCount).toHaveText('3 votes cast so far');
+    await team('12/15 votes left');
+    await expect(rosa.teamBar).toHaveAttribute('aria-valuenow', '3');
     await rosa.removeVotes(SHIPPING, 1);
-    await expect(quinn.castCount).toHaveText('2 votes cast so far');
+    await team('13/15 votes left');
     // The facilitator's own votes count too.
     await quinn.addVotes(DEMO, 1);
-    await expect(quinn.castCount).toHaveText('3 votes cast so far');
-    await expect(quinn.counter).toHaveText('4 of 5 votes left');
-    // Participants never see it.
-    await expect(rosa.castCount).toHaveCount(0);
-    await expect(sami.castCount).toHaveCount(0);
+    await team('12/15 votes left');
+    await expect(quinn.counter).toHaveText('You have 4 of 5 votes left');
   });
 
   test('a group expands to show its cards, for this viewer only', async ({ browser }) => {
@@ -409,8 +417,8 @@ test.describe('vote', () => {
     for (const room of [quinn, rosa]) {
       await expect(room.budgetBar).toContainText('Up to 4 on one group');
     }
-    await expect(rosa.counter).toHaveText('4 of 7 votes left');
-    await expect(quinn.counter).toHaveText('7 of 7 votes left');
+    await expect(rosa.counter).toHaveText('You have 4 of 7 votes left');
+    await expect(quinn.counter).toHaveText('You have 7 of 7 votes left');
     // A fourth vote on the same group now fits.
     await expect(rosa.stepper(CI).add).toBeEnabled();
     await rosa.addVotes(CI, 1);
@@ -430,7 +438,7 @@ test.describe('vote', () => {
     await rosa.addVotes(CI, 3);
     await rosa.addVotes(SHIPPING, 2);
     await sami.addVotes(DEMO, 1);
-    await expect(quinn.castCount).toHaveText('6 votes cast so far');
+    await expect(quinn.teamLeft).toHaveText('9/15 votes left');
 
     await quinn.openSettings();
     await expect(quinn.warning).toHaveCount(0);
@@ -448,10 +456,12 @@ test.describe('vote', () => {
     // Rosa's two newest votes (Shipping) are gone, live; Sami keeps hers.
     await expect(rosa.stepper(SHIPPING).count).toHaveText('0');
     await expect(rosa.stepper(CI).count).toHaveText('3');
-    await expect(rosa.counter).toHaveText('0 of 3 votes left');
+    await expect(rosa.counter).toHaveText('You have 0 of 3 votes left');
     await expect(sami.stepper(DEMO).count).toHaveText('1');
-    await expect(sami.counter).toHaveText('2 of 3 votes left');
-    await expect(quinn.castCount).toHaveText('4 votes cast so far');
+    await expect(sami.counter).toHaveText('You have 2 of 3 votes left');
+    // The team's votes follow the new budget: 3 people × 3, 4 cast.
+    await expect(quinn.teamLeft).toHaveText('5/9 votes left');
+    await expect(rosa.teamLeft).toHaveText('5/9 votes left');
 
     // A maximum of 1 per group trims Flaky CI to one vote.
     await quinn.openSettings();
@@ -461,14 +471,14 @@ test.describe('vote', () => {
     await quinn.settingsDialog.getByRole('button', { name: 'Close' }).click();
     await quinn.saveSettings(3, 1);
     await expect(rosa.stepper(CI).count).toHaveText('1');
-    await expect(rosa.counter).toHaveText('2 of 3 votes left');
+    await expect(rosa.counter).toHaveText('You have 2 of 3 votes left');
     await expect(rosa.stepper(CI).add).toBeDisabled();
-    await expect(quinn.castCount).toHaveText('2 votes cast so far');
+    await expect(quinn.teamLeft).toHaveText('7/9 votes left');
 
     // Raising the limits gives nothing back.
     await quinn.saveSettings(5, 3);
     await expect(rosa.stepper(CI).count).toHaveText('1');
-    await expect(rosa.counter).toHaveText('4 of 5 votes left');
+    await expect(rosa.counter).toHaveText('You have 4 of 5 votes left');
   });
 
   test('the settings warning follows votes cast while the dialog is open', async () => {
@@ -480,7 +490,7 @@ test.describe('vote', () => {
     // Rosa votes over the draft limit while the dialog stays open.
     const ci = await groupOf(meetingId, FLAKY);
     for (let i = 0; i < 3; i++) expect((await castVote(ROSA, ci, 1)).status).toBe(200);
-    await expect(quinn.castCount).toHaveText('3 votes cast so far');
+    await expect(quinn.teamLeft).toHaveText('12/15 votes left');
     await expect(quinn.warning).toContainText('1 person has more votes than the new limits allow.');
   });
 
@@ -520,32 +530,34 @@ test.describe('vote', () => {
   test('someone joining during Vote gets the whole budget', async ({ browser }) => {
     const rosa = await open(browser, 'rosa');
     await rosa.addVotes(SHIPPING, 2);
-    await expect(quinn.castCount).toHaveText('2 votes cast so far');
+    await expect(quinn.teamLeft).toHaveText('13/15 votes left');
 
     const tess = await open(browser, 'tess');
-    await expect(tess.counter).toHaveText('5 of 5 votes left');
+    await expect(tess.counter).toHaveText('You have 5 of 5 votes left');
     for (const name of [SHIPPING, CI, DEMO, THANKS]) {
       await expect(tess.stepper(name).count).toHaveText('0');
     }
     await expect(quinn.readyCount).toContainText('0/4');
-    await expect(quinn.castCount).toHaveText('2 votes cast so far');
+    // The team grows by Tess's budget.
+    await expect(quinn.teamLeft).toHaveText('18/20 votes left');
+    await expect(tess.teamLeft).toHaveText('18/20 votes left');
     await tess.addVotes(CI, 1);
-    await expect(quinn.castCount).toHaveText('3 votes cast so far');
+    await expect(quinn.teamLeft).toHaveText('17/20 votes left');
   });
 
-  test('the cast count and the settings follow the facilitator role', async ({ browser }) => {
+  test('the settings follow the facilitator role; the team count stays', async ({ browser }) => {
     const rosa = await open(browser, 'rosa');
     await rosa.addVotes(DEMO, 1);
     await quinn.transferTo(USERS.rosa.name);
 
-    await expect(rosa.castCount).toHaveText('1 vote cast so far');
     await expect(rosa.settingsButton).toBeVisible();
-    await expect(quinn.castCount).toHaveCount(0);
     await expect(quinn.settingsButton).toHaveCount(0);
+    for (const room of [quinn, rosa]) await expect(room.teamLeft).toHaveText('14/15 votes left');
     // Rosa's own votes are unchanged.
     await expect(rosa.stepper(DEMO).count).toHaveText('1');
     await rosa.saveSettings(4, 3);
-    await expect(quinn.counter).toHaveText('4 of 4 votes left');
+    await expect(quinn.counter).toHaveText('You have 4 of 4 votes left');
+    await expect(quinn.teamLeft).toHaveText('11/12 votes left');
   });
 
   test('an ended meeting takes no more votes', async ({ browser }) => {
@@ -605,6 +617,8 @@ test.describe('vote', () => {
     expect(box.height).toBeGreaterThanOrEqual(40);
     await rosa.addVotes(THANKS, 1);
     await expect(rosa.stepper(THANKS).count).toHaveText('1');
-    await expect(rosa.counter).toHaveText('4 of 5 votes left');
+    await expect(rosa.counter).toHaveText('You have 4 of 5 votes left');
+    await expect(rosa.teamLeft).toHaveText('14/15 votes left');
+    await expect(rosa.teamBar).toBeVisible();
   });
 });

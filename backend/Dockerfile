@@ -1,5 +1,5 @@
 # Build context: backend/
-FROM rust:1.97-slim-trixie@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c AS build
+FROM rust:1.99-slim-trixie@sha256:f6c4a35d21dbb3c89d7a8d056c193e94fc09037f2b58dd858b09c39a47dd02d7 AS build
 WORKDIR /src
 
 # Dependencies first, compiled against stub crate roots: this layer is reused

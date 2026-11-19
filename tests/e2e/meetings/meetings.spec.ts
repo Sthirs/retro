@@ -102,6 +102,19 @@ test.describe('meetings', () => {
     await expect(ivanRoom.queue.getByRole('listitem')).toHaveCount(2);
     await expect(ivanRoom.answering(1, 2)).toBeVisible();
 
+    // Ivan changes the question; Jade sees the new one, and has no ↻ herself.
+    await expect(jadeRoom.changeQuestion).toHaveCount(0);
+    await expect(ivanRoom.changeQuestion).toHaveAttribute(
+      'title',
+      'Change question (facilitator only)',
+    );
+    const before = (await ivanRoom.question.textContent())!.trim();
+    await expect(jadeRoom.question).toHaveText(before);
+    await ivanRoom.changeQuestion.click();
+    await expect(ivanRoom.question).not.toHaveText(before);
+    const after = (await ivanRoom.question.textContent())!.trim();
+    await expect(jadeRoom.question).toHaveText(after);
+
     // Next person: everyone follows.
     await ivanRoom.nextPerson.click();
     await expect(jadeRoom.answering(2, 2)).toBeVisible();
@@ -123,6 +136,8 @@ test.describe('meetings', () => {
     await ivanRoom.transferTo(USERS.jade.name);
     await expect(ivanRoom.facilitatorActions).toBeHidden();
     await expect(jadeRoom.facilitatorActions).toBeVisible();
+    await expect(jadeRoom.changeQuestion).toBeVisible();
+    await expect(ivanRoom.changeQuestion).toHaveCount(0);
     await expect(jade.getByText('You are now the facilitator.')).toBeVisible();
     await expect(page.getByText(`${USERS.jade.name} is now the facilitator.`)).toBeVisible();
 

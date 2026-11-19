@@ -16,6 +16,10 @@ export class MeetingRoomPage {
   readonly ended: Locator;
   /** The banner shown while the real-time connection is lost. */
   readonly reconnecting: Locator;
+  /** Today's icebreaker question. */
+  readonly question: Locator;
+  /** The facilitator's ↻ next to the question. */
+  readonly changeQuestion: Locator;
 
   constructor(readonly page: Page) {
     this.phase = page.getByRole('heading', { level: 1 });
@@ -40,6 +44,10 @@ export class MeetingRoomPage {
     // An ended meeting sends everyone to its summary.
     this.ended = page.getByText('Meeting summary · read-only');
     this.reconnecting = page.getByRole('status').filter({ hasText: 'Reconnecting…' });
+    this.question = page.getByTestId('icebreaker-question');
+    this.changeQuestion = page
+      .getByRole('region', { name: 'Icebreaker' })
+      .getByRole('button', { name: 'Change question' });
   }
 
   /** "Now answering · 2 of 3". */

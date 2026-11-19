@@ -610,6 +610,29 @@ pub async fn icebreaker_next(
     Ok(Json(state_of(&state, meeting_id, user.id).await?))
 }
 
+/// Replaces the icebreaker question with another one (facilitator).
+#[utoipa::path(
+    post,
+    path = "/api/v1/meetings/{meeting_id}/icebreaker/question",
+    tag = "meetings",
+    security(("bearer" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Meeting id")),
+    responses(
+        (status = 200, body = MeetingStateDto, description = "The meeting, with its new question"),
+        (status = 403, body = Problem, content_type = "application/problem+json", description = "`not_facilitator`"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`meeting_not_found`"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`meeting_ended` or `wrong_phase`"),
+    )
+)]
+pub async fn icebreaker_question(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(meeting_id): Path<Uuid>,
+) -> AppResult<Json<MeetingStateDto>> {
+    meetings::icebreaker_change_question(&state.db, meeting_id, user.id).await?;
+    Ok(Json(state_of(&state, meeting_id, user.id).await?))
+}
+
 /// Who the icebreaker goes back to.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]

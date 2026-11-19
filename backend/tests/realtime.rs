@@ -250,6 +250,19 @@ async fn participants_receive_meeting_events_in_order() {
     assert_eq!(person["payload"]["index"], 1);
     assert_eq!(person["seq"].as_i64().unwrap(), first_seq + 1);
 
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/meetings/{m}/icebreaker/question"),
+            &alice,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let question = next_of(&mut alice_socket, "icebreaker.question_changed").await;
+    assert_eq!(question["payload"]["question"], res.json()["question"]);
+    assert_eq!(question["seq"].as_i64().unwrap(), first_seq + 2);
+
     app.call(
         "POST",
         &format!("/api/v1/meetings/{m}/facilitator"),
@@ -259,14 +272,14 @@ async fn participants_receive_meeting_events_in_order() {
     .await;
     let changed = next_of(&mut alice_socket, "facilitator.changed").await;
     assert_eq!(changed["payload"]["facilitatorId"], bob_id);
-    assert_eq!(changed["seq"].as_i64().unwrap(), first_seq + 2);
+    assert_eq!(changed["seq"].as_i64().unwrap(), first_seq + 3);
 
     // The snapshot's seq matches the last event.
     let state = app
         .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
         .await
         .json();
-    assert_eq!(state["seq"].as_i64().unwrap(), first_seq + 2);
+    assert_eq!(state["seq"].as_i64().unwrap(), first_seq + 3);
 
     app.call("POST", &format!("/api/v1/meetings/{m}/end"), &bob, None)
         .await;

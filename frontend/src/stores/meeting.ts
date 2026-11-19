@@ -819,6 +819,9 @@ export const useMeetingStore = defineStore('meeting', () => {
       case 'icebreaker.person_changed':
         m.icebreaker.index = p.index as number;
         break;
+      case 'icebreaker.question_changed':
+        m.question = p.question as string;
+        break;
       case 'meeting.renamed':
         m.title = p.title as string;
         break;
@@ -894,6 +897,12 @@ export const useMeetingStore = defineStore('meeting', () => {
         meeting.value!.icebreaker.index += 1;
       },
     );
+  }
+
+  /** Replaces the icebreaker question with another one (facilitator). */
+  function changeQuestion(): Promise<boolean> {
+    const id = meetingId.value!;
+    return act(() => api.icebreakerQuestion(id));
   }
 
   /** Back to someone who already had their turn; the turn continues from them. */
@@ -1292,6 +1301,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     apply,
     reset,
     nextPerson,
+    changeQuestion,
     goToPerson,
     advancePhase,
     rename,

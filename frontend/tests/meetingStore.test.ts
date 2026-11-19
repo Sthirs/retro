@@ -268,6 +268,25 @@ describe('meeting store', () => {
     expect(calls.at(-1)?.path).toBe(`/api/v1/meetings/${MEETING_ID}/icebreaker/next`);
   });
 
+  it('changes the icebreaker question and takes the new one', async () => {
+    const { store, calls } = await opened({
+      [`POST /api/v1/meetings/${MEETING_ID}/icebreaker/question`]: {
+        status: 200,
+        body: meetingState({ question: 'Best snack this week?', seq: 3 }),
+      },
+    });
+    expect(await store.changeQuestion()).toBe(true);
+    expect(calls.at(-1)?.path).toBe(`/api/v1/meetings/${MEETING_ID}/icebreaker/question`);
+    expect(store.meeting!.question).toBe('Best snack this week?');
+    store.apply({
+      type: 'icebreaker.question_changed',
+      channel,
+      seq: 4,
+      payload: { question: 'Favourite tool you learned this year?' },
+    });
+    expect(store.meeting!.question).toBe('Favourite tool you learned this year?');
+  });
+
   it('goes back to someone who already had their turn, at once', async () => {
     const { store, calls } = await opened({
       [JOIN]: {

@@ -519,6 +519,8 @@ export default {
     now: 'Now',
     next: 'Next',
     question: "Today's question",
+    changeQuestion: 'Change question',
+    changeQuestionHint: 'Change question (facilitator only)',
     answering: 'Now answering · {n} of {total}',
     upNext: 'Up next: {name}',
     lastOne: 'Last one to answer',

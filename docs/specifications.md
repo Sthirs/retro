@@ -218,7 +218,7 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 
 - **Title**: each meeting has a title, **"Retro #N"** by default (`N` counts the team's meetings, starting at 1). The facilitator can rename it from the pencil next to the title (1–80 characters) while the meeting is active.
 - Header: meeting title, team name and date, current phase with a stepper showing all five phases, facilitator name, participant avatars with presence, and an **Invite** button that copies the meeting invite link (§6.3).
-- Facilitator controls: **Next** (person/group/phase depending on context), **Timer**, **Settings** (e.g. votes), **Transfer facilitator**, **End meeting**.
+- Facilitator controls: **Next** (person/group/phase depending on context), **Change question** (Icebreaker), **Timer**, **Settings** (e.g. votes), **Transfer facilitator**, **End meeting**.
 - Team admins who are not the facilitator see a **Take over facilitation** action.
 - **Ready** button at the bottom for participants (used in Reflect, Group and Vote; refused in the other phases). The facilitator sees a counter such as *"4 / 6 ready"* (out of all participants) and who is ready; the others see who is facilitating. Ready states reset when the phase changes.
 - **Timer** (facilitator), in any phase:
@@ -239,6 +239,7 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 
   Both differ from meeting to meeting. Where possible, the backend avoids repeating the team's recent picks.
 - The participants are shown **one at a time** on everyone's screen (avatar + name), in a randomized order. The meeting starts in this phase, so the order is built as people join: while the facilitator is still on the first person, each newcomer takes a random place among those who have not spoken yet; this shuffles everyone who joins at the start.
+- The facilitator can **change the question** at any time during this phase (the ↻ button next to *"Today's question"*, shown to the facilitator only). The backend picks another active question from the curated list, never the current one, avoiding the team's recent picks as at creation. Everyone sees the new question live.
 - Only the **facilitator** can move to the **next person**. After the last person, the facilitator can move to the **next phase** (Reflect).
 - The facilitator can go back to the **previous person**, or to **anyone who has already had their turn** by selecting them in the speaking order. The turn continues from that person: everyone after them is up again, and Next walks through them in the same order.
 - Participants who join after the first person has finished are added to the end of the queue.
@@ -349,6 +350,7 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 | `timer.updated` | timer (status, endsAt or remainingMs, durationMs; `null` when stopped), serverNow | all |
 | `ready.changed` | userId, ready, readyCount | all |
 | `icebreaker.person_changed` | index | all |
+| `icebreaker.question_changed` | question | all |
 | `reflection.writing` | per column, how many new and edited reflections are being written (no author; ephemeral, no `seq`) | all |
 | `reflection.count_changed` | sent reflections per column | all |
 | `reflection.changed` | reflection id, `clientId` (no content; the author's other tabs re-read the state) | author only (no `seq`) |
@@ -413,6 +415,7 @@ Constraints and mitigations:
 | Copy meeting invite link | ✗ | ✓ | ✓ | ✓ |
 | Regenerate meeting invite link | ✗ | ✗ | ✗* | ✓ |
 | Advance person / phase / group | ✗ | ✗ | ✗* | ✓ |
+| Change icebreaker question | ✗ | ✗ | ✗* | ✓ |
 | Set timer, vote settings | ✗ | ✗ | ✗* | ✓ |
 | Rename meeting | ✗ | ✗ | ✗* | ✓ |
 | Transfer facilitator role | ✗ | ✗ | ✗* | ✓ |
@@ -591,6 +594,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/meetings/{id}/phase/next` | Advance phase (facilitator) |
 | POST | `/meetings/{id}/icebreaker/next` | Next person (facilitator) |
 | POST | `/meetings/{id}/icebreaker/goto` | `{ userId }`: back to someone who already had their turn (facilitator) |
+| POST | `/meetings/{id}/icebreaker/question` | Change the icebreaker question (facilitator, during Icebreaker) |
 | PUT | `/meetings/{id}/timer` | Start / pause / stop the timer (facilitator) |
 | PUT | `/meetings/{id}/ready` | Set own ready flag |
 | PATCH | `/meetings/{id}/settings` | `{ voteBudget, voteMaxPerGroup }`: vote budget / max per group (facilitator, until Vote ends; 400 `invalid_vote_settings` out of bounds, 409 `wrong_phase` after Vote) |

@@ -108,7 +108,10 @@ describe('Meeting summary', () => {
   it('opens the room of a meeting that is still running', async () => {
     mockFetch({
       ...routes(problem(409, 'meeting_active')),
-      [`POST /api/v1/meetings/${MEETING_ID}/join`]: { status: 200, body: meetingState() },
+      [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: {
+        status: 200,
+        body: meetingState(),
+      },
       [`GET /api/v1/meetings/${MEETING_ID}/state`]: { status: 200, body: meetingState() },
     });
     const { router } = await open();

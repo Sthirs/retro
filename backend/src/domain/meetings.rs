@@ -462,15 +462,21 @@ async fn team_updated(db: &impl ConnectionTrait, meeting: &meeting::Model) -> Re
     Ok(())
 }
 
-/// Makes `actor` a participant of a running meeting (idempotent). During the
-/// icebreaker a newcomer is added to the speaking order (see [`join_position`]).
+/// Makes `actor` a participant of a running meeting of `team_id` (idempotent).
+/// A meeting of another team is `meeting_not_found`, even when `actor` is a
+/// member of both. During the icebreaker a newcomer is added to the speaking
+/// order (see [`join_position`]).
 pub async fn join(
     db: &(impl TransactionTrait + ConnectionTrait),
+    team_id: Uuid,
     meeting_id: Uuid,
     actor: Uuid,
 ) -> Result<(), AppError> {
     let txn = db.begin().await?;
     let (meeting, role) = find_for_member(&txn, meeting_id, actor, true).await?;
+    if meeting.team_id != team_id {
+        return Err(AppError::NotFound("meeting_not_found"));
+    }
     join_locked(&txn, meeting, actor, Some(role)).await?;
     txn.commit().await?;
     Ok(())

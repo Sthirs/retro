@@ -7,7 +7,7 @@ import { useMeetingStore } from '@/stores/meeting';
 import { hasContent, useReflectDraftsStore } from '@/stores/reflectDrafts';
 import { useSessionStore } from '@/stores/session';
 
-import { ALICE, MEETING_ID, meetingState, mockFetch } from './helpers';
+import { ALICE, MEETING_ID, meetingState, mockFetch, TEAM_ID } from './helpers';
 
 const BASE = `/api/v1/meetings/${MEETING_ID}`;
 const channel = `meeting:${MEETING_ID}`;
@@ -16,13 +16,13 @@ const KEY = `retro.reflectDrafts.${MEETING_ID}.${ALICE.id}`;
 async function setup() {
   const state = meetingState({ phase: 'reflect' });
   mockFetch({
-    [`POST ${BASE}/join`]: { status: 200, body: state },
+    [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: { status: 200, body: state },
     [`GET ${BASE}/state`]: { status: 200, body: state },
   });
   const store = useMeetingStore();
   useSessionStore().setUser({ ...ALICE, pictureVersion: null });
   await nextTick();
-  await store.open(MEETING_ID);
+  await store.open(MEETING_ID, TEAM_ID);
   const drafts = useReflectDraftsStore();
   await nextTick();
   return { store, drafts };

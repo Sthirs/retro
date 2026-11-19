@@ -6,7 +6,7 @@ import { CLIENT_ID } from '@/api/clientId';
 import { useMeetingStore, VOTE_TIMEOUT_MS } from '@/stores/meeting';
 import { useSessionStore } from '@/stores/session';
 
-import { ALICE, BOB, MEETING_ID, meetingState, mockFetch, problem } from './helpers';
+import { ALICE, BOB, MEETING_ID, meetingState, mockFetch, problem, TEAM_ID } from './helpers';
 
 const BASE = `/api/v1/meetings/${MEETING_ID}`;
 const isVote = (c: { method: string; path: string }) =>
@@ -53,14 +53,14 @@ const withVotes = (votes: [string, number][], overrides: Record<string, unknown>
 
 async function opened(state = voting(), routes = {}) {
   const fetch = mockFetch({
-    [`POST ${BASE}/join`]: { status: 200, body: state },
+    [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: { status: 200, body: state },
     [`GET ${BASE}/state`]: { status: 200, body: state },
     ...routes,
   });
   const store = useMeetingStore();
   useSessionStore().setUser({ ...ALICE, pictureVersion: null });
   await nextTick();
-  await store.open(MEETING_ID);
+  await store.open(MEETING_ID, TEAM_ID);
   return { store, ...fetch };
 }
 
@@ -358,7 +358,7 @@ describe('meeting store in Vote', () => {
     useSessionStore().setUser({ ...BOB, pictureVersion: null });
     await nextTick();
     // Bob opens the same meeting before alice's answer comes back.
-    await store.open(MEETING_ID);
+    await store.open(MEETING_ID, TEAM_ID);
     first.open();
     await expect(sent).resolves.toBe(false);
     await expect(queued).resolves.toBe(false);
@@ -404,7 +404,7 @@ describe('meeting store in Vote', () => {
     await tick();
     useSessionStore().setUser({ ...BOB, pictureVersion: null });
     await nextTick();
-    await store.open(MEETING_ID);
+    await store.open(MEETING_ID, TEAM_ID);
     await expect(store.vote('g2', 1)).resolves.toBe(true);
     expect(calls.filter(isVote).map((c) => c.path)).toEqual([
       '/api/v1/groups/g1/vote',

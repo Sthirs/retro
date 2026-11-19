@@ -560,25 +560,28 @@ pub async fn rename_meeting(
     Ok(Json(state_of(&state, meeting_id, user.id).await?))
 }
 
-/// Joins a running meeting as a participant (idempotent).
+/// Joins a running meeting of the team as a participant (idempotent).
 #[utoipa::path(
     post,
-    path = "/api/v1/meetings/{meeting_id}/join",
+    path = "/api/v1/teams/{team_id}/meetings/{meeting_id}/join",
     tag = "meetings",
     security(("bearer" = [])),
-    params(("meeting_id" = Uuid, Path, description = "Meeting id")),
+    params(
+        ("team_id" = Uuid, Path, description = "Team id"),
+        ("meeting_id" = Uuid, Path, description = "Meeting id"),
+    ),
     responses(
         (status = 200, body = MeetingStateDto, description = "The meeting, with the caller as a participant"),
-        (status = 404, body = Problem, content_type = "application/problem+json", description = "`meeting_not_found`"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`meeting_not_found`: no such meeting, not a team member, or a meeting of another team"),
         (status = 409, body = Problem, content_type = "application/problem+json", description = "`meeting_ended`"),
     )
 )]
 pub async fn join_meeting(
     State(state): State<AppState>,
     CurrentUser(user): CurrentUser,
-    Path(meeting_id): Path<Uuid>,
+    Path((team_id, meeting_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<Json<MeetingStateDto>> {
-    meetings::join(&state.db, meeting_id, user.id).await?;
+    meetings::join(&state.db, team_id, meeting_id, user.id).await?;
     Ok(Json(state_of(&state, meeting_id, user.id).await?))
 }
 

@@ -185,7 +185,7 @@ async fn room(app: &TestApp) -> Room {
         ok(post(
             app,
             token,
-            &format!("/api/v1/meetings/{meeting}/join"),
+            &format!("/api/v1/teams/{team}/meetings/{meeting}/join"),
             None,
         )
         .await);

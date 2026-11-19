@@ -154,6 +154,8 @@ export const useMeetingStore = defineStore('meeting', () => {
   const loading = ref(false);
   /** Why the meeting could not be opened (an error code). */
   const loadError = ref<string | null>(null);
+  /** Joining said the meeting has ended: its state is not loaded. */
+  const ended = ref(false);
   /** The last refused action (an error code). */
   const actionError = ref<string | null>(null);
   const notice = ref<MeetingNotice | null>(null);
@@ -417,6 +419,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     meetingId.value = null;
     loading.value = false;
     loadError.value = null;
+    ended.value = false;
     actionError.value = null;
     notice.value = null;
     phaseLoading.value = false;
@@ -559,8 +562,12 @@ export const useMeetingStore = defineStore('meeting', () => {
     replayWantsResync = false;
   }
 
-  /** Opens a meeting: joins it while it runs, then loads its state. */
-  async function open(id: string): Promise<void> {
+  /**
+   * Opens a meeting of the team: joins it and takes its state from the
+   * answer. A meeting of another team is `meeting_not_found`; an ended one
+   * only sets `ended` (its summary is the place to read it).
+   */
+  async function open(id: string, teamId: string): Promise<void> {
     if (meetingId.value !== id) {
       reset();
       meetingId.value = id;
@@ -569,10 +576,9 @@ export const useMeetingStore = defineStore('meeting', () => {
     const since = voteEpoch;
     loading.value = true;
     loadError.value = null;
+    ended.value = false;
     try {
-      // An ended meeting cannot be joined, but can still be read.
-      const joined = await api.joinMeeting(id);
-      const res = joined.status === 409 ? await api.getMeetingState(id) : joined;
+      const res = await api.joinMeeting(teamId, id);
       if (res.status !== 200) throw apiError(res);
       if (seq !== loadSeq) return;
       meeting.value = null;
@@ -581,7 +587,10 @@ export const useMeetingStore = defineStore('meeting', () => {
       queued = [];
       for (const event of pending) apply(event);
     } catch (e) {
-      if (seq === loadSeq) loadError.value = errorCode(e);
+      if (seq !== loadSeq) return;
+      const code = errorCode(e);
+      if (code === 'meeting_ended') ended.value = true;
+      else loadError.value = code;
     } finally {
       if (seq === loadSeq) {
         loading.value = false;
@@ -1237,6 +1246,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     meetingId,
     loading,
     loadError,
+    ended,
     phaseLoading,
     actionError,
     notice,

@@ -6,7 +6,7 @@ import { CLIENT_ID } from '@/api/clientId';
 import { useMeetingStore } from '@/stores/meeting';
 import { useSessionStore } from '@/stores/session';
 
-import { ALICE, BOB, MEETING_ID, meetingState, mockFetch, problem } from './helpers';
+import { ALICE, BOB, MEETING_ID, meetingState, mockFetch, problem, TEAM_ID } from './helpers';
 
 const BASE = `/api/v1/meetings/${MEETING_ID}`;
 const channel = `meeting:${MEETING_ID}`;
@@ -39,14 +39,14 @@ const grouping = (overrides: Record<string, unknown> = {}) =>
 
 async function opened(state = grouping(), routes = {}) {
   const fetch = mockFetch({
-    [`POST ${BASE}/join`]: { status: 200, body: state },
+    [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: { status: 200, body: state },
     [`GET ${BASE}/state`]: { status: 200, body: state },
     ...routes,
   });
   const store = useMeetingStore();
   useSessionStore().setUser({ ...ALICE, pictureVersion: null });
   await nextTick();
-  await store.open(MEETING_ID);
+  await store.open(MEETING_ID, TEAM_ID);
   return { store, ...fetch };
 }
 

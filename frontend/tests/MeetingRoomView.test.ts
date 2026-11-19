@@ -35,7 +35,7 @@ function routes(state = meetingState(), extra: Record<string, unknown> = {}, use
     'GET /api/v1/me': me([team({ role: user === ALICE ? 'admin' : 'member' })], [], user),
     'POST /api/v1/ws-ticket': wsTicket(),
     [`GET /api/v1/teams/${TEAM_ID}/meetings`]: { status: 200, body: [] },
-    [`POST ${BASE}/join`]: { status: 200, body: state },
+    [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: { status: 200, body: state },
     [`GET ${BASE}/state`]: { status: 200, body: state },
     [`GET ${BASE}/summary`]: { status: 200, body: meetingReport() },
     ...extra,
@@ -55,7 +55,12 @@ describe('Meeting room', () => {
   it('shows the icebreaker to the facilitator, with the controls', async () => {
     const { calls } = mockFetch(routes());
     const { wrapper } = await open();
-    expect(calls.some((c) => c.method === 'POST' && c.path === `${BASE}/join`)).toBe(true);
+    expect(
+      calls.some(
+        (c) =>
+          c.method === 'POST' && c.path === `/api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`,
+      ),
+    ).toBe(true);
 
     expect(wrapper.text()).toContain('Retro #3');
     expect(wrapper.text()).toContain('Platform Team · 10 Nov 2026');
@@ -297,11 +302,24 @@ describe('Meeting room', () => {
 
   it('sends an ended meeting straight to its summary', async () => {
     const ended = meetingState({ status: 'ended', endedAt: '2026-11-10T18:07:00Z' });
-    mockFetch(routes(ended, { [`POST ${BASE}/join`]: problem(409, 'meeting_ended') }, BOB));
+    const { calls } = mockFetch(
+      routes(
+        ended,
+        {
+          [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: problem(
+            409,
+            'meeting_ended',
+          ),
+        },
+        BOB,
+      ),
+    );
     const { wrapper, router } = await open();
     await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('meeting-summary'));
     await flushPromises();
     expect(wrapper.get('h1').text()).toBe('Retro #3');
+    // Joining already said it ended: its live state is never read.
+    expect(calls.some((c) => c.path === `${BASE}/state`)).toBe(false);
   });
 
   it('renames the meeting inline', async () => {
@@ -366,7 +384,14 @@ describe('Meeting room', () => {
   });
 
   it('explains a meeting that cannot be opened', async () => {
-    mockFetch(routes(meetingState(), { [`POST ${BASE}/join`]: problem(404, 'meeting_not_found') }));
+    mockFetch(
+      routes(meetingState(), {
+        [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: problem(
+          404,
+          'meeting_not_found',
+        ),
+      }),
+    );
     const { wrapper } = await open();
     expect(wrapper.text()).toContain('This meeting no longer exists');
   });

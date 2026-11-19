@@ -370,7 +370,7 @@ async fn reflection_images_stay_private_until_the_reflections_are_revealed() {
     let res = app
         .call(
             "POST",
-            &format!("/api/v1/meetings/{meeting}/join"),
+            &format!("/api/v1/teams/{team}/meetings/{meeting}/join"),
             &bob,
             None,
         )
@@ -552,7 +552,7 @@ async fn reflection_images_stay_private_when_the_meeting_ends_during_reflect() {
     let res = app
         .call(
             "POST",
-            &format!("/api/v1/meetings/{meeting}/join"),
+            &format!("/api/v1/teams/{team}/meetings/{meeting}/join"),
             &bob,
             None,
         )

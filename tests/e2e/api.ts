@@ -183,7 +183,7 @@ export async function seedTask(
     }
     meeting = await pending;
   }
-  await meetingAction(login, meeting.meetingId, 'join');
+  await joinMeeting(login, teamId, meeting.meetingId);
   const id = await createTask(login, meeting.meetingId, meeting.groupId, task.content);
   if (task.status !== 'active') await moveTask(login, id, task.status);
   return { id };
@@ -333,6 +333,17 @@ export async function meetingAction(
       data === undefined ? undefined : { data },
     );
     if (!res.ok()) throw new Error(`${action}: ${res.status()} ${await res.text()}`);
+  } finally {
+    await api.dispose();
+  }
+}
+
+/** Joins a running meeting of `teamId` as `login`. */
+export async function joinMeeting(login: string, teamId: string, meetingId: string): Promise<void> {
+  const { api } = await signedIn(login);
+  try {
+    const res = await api.post(`/api/v1/teams/${teamId}/meetings/${meetingId}/join`);
+    if (!res.ok()) throw new Error(`join: ${res.status()} ${await res.text()}`);
   } finally {
     await api.dispose();
   }

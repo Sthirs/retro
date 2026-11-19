@@ -92,7 +92,13 @@ async fn room(app: &TestApp) -> Room {
     let res = post(app, &alice, &format!("/api/v1/teams/{team}/meetings"), None).await;
     assert_eq!(res.status, 201, "{}", res.text());
     let meeting = res.json()["id"].as_str().unwrap().to_owned();
-    let res = post(app, &bob, &format!("/api/v1/meetings/{meeting}/join"), None).await;
+    let res = post(
+        app,
+        &bob,
+        &format!("/api/v1/teams/{team}/meetings/{meeting}/join"),
+        None,
+    )
+    .await;
     assert_eq!(res.status, 200, "{}", res.text());
     next_phase(app, &alice, &meeting).await;
     Room {

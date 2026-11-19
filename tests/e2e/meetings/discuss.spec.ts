@@ -12,6 +12,7 @@ import {
   createTeam,
   deleteTeam,
   groupCards,
+  joinMeeting,
   joinTeam,
   meetingAction,
   meetingState,
@@ -126,7 +127,7 @@ test.describe('discuss', () => {
     for (const user of [VERA, WALT, XENA]) await joinTeam(UMA, teamId, user);
     await setRole(UMA, teamId, await userIdOf(XENA), 'admin');
     meetingId = await startMeeting(UMA, teamId);
-    for (const user of [VERA, WALT, XENA]) await meetingAction(user, meetingId, 'join');
+    for (const user of [VERA, WALT, XENA]) await joinMeeting(user, teamId, meetingId);
     await meetingAction(UMA, meetingId, 'phase/next');
     await writeReflection(VERA, meetingId, 'delta', `<p>${FLAKY}</p>`);
     await writeReflection(WALT, meetingId, 'delta', `<p>${SLOW}</p>`);

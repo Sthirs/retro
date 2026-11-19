@@ -1627,64 +1627,6 @@
         ]
       }
     },
-    "/api/v1/meetings/{meeting_id}/join": {
-      "post": {
-        "tags": [
-          "meetings"
-        ],
-        "summary": "Joins a running meeting as a participant (idempotent).",
-        "operationId": "join_meeting",
-        "parameters": [
-          {
-            "name": "meeting_id",
-            "in": "path",
-            "description": "Meeting id",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The meeting, with the caller as a participant",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MeetingStateDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "`meeting_not_found`",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "`meeting_ended`",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
     "/api/v1/meetings/{meeting_id}/phase/next": {
       "post": {
         "tags": [
@@ -3832,6 +3774,74 @@
           },
           "404": {
             "description": "`team_not_found`: no such team or not a member",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/teams/{team_id}/meetings/{meeting_id}/join": {
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Joins a running meeting of the team as a participant (idempotent).",
+        "operationId": "join_meeting",
+        "parameters": [
+          {
+            "name": "team_id",
+            "in": "path",
+            "description": "Team id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meeting, with the caller as a participant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`: no such meeting, not a team member, or a meeting of another team",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`",
             "content": {
               "application/problem+json": {
                 "schema": {

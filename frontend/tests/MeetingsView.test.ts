@@ -168,7 +168,10 @@ describe('Meetings page', () => {
     const { calls } = mockFetch({
       ...routes(() => []),
       [`POST /api/v1/teams/${TEAM_ID}/meetings`]: { status: 201, body: meetingState() },
-      [`POST /api/v1/meetings/${MEETING_ID}/join`]: { status: 200, body: meetingState() },
+      [`POST /api/v1/teams/${TEAM_ID}/meetings/${MEETING_ID}/join`]: {
+        status: 200,
+        body: meetingState(),
+      },
     });
     const { wrapper, router } = await open();
     const buttons = wrapper.findAll('button').filter((b) => b.text() === 'Add meeting');

@@ -10,6 +10,7 @@ import {
   deleteTeam,
   editTask,
   groupCards,
+  joinMeeting,
   joinTeam,
   meetingAction,
   meetingState,
@@ -228,7 +229,7 @@ test.describe('meeting summary', () => {
     teamId = await createTeam(YARA, TEAM);
     for (const user of [ZENO, ABEL, BEA]) await joinTeam(YARA, teamId, user);
     meetingId = await startMeeting(YARA, teamId);
-    for (const user of [ZENO, ABEL]) await meetingAction(user, meetingId, 'join');
+    for (const user of [ZENO, ABEL]) await joinMeeting(user, teamId, meetingId);
     cspViolations.push(await watchCsp(page));
     await signIn(page, 'yara');
     yara = page;

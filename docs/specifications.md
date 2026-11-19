@@ -583,7 +583,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | GET | `/meetings/{id}/state` | Full snapshot, filtered by the caller's permissions and the current phase |
 | PATCH | `/meetings/{id}` | `{ title }`: rename (facilitator) |
 | GET | `/meetings/{id}/summary` | Summary of an ended meeting (§8.3). Errors: 404 `meeting_not_found` (also for non-members), 409 `meeting_active` |
-| POST | `/meetings/{id}/join` | Join as participant |
+| POST | `/teams/{teamId}/meetings/{id}/join` | Join as participant. Errors: 404 `meeting_not_found` (also for a meeting of another team), 409 `meeting_ended` |
 | GET | `/meetings/{id}/invite-link` | Get the meeting invite link |
 | POST | `/meetings/{id}/invite-link` | Regenerate the meeting invite link (facilitator) |
 | POST | `/meeting-invites/{inviteToken}/accept` | Join the team (if needed) and the meeting |

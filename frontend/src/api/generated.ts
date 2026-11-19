@@ -2338,47 +2338,6 @@ export const regenerateInviteLink = async (
   });
 };
 
-export type joinMeetingResponse200 = {
-  data: MeetingStateDto;
-  status: 200;
-};
-
-export type joinMeetingResponse404 = {
-  data: Problem;
-  status: 404;
-};
-
-export type joinMeetingResponse409 = {
-  data: Problem;
-  status: 409;
-};
-
-export type joinMeetingResponseSuccess = joinMeetingResponse200 & {
-  headers: Headers;
-};
-export type joinMeetingResponseError = (joinMeetingResponse404 | joinMeetingResponse409) & {
-  headers: Headers;
-};
-
-export type joinMeetingResponse = joinMeetingResponseSuccess | joinMeetingResponseError;
-
-export const getJoinMeetingUrl = (meetingId: string) => {
-  return `/api/v1/meetings/${meetingId}/join`;
-};
-
-/**
- * @summary Joins a running meeting as a participant (idempotent).
- */
-export const joinMeeting = async (
-  meetingId: string,
-  options?: Parameters<typeof apiFetch>[1],
-): Promise<joinMeetingResponse> => {
-  return apiFetch<joinMeetingResponse>(getJoinMeetingUrl(meetingId), {
-    ...options,
-    method: 'POST',
-  });
-};
-
 export type nextPhaseResponse200 = {
   data: MeetingStateDto;
   status: 200;
@@ -4157,6 +4116,48 @@ export const startMeeting = async (
   options?: Parameters<typeof apiFetch>[1],
 ): Promise<startMeetingResponse> => {
   return apiFetch<startMeetingResponse>(getStartMeetingUrl(teamId), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type joinMeetingResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type joinMeetingResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type joinMeetingResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type joinMeetingResponseSuccess = joinMeetingResponse200 & {
+  headers: Headers;
+};
+export type joinMeetingResponseError = (joinMeetingResponse404 | joinMeetingResponse409) & {
+  headers: Headers;
+};
+
+export type joinMeetingResponse = joinMeetingResponseSuccess | joinMeetingResponseError;
+
+export const getJoinMeetingUrl = (teamId: string, meetingId: string) => {
+  return `/api/v1/teams/${teamId}/meetings/${meetingId}/join`;
+};
+
+/**
+ * @summary Joins a running meeting of the team as a participant (idempotent).
+ */
+export const joinMeeting = async (
+  teamId: string,
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<joinMeetingResponse> => {
+  return apiFetch<joinMeetingResponse>(getJoinMeetingUrl(teamId, meetingId), {
     ...options,
     method: 'POST',
   });

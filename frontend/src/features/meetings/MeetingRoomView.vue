@@ -60,12 +60,16 @@ useChannel(
   () => `meeting:${meetingId.value}`,
   (event) => store.apply(event),
 );
-watch(meetingId, (id) => void store.open(id), { immediate: true });
+watch([meetingId, teamId], ([id, team]) => void store.open(id, team), { immediate: true });
 onBeforeUnmount(() => store.reset());
 
 // An ended meeting (opened late, or ended while here) shows its summary.
+// Opened late, joining already says so: no need to load its state first.
 watch(
-  () => (meeting.value && !store.isActive ? meeting.value.id : null),
+  () =>
+    (meeting.value && !store.isActive) || (store.ended && store.meetingId === meetingId.value)
+      ? meetingId.value
+      : null,
   (ended) => {
     if (!ended) return;
     transferOpen.value = false;

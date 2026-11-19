@@ -10,6 +10,8 @@ declare module 'vue-router' {
     requiresAuth?: boolean;
     /** Only for signed-out users; others go to their redirect target. */
     guestOnly?: boolean;
+    /** The team menu entry (a route name) this page belongs to. */
+    section?: string;
   }
 }
 
@@ -67,6 +69,7 @@ export function buildRouter(history: RouterHistory = createWebHistory()): Router
             path: 'meetings',
             name: 'team-meetings',
             component: () => import('@/features/meetings/MeetingsView.vue'),
+            meta: { section: 'team-meetings' },
           },
           {
             // An ended meeting's summary sits in the shell (Summary artboard);
@@ -74,16 +77,19 @@ export function buildRouter(history: RouterHistory = createWebHistory()): Router
             path: 'meetings/:meetingId/summary',
             name: 'meeting-summary',
             component: () => import('@/features/meetings/summary/MeetingSummaryView.vue'),
+            meta: { section: 'team-meetings' },
           },
           {
             path: 'tasks',
             name: 'team-tasks',
             component: () => import('@/features/tasks/TasksBoardView.vue'),
+            meta: { section: 'team-tasks' },
           },
           {
             path: 'settings',
             name: 'team-settings',
             component: () => import('@/features/teams/TeamSettingsView.vue'),
+            meta: { section: 'team-settings' },
           },
         ],
       },

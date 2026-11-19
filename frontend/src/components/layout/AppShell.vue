@@ -73,9 +73,9 @@ useChannel(
 );
 const activeCount = computed(() => (meetings.teamId === teamId.value ? meetings.active.length : 0));
 
-/** A meeting's summary belongs to the Meetings section. */
+/** Each team page names its menu entry in `meta.section` (a summary: Meetings). */
 function isCurrent(name: string): boolean {
-  return route.name === name || (name === 'team-meetings' && route.name === 'meeting-summary');
+  return route.meta.section === name;
 }
 
 const entries: { name: string; label: string; icon: IconName }[] = [

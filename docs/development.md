@@ -115,28 +115,10 @@ Run both intercepts, then `npm run dev` (backend and frontend side by side). Sto
 
 ### Putting tasks on a local board
 
-Tasks are created in meetings, which do not exist yet, so the product has no API
-that creates a task. Until the Discuss phase does, a **development-only** route
-adds tasks to a board. The end-to-end tests use it to build each test's board, and
-you can use it to add tasks beyond the demo data:
-
-```bash
-curl -X POST "https://$(scripts/dev-host.sh)/api/v1/dev/teams/$TEAM_ID/tasks" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"status":"active","content":"<p>Write the retro notes</p>"}'
-```
-
-`POST /api/v1/dev/teams/{teamId}/tasks` takes `{ "status", "content", "authorId"? }`:
-`status` is `future`, `stuck`, `active` or `done`; `content` is rich text,
-sanitized like any task (mentions use
-`<span data-type="mention" data-id="<userId>" data-label="<name>">@Name</span>`);
-`authorId` defaults to the caller and must be a team member (`invalid_author`
-otherwise). The caller must be a member of the team. The task is appended to
-the end of the column and the response is the created task. The route exists
-only when `SEED_DEV_USERS=true`, which configuration refuses in production, and
-is not part of the OpenAPI contract. The end-to-end suite uses it (`seedTask` in
-`tests/e2e/api.ts`), signing in with `POST /api/v1/auth/login` to get the bearer
-token. Remove it once meetings create tasks.
+Tasks are created in the Discuss phase of a meeting (`POST /api/v1/meetings/{id}/tasks`,
+spec §9.5). The demo teams come with tasks; to add more, run a meeting to Discuss and write
+them in its Tasks panel. The end-to-end suite does the same through the API (`seedTask` in
+`tests/e2e/api.ts`), then moves each task to its column.
 
 ### Testing a rebuilt image
 

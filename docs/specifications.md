@@ -294,10 +294,12 @@ The individual meeting phases cannot be replayed.
 
 - **Left panel**: the groups, **sorted by total votes** (descending). Ties are broken by group size, then by name. Each entry shows its vote total.
 - **Center**: **one group at a time** — the group title and all its reflections (rich text, anonymous, with column label).
-- **Reactions**: participants can add emoji reactions to each reflection. Multiple different reactions per reflection are allowed, and a user can add several different emojis to the same reflection (one of each kind). Counts are shown per emoji and reacting is a toggle.
+- **Reactions**: participants can add emoji reactions to each reflection. Multiple different reactions per reflection are allowed, and a user can add several different emojis to the same reflection (one of each kind). Counts are shown per emoji and reacting is a toggle. Any single Unicode emoji is accepted; the server validates it and stores its fully qualified form, so "❤" and "❤️" are the same reaction ([ADR-0014](adr/0014-emoji-reactions.md)). Who reacted is not shown, only the counts and which reactions are the viewer's own.
+- **Emoji picker**: "Add reaction" opens a picker. Its first row (**Quick reactions**) holds the viewer's **most used** emoji, padded with defaults (👍 ❤️ 😂 🎉 😮 😬 💯 🙏); then a search (by name or `:shortcode:`), category tabs (Recently used, Smileys, People & gestures, Nature, Food, Objects, Symbols) and a preview of the emoji under the pointer or focus. Usage is counted in the browser, per user (`localStorage`), never on the server.
 - **Right panel — Tasks**: participants create tasks linked to the current group. Each task has rich text (same editor as reflections, including pasted images) with **@mentions** of team members, plus its author and creation time. New tasks start in the **Active** column of the board.
-- **Navigation**: the facilitator moves to the **next** or **previous** group. Everyone follows the facilitator's current group. A participant can preview other groups locally without affecting the others.
-- After the last group, the facilitator is prompted to **End meeting**.
+- **Navigation**: the facilitator moves to the **next** or **previous** group. Everyone follows the facilitator's current group: whenever it changes, every participant's room shows the new current group. Discuss starts on the first group of the order.
+- **Preview**: anyone can open another group from the left panel to look at it, without affecting the others. A previewed group is **read-only**: reactions and tasks are only possible on the current group (the server refuses others with `not_current_group`). The preview shows **Back to current group**; the facilitator also gets **Discuss this group**, which makes it the current group for everyone. A change of the current group ends every preview.
+- After the last group, the facilitator is prompted to **End meeting**. A meeting without reflections has no groups to discuss: Discuss shows an empty state and End meeting.
 
 ---
 
@@ -343,7 +345,7 @@ The individual meeting phases cannot be replayed.
 | `participant.joined` / `participant.left` | user | all |
 | `presence.changed` | user, online (on the team channel also the meeting) | meeting + team channel |
 | `facilitator.changed` | new facilitator | all |
-| `phase.changed` | phase (clients re-read the state; at Group start this reveals the reflections) | all |
+| `phase.changed` | phase (clients re-read the state; at Group start this reveals the reflections, at Discuss start the vote totals) | all |
 | `timer.updated` | timer (status, endsAt or remainingMs, durationMs; `null` when stopped), serverNow | all |
 | `ready.changed` | userId, ready, readyCount | all |
 | `icebreaker.person_changed` | index | all |
@@ -355,10 +357,10 @@ The individual meeting phases cannot be replayed.
 | `vote.settings_changed` | budget, maxPerGroup, `clientId` | all |
 | `vote.changed` | `clientId` only (no `seq`; the receiving tab re-reads the state, ADR-0012) | the voter; also every user whose votes a settings change removed |
 | `vote.cast_changed` | votesCast (the absolute number of votes cast overall), `clientId` (no `seq`; the tab takes the number as it is, without re-reading the state) | the facilitator only, after every change of votes |
-| `vote.totals_revealed` | totals per group | all (Discuss start) |
-| `discuss.group_changed` | group id | all |
-| `reaction.changed` | reflection, emoji, count | all |
-| `task.created` / `task.updated` / `task.moved` / `task.deleted` | task, `clientId` of the tab that made the change (from its `X-Client-Id` header, else `null`), so that tab skips its own echo | meeting + team channel |
+| `discuss.group_changed` | group id, `clientId` | all |
+| `reaction.changed` | reflection, emoji, count (absolute), `clientId` — never who reacted | all |
+| `reaction.mine_changed` | reflection, emoji, mine, `clientId` (no `seq`; the user's other tabs mark the reaction as theirs or not) | the reacting user only |
+| `task.created` / `task.updated` / `task.moved` / `task.deleted` | task id, status, `clientId` of the tab that made the change (from its `X-Client-Id` header, else `null`), so that tab skips its own echo; the meeting room re-reads the state on a created or updated task (bursts merged into one reload), drops a deleted one, and ignores moves (its Tasks panel shows neither status nor position) | team channel, and the meeting channel of its meeting while that meeting is active |
 | `meeting.renamed` | title | meeting + team channel |
 | `meeting.started` / `meeting.ended` | meeting | team channel (`meeting.ended` also on the meeting channel) |
 | `meeting.updated` | meeting id (phase, facilitator or participants changed) | team channel |
@@ -466,7 +468,7 @@ meetings(id, team_id → teams, created_by → users, facilitator_id → users,
          greeting_pronunciation,                   -- IPA, e.g. "/ˈtʃa.o/"
          icebreaker_order UUID[], icebreaker_index,
          vote_budget DEFAULT 5, vote_max_per_group DEFAULT 3,
-         discuss_group_id NULL,
+         discuss_group_id NULL → reflection_groups ON DELETE SET NULL,  -- the current group in Discuss
          timer_state JSONB NULL,
          event_seq,                                -- last `seq` sent on `meeting:{id}` (§11)
          created_at, ended_at NULL)
@@ -495,10 +497,10 @@ votes(id, meeting_id → meetings, user_id → users, group_id → reflection_gr
     -- budget and maximum per group enforced in the application, under the meeting lock
     -- votes on single ungrouped cards: a group of one is created implicitly at Vote start
 
-reactions(reflection_id, user_id, emoji, created_at)
-    PK(reflection_id, user_id, emoji)
+reactions(reflection_id → reflections, user_id → users, emoji, created_at)
+    PK(reflection_id, user_id, emoji)               -- emoji fully qualified (ADR-0014)
 
-tasks(id, team_id, meeting_id NULL, group_id NULL, author_id → users,
+tasks(id, team_id, meeting_id NULL, group_id NULL → reflection_groups, author_id → users,
       content, status ENUM('future','stuck','active','done'), position TEXT,
       created_at, updated_at)
     UNIQUE(team_id, status, position)
@@ -608,11 +610,15 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | PATCH | `/groups/{gid}` | `{ name }`: rename a group |
 | PUT | `/reflections/{rid}/group` | `{ groupId \| null }`: move a card into a group, or out of its group |
 | POST | `/groups/{gid}/vote` | `{ "delta": +1 \| -1 }`: one more vote, or take back the most recent (not idempotent) |
-| PUT | `/reflections/{rid}/reactions/{emoji}` | Add a reaction |
-| DELETE | `/reflections/{rid}/reactions/{emoji}` | Remove a reaction |
-| PUT | `/meetings/{id}/discuss/current` | Set the current group (facilitator) |
+| PUT | `/reflections/{rid}/reactions/{emoji}` | Add a reaction (idempotent); answers `{ reflectionId, emoji, count, mine, seq }`, where `seq` is the meeting event `seq` the count is valid at (that of its own `reaction.changed`, or the latest one when nothing changed), so a client can tell it from older and newer events |
+| DELETE | `/reflections/{rid}/reactions/{emoji}` | Remove a reaction (idempotent); same answer |
+| PUT | `/meetings/{id}/discuss/current` | `{ groupId }`: set the current group (facilitator); answers with the meeting state |
 
 `POST /groups/{gid}/vote` is open to participants during Vote and answers with the meeting state, holding the caller's own votes (`myVotes`) and, for the facilitator only, the number of votes cast overall (`votesCast`; `null` for everyone else and outside Vote). Nobody receives anyone else's votes or usage. Errors: 400 `invalid_vote` (delta neither +1 nor −1), 403 `not_participant`, 404 `group_not_found`, 409 `meeting_ended`, `wrong_phase`, `vote_budget_exhausted`, `vote_group_limit`, `no_vote_to_remove`.
+
+The reaction endpoints are open to participants during Discuss, on cards of the current group. The emoji is percent-encoded in the path. Errors: 400 `invalid_emoji`, 403 `not_participant`, 404 `reflection_not_found`, 409 `meeting_ended`, `wrong_phase`, `not_current_group`. `PUT /meetings/{id}/discuss/current` errors: 403 `not_facilitator`, 404 `group_not_found` (not a group of this meeting), 409 `meeting_ended`, `wrong_phase`.
+
+From Discuss on, the meeting state also holds `discussOrder` (every group with its vote total and card count, in Discuss order), `discussGroupId`, `reactions` (per reflection and emoji: count, and whether it is the caller's) and `tasks` (those written in the meeting, oldest first). Before Discuss these are empty, so totals stay hidden.
 
 The group endpoints are open to participants during Group (409 `wrong_phase`, `meeting_ended`, 403 `not_participant`) and answer with the meeting state. Unknown or foreign ids give 404 `reflection_not_found` / `group_not_found`; a card dropped onto itself gives 400 `same_reflection`, and a name over 80 characters 400 `invalid_group_name`.
 
@@ -621,7 +627,7 @@ The group endpoints are open to participants during Group (409 `wrong_phase`, `m
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/teams/{teamId}/tasks` | Board, with filters |
-| POST | `/meetings/{id}/tasks` | Create a task (Discuss phase) |
+| POST | `/meetings/{id}/tasks` | `{ groupId, content }`: create a task for the current group (participants, Discuss phase); it lands at the end of Active. Answers 201 with the meeting state. Errors: 400 `invalid_task_content`, 403 `not_participant`, 404 `group_not_found`, 409 `meeting_ended`, `wrong_phase`, `not_current_group` |
 | PATCH | `/tasks/{tid}` | Edit content |
 | PUT | `/tasks/{tid}/position` | `{ status, beforeId?, afterId? }`: the moved task ends up directly after `afterId`, or directly before `beforeId` when only that is given; with neither, at the end of the column. A stale pair (`afterId` not before `beforeId`) answers 409 `stale_position` |
 | DELETE | `/tasks/{tid}` | Delete |

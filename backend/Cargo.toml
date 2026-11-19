@@ -60,6 +60,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2"
 utoipa = { version = "6.0.0", features = ["uuid", "time"] }
 uuid = { version = "1.29.2", features = ["v7", "serde"] }
+emojis = "0.9.1"
 
 [dev-dependencies]
 http-body-util = "0.1.5"

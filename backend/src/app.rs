@@ -32,7 +32,7 @@ pub fn router(state: AppState) -> Router {
         .route("/oidc", get(api::auth::oidc_start))
         .route("/oidc/callback", get(api::auth::oidc_callback));
 
-    let mut v1 = Router::new()
+    let v1 = Router::new()
         .nest("/auth", auth)
         .route("/me", get(api::me::me).patch(api::me::update_me))
         // One byte over the limit, so the handler (not axum) rejects an
@@ -159,6 +159,18 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/groups/{group_id}/vote", post(api::votes::vote))
         .route(
+            "/meetings/{meeting_id}/discuss/current",
+            put(api::discuss::set_current_group),
+        )
+        .route(
+            "/meetings/{meeting_id}/tasks",
+            post(api::discuss::create_task),
+        )
+        .route(
+            "/reflections/{reflection_id}/reactions/{emoji}",
+            put(api::discuss::add_reaction).delete(api::discuss::remove_reaction),
+        )
+        .route(
             "/meetings/{meeting_id}/settings",
             patch(api::votes::update_settings),
         )
@@ -177,10 +189,6 @@ pub fn router(state: AppState) -> Router {
         .route("/ws-ticket", post(api::meetings::ws_ticket))
         .route("/ws", get(crate::ws::ws_handler))
         .route("/openapi.json", get(openapi_json));
-    // Development-only: refused in production by the configuration.
-    if state.config.seed_dev_users {
-        v1 = v1.route("/dev/teams/{team_id}/tasks", post(api::dev::seed_task));
-    }
     let v1 = v1
         // Responses carry tokens and personal data (access and refresh tokens,
         // invitation and join links): never cache any of them.

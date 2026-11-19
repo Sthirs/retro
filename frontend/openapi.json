@@ -1035,6 +1035,84 @@
         ]
       }
     },
+    "/api/v1/meetings/{meeting_id}/discuss/current": {
+      "put": {
+        "tags": [
+          "discuss"
+        ],
+        "summary": "Makes a group the current one (facilitator, during Discuss): everyone's\nroom follows it.",
+        "operationId": "set_current_group",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CurrentGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting, on its new current group",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`, `group_not_found` (not a group of this meeting)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, `wrong_phase` (not Discuss)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/meetings/{meeting_id}/end": {
       "post": {
         "tags": [
@@ -2089,6 +2167,94 @@
         ]
       }
     },
+    "/api/v1/meetings/{meeting_id}/tasks": {
+      "post": {
+        "tags": [
+          "discuss"
+        ],
+        "summary": "Writes a task for the current group (participants, during Discuss). It\nlands in the Active column of the team's board.",
+        "operationId": "create_task",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTaskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The meeting, with the new task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_task_content` (blank or invalid content), `attachment_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`, `group_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, `wrong_phase` (not Discuss), `not_current_group`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/meetings/{meeting_id}/timer": {
       "put": {
         "tags": [
@@ -2393,6 +2559,178 @@
           },
           "409": {
             "description": "`meeting_ended` or `wrong_phase` (not Group)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/reflections/{reflection_id}/reactions/{emoji}": {
+      "put": {
+        "tags": [
+          "discuss"
+        ],
+        "summary": "Reacts to a reflection with an emoji (participants, during Discuss, on a\ncard of the current group). Idempotent.",
+        "operationId": "add_reaction",
+        "parameters": [
+          {
+            "name": "reflection_id",
+            "in": "path",
+            "description": "Reflection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "emoji",
+            "in": "path",
+            "description": "One Unicode emoji, percent-encoded",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The emoji on that card, with its new count and the event seq it is valid at",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionAnswerDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_emoji`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`reflection_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, `wrong_phase` (not Discuss), `not_current_group`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "discuss"
+        ],
+        "summary": "Takes back the caller's reaction (same rules as adding it). Idempotent.",
+        "operationId": "remove_reaction",
+        "parameters": [
+          {
+            "name": "reflection_id",
+            "in": "path",
+            "description": "Reflection id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "emoji",
+            "in": "path",
+            "description": "One Unicode emoji, percent-encoded",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The emoji on that card, with its new count and the event seq it is valid at",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionAnswerDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`invalid_emoji`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_participant`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`reflection_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, `wrong_phase` (not Discuss), `not_current_group`",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3994,6 +4332,63 @@
           }
         }
       },
+      "CreateTaskRequest": {
+        "type": "object",
+        "description": "A task for the current group.",
+        "required": [
+          "groupId",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Rich text (HTML), sanitized on the server; `@` mentions of team members."
+          },
+          "groupId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The current group of the meeting."
+          }
+        }
+      },
+      "CurrentGroupRequest": {
+        "type": "object",
+        "description": "The group everyone discusses.",
+        "required": [
+          "groupId"
+        ],
+        "properties": {
+          "groupId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "DiscussGroupDto": {
+        "type": "object",
+        "description": "A group in Discuss order, with its vote total.",
+        "required": [
+          "groupId",
+          "votes",
+          "cards"
+        ],
+        "properties": {
+          "cards": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Cards in the group."
+          },
+          "groupId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "votes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Votes the group got, everyone's (revealed in Discuss)."
+          }
+        }
+      },
       "DragDto": {
         "type": "object",
         "description": "A card being dragged, and by whom (snapshot and `card.dragging`; spec\n§9.3).",
@@ -4408,6 +4803,9 @@
           "voteBudget",
           "voteMaxPerGroup",
           "myVotes",
+          "discussOrder",
+          "reactions",
+          "tasks",
           "seq",
           "createdAt",
           "serverNow"
@@ -4416,6 +4814,21 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "discussGroupId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "During Discuss, the group everyone follows."
+          },
+          "discussOrder": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscussGroupDto"
+            },
+            "description": "From Discuss on, every group in Discuss order with its vote total\n(spec §9.5); empty before, so totals stay hidden until then."
           },
           "drags": {
             "type": "array",
@@ -4480,6 +4893,13 @@
           "question": {
             "type": "string"
           },
+          "reactions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReactionDto"
+            },
+            "description": "From Discuss on, the reactions on every reflection, each emoji in the\norder it was first used."
+          },
           "reflectionCounts": {
             "$ref": "#/components/schemas/ReflectionCountsDto",
             "description": "Sent reflections per column, everyone's."
@@ -4506,6 +4926,13 @@
           "taskCount": {
             "type": "integer",
             "format": "int64"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskDto"
+            },
+            "description": "From Discuss on, the tasks written in the meeting, oldest first."
           },
           "teamId": {
             "type": "string",
@@ -4840,6 +5267,53 @@
           }
         }
       },
+      "ReactionAnswerDto": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ReactionDto"
+          },
+          {
+            "type": "object",
+            "required": [
+              "seq"
+            ],
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "format": "int64"
+              }
+            }
+          }
+        ],
+        "description": "The answer to a reaction toggle: the emoji on that card, and the meeting\nevent `seq` its count is valid at. A `reaction.changed` with a higher\n`seq` is newer, whichever arrives first."
+      },
+      "ReactionDto": {
+        "type": "object",
+        "description": "One emoji on one reflection: how many people put it there, and whether\nthe viewer is one of them.",
+        "required": [
+          "reflectionId",
+          "emoji",
+          "count",
+          "mine"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "emoji": {
+            "type": "string"
+          },
+          "mine": {
+            "type": "boolean",
+            "description": "The viewer reacted with this emoji."
+          },
+          "reflectionId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "ReflectionColumn": {
         "type": "string",
         "description": "The Reflect columns (spec §9.2).",
@@ -5074,6 +5548,14 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "groupId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The group of that meeting it was written for (Discuss)."
           },
           "id": {
             "type": "string",

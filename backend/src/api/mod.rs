@@ -3,7 +3,7 @@
 pub mod attachments;
 pub mod auth;
 pub mod client_id;
-pub mod dev;
+pub mod discuss;
 pub mod groups;
 pub mod health;
 mod images;

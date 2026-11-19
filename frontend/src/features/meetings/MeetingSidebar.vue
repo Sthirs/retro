@@ -2,7 +2,8 @@
 /**
  * The meeting room's left column (Icebreaker artboard): Leave, the title
  * (renamable by the facilitator), the facilitator, and the phase stepper with
- * the icebreaker's speaking order under the current phase.
+ * the icebreaker's speaking order (or, in Discuss, the groups) under the
+ * current phase.
  */
 import { computed, nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -12,6 +13,7 @@ import { MeetingPhase } from '@/api/client';
 import AppIcon from '@/components/AppIcon.vue';
 import PresenceAvatar from '@/components/PresenceAvatar.vue';
 import RetroLogo from '@/components/RetroLogo.vue';
+import DiscussProgress from '@/features/meetings/discuss/DiscussProgress.vue';
 import { PHASE_ICONS } from '@/features/meetings/phaseIcons';
 import { formatDate } from '@/lib/time';
 import { PHASES, useMeetingStore } from '@/stores/meeting';
@@ -209,6 +211,13 @@ async function finishRename(save: boolean): Promise<void> {
             </component>
           </li>
         </ol>
+        <DiscussProgress
+          v-if="
+            step.state === 'current' &&
+            step.phase === MeetingPhase.discuss &&
+            store.discussOrder.length > 0
+          "
+        />
       </li>
     </ol>
   </nav>

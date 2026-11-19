@@ -6,7 +6,8 @@
  * count for the facilitator, or who is facilitating. Right: the unsent-draft
  * warning, Ready (Reflect, Group, Vote) and the facilitator's Next. In the
  * icebreaker Next is Previous / Next person, then "Next: Reflect" on the last
- * person; after the last phase it is End meeting.
+ * person; after the last phase it is End meeting. In Discuss it is Previous
+ * / Next group, which moves everyone, then End meeting on the last group.
  */
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -28,6 +29,12 @@ const store = useMeetingStore();
 const drafts = useReflectDraftsStore();
 const inIcebreaker = computed(() => store.meeting?.phase === MeetingPhase.icebreaker);
 const inReflect = computed(() => store.meeting?.phase === MeetingPhase.reflect);
+const inDiscuss = computed(() => store.meeting?.phase === MeetingPhase.discuss);
+/** In Discuss, the groups before and after the current one. */
+const previousGroup = computed(() => store.discussOrder[store.currentIndex - 1] ?? null);
+const nextGroup = computed(() =>
+  store.currentIndex >= 0 ? (store.discussOrder[store.currentIndex + 1] ?? null) : null,
+);
 const controls = computed(() => store.isFacilitator && store.isActive);
 const speaker = computed(() => store.currentSpeaker);
 const busy = ref(false);
@@ -59,6 +66,10 @@ async function run(action: () => Promise<boolean>): Promise<void> {
           })
         }}
       </span>
+      <span v-else-if="inDiscuss && store.currentIndex >= 0" class="bar__status">
+        <AppIcon name="users" :size="16" />
+        {{ t('discuss.status', { n: store.currentIndex + 1, total: store.discussOrder.length }) }}
+      </span>
       <ReadyCount v-else-if="controls && store.hasReady" />
       <span v-else-if="!controls && store.hasReady" class="bar__status">
         <AppIcon name="users" :size="16" />
@@ -89,6 +100,15 @@ async function run(action: () => Promise<boolean>): Promise<void> {
           {{ t('icebreaker.previousPerson') }}
         </AppButton>
         <AppButton
+          v-if="inDiscuss && store.currentIndex >= 0"
+          size="page"
+          :disabled="busy || !previousGroup"
+          @click="run(() => store.setCurrentGroup(previousGroup!.groupId))"
+        >
+          <AppIcon name="chevronLeft" :size="16" />
+          {{ t('discuss.previous') }}
+        </AppButton>
+        <AppButton
           v-if="inIcebreaker && speaker && !store.isLastSpeaker"
           class="bar__next"
           variant="primary"
@@ -97,6 +117,17 @@ async function run(action: () => Promise<boolean>): Promise<void> {
           @click="run(store.nextPerson)"
         >
           {{ t('icebreaker.nextPerson') }}
+          <AppIcon name="arrowRight" :size="16" />
+        </AppButton>
+        <AppButton
+          v-else-if="inDiscuss && nextGroup"
+          class="bar__next"
+          variant="primary"
+          size="page"
+          :disabled="busy"
+          @click="run(() => store.setCurrentGroup(nextGroup!.groupId))"
+        >
+          {{ t('discuss.nextGroup') }}
           <AppIcon name="arrowRight" :size="16" />
         </AppButton>
         <AppButton

@@ -80,6 +80,34 @@ export interface CreateReflectionRequest {
 }
 
 /**
+ * A task for the current group.
+ */
+export interface CreateTaskRequest {
+  /** Rich text (HTML), sanitized on the server; `@` mentions of team members. */
+  content: string;
+  /** The current group of the meeting. */
+  groupId: string;
+}
+
+/**
+ * The group everyone discusses.
+ */
+export interface CurrentGroupRequest {
+  groupId: string;
+}
+
+/**
+ * A group in Discuss order, with its vote total.
+ */
+export interface DiscussGroupDto {
+  /** Cards in the group. */
+  cards: number;
+  groupId: string;
+  /** Votes the group got, everyone's (revealed in Discuss). */
+  votes: number;
+}
+
+/**
  * A card being dragged, and by whom (snapshot and `card.dragging`; spec
  * §9.3).
  */
@@ -369,6 +397,18 @@ export interface ParticipantDto {
 }
 
 /**
+ * One emoji on one reflection: how many people put it there, and whether
+ * the viewer is one of them.
+ */
+export interface ReactionDto {
+  count: number;
+  emoji: string;
+  /** The viewer reacted with this emoji. */
+  mine: boolean;
+  reflectionId: string;
+}
+
+/**
  * Sent reflections per column, as clients see them (snapshot and
  * `reflection.count_changed`).
  */
@@ -411,6 +451,40 @@ export const MeetingStatus = {
   active: 'active',
   ended: 'ended',
 } as const;
+
+/**
+ * Where a task sits on the board (spec §9).
+ */
+export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
+
+export const TaskStatus = {
+  future: 'future',
+  stuck: 'stuck',
+  active: 'active',
+  done: 'done',
+} as const;
+
+/**
+ * A task on the board.
+ */
+export interface TaskDto {
+  author: PersonDto;
+  /** Sanitized rich text. */
+  contentHtml: string;
+  createdAt: string;
+  /**
+   * The group of that meeting it was written for (Discuss).
+   * @nullable
+   */
+  groupId?: string | null;
+  id: string;
+  /** @nullable */
+  meetingId?: string | null;
+  mentions: PersonDto[];
+  /** Ordering key within the column; compare as plain strings. */
+  position: string;
+  status: TaskStatus;
+}
 
 /**
  * Whether the countdown is running.
@@ -457,6 +531,16 @@ export interface WritingDto {
  */
 export interface MeetingStateDto {
   createdAt: string;
+  /**
+   * During Discuss, the group everyone follows.
+   * @nullable
+   */
+  discussGroupId?: string | null;
+  /**
+   * From Discuss on, every group in Discuss order with its vote total
+   * (spec §9.5); empty before, so totals stay hidden until then.
+   */
+  discussOrder: DiscussGroupDto[];
   /** Cards being dragged right now, and by whom (Group). */
   drags: DragDto[];
   /** @nullable */
@@ -481,6 +565,11 @@ export interface MeetingStateDto {
   participants: ParticipantDto[];
   phase: MeetingPhase;
   question: string;
+  /**
+   * From Discuss on, the reactions on every reflection, each emoji in the
+   * order it was first used.
+   */
+  reactions: ReactionDto[];
   /** Sent reflections per column, everyone's. */
   reflectionCounts: ReflectionCountsDto;
   /**
@@ -493,6 +582,8 @@ export interface MeetingStateDto {
   serverNow: string;
   status: MeetingStatus;
   taskCount: number;
+  /** From Discuss on, the tasks written in the meeting, oldest first. */
+  tasks: TaskDto[];
   teamId: string;
   teamName: string;
   timer?: Timer | null;
@@ -549,18 +640,6 @@ export interface MoveCardRequest {
 }
 
 /**
- * Where a task sits on the board (spec §9).
- */
-export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
-
-export const TaskStatus = {
-  future: 'future',
-  stuck: 'stuck',
-  active: 'active',
-  done: 'done',
-} as const;
-
-/**
  * Where to put a task.
  */
 export interface MoveTaskRequest {
@@ -594,6 +673,15 @@ export interface Problem {
   /** URI reference identifying the problem type. */
   type: string;
 }
+
+/**
+ * The answer to a reaction toggle: the emoji on that card, and the meeting
+ * event `seq` its count is valid at. A `reaction.changed` with a higher
+ * `seq` is newer, whichever arrives first.
+ */
+export type ReactionAnswerDto = ReactionDto & {
+  seq: number;
+};
 
 /**
  * A group's new name.
@@ -638,23 +726,6 @@ export interface SetFacilitatorRequest {
  */
 export interface SetReadyRequest {
   ready: boolean;
-}
-
-/**
- * A task on the board.
- */
-export interface TaskDto {
-  author: PersonDto;
-  /** Sanitized rich text. */
-  contentHtml: string;
-  createdAt: string;
-  id: string;
-  /** @nullable */
-  meetingId?: string | null;
-  mentions: PersonDto[];
-  /** Ordering key within the column; compare as plain strings. */
-  position: string;
-  status: TaskStatus;
 }
 
 export interface TeamNameRequest {
@@ -1732,6 +1803,77 @@ export const renameMeeting = async (
   });
 };
 
+export type setCurrentGroupResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type setCurrentGroupResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type setCurrentGroupResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type setCurrentGroupResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type setCurrentGroupResponseSuccess = setCurrentGroupResponse200 & {
+  headers: Headers;
+};
+export type setCurrentGroupResponseError = (
+  setCurrentGroupResponse403 | setCurrentGroupResponse404 | setCurrentGroupResponse409
+) & {
+  headers: Headers;
+};
+
+export type setCurrentGroupResponse = setCurrentGroupResponseSuccess | setCurrentGroupResponseError;
+
+export const getSetCurrentGroupUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/discuss/current`;
+};
+
+/**
+ * @summary Makes a group the current one (facilitator, during Discuss): everyone's
+room follows it.
+ */
+export const setCurrentGroup = async (
+  meetingId: string,
+  currentGroupRequest: CurrentGroupRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<setCurrentGroupResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<setCurrentGroupResponse>(getSetCurrentGroupUrl(meetingId), {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(currentGroupRequest),
+  });
+};
+
 export type endMeetingResponse200 = {
   data: MeetingStateDto;
   status: 200;
@@ -2576,6 +2718,82 @@ export const getMeetingState = async (
   });
 };
 
+export type createTaskResponse201 = {
+  data: MeetingStateDto;
+  status: 201;
+};
+
+export type createTaskResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type createTaskResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type createTaskResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type createTaskResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type createTaskResponseSuccess = createTaskResponse201 & {
+  headers: Headers;
+};
+export type createTaskResponseError = (
+  createTaskResponse400 | createTaskResponse403 | createTaskResponse404 | createTaskResponse409
+) & {
+  headers: Headers;
+};
+
+export type createTaskResponse = createTaskResponseSuccess | createTaskResponseError;
+
+export const getCreateTaskUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/tasks`;
+};
+
+/**
+ * @summary Writes a task for the current group (participants, during Discuss). It
+lands in the Active column of the team's board.
+ */
+export const createTask = async (
+  meetingId: string,
+  createTaskRequest: CreateTaskRequest,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<createTaskResponse> => {
+  const getHeaders = (
+    h?: NonNullable<RequestInit['headers']>,
+  ): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(
+          h as Iterable<Iterable<string>>,
+          (entry) => Array.from(entry) as [string, string],
+        ),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+  return apiFetch<createTaskResponse>(getCreateTaskUrl(meetingId), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(createTaskRequest),
+  });
+};
+
 export type setTimerResponse200 = {
   data: MeetingStateDto;
   status: 200;
@@ -2847,6 +3065,118 @@ export const moveCard = async (
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
     body: JSON.stringify(moveCardRequest),
+  });
+};
+
+export type addReactionResponse200 = {
+  data: ReactionAnswerDto;
+  status: 200;
+};
+
+export type addReactionResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type addReactionResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type addReactionResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type addReactionResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type addReactionResponseSuccess = addReactionResponse200 & {
+  headers: Headers;
+};
+export type addReactionResponseError = (
+  addReactionResponse400 | addReactionResponse403 | addReactionResponse404 | addReactionResponse409
+) & {
+  headers: Headers;
+};
+
+export type addReactionResponse = addReactionResponseSuccess | addReactionResponseError;
+
+export const getAddReactionUrl = (reflectionId: string, emoji: string) => {
+  return `/api/v1/reflections/${reflectionId}/reactions/${emoji}`;
+};
+
+/**
+ * @summary Reacts to a reflection with an emoji (participants, during Discuss, on a
+card of the current group). Idempotent.
+ */
+export const addReaction = async (
+  reflectionId: string,
+  emoji: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<addReactionResponse> => {
+  return apiFetch<addReactionResponse>(getAddReactionUrl(reflectionId, emoji), {
+    ...options,
+    method: 'PUT',
+  });
+};
+
+export type removeReactionResponse200 = {
+  data: ReactionAnswerDto;
+  status: 200;
+};
+
+export type removeReactionResponse400 = {
+  data: Problem;
+  status: 400;
+};
+
+export type removeReactionResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type removeReactionResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type removeReactionResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type removeReactionResponseSuccess = removeReactionResponse200 & {
+  headers: Headers;
+};
+export type removeReactionResponseError = (
+  | removeReactionResponse400
+  | removeReactionResponse403
+  | removeReactionResponse404
+  | removeReactionResponse409
+) & {
+  headers: Headers;
+};
+
+export type removeReactionResponse = removeReactionResponseSuccess | removeReactionResponseError;
+
+export const getRemoveReactionUrl = (reflectionId: string, emoji: string) => {
+  return `/api/v1/reflections/${reflectionId}/reactions/${emoji}`;
+};
+
+/**
+ * @summary Takes back the caller's reaction (same rules as adding it). Idempotent.
+ */
+export const removeReaction = async (
+  reflectionId: string,
+  emoji: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<removeReactionResponse> => {
+  return apiFetch<removeReactionResponse>(getRemoveReactionUrl(reflectionId, emoji), {
+    ...options,
+    method: 'DELETE',
   });
 };
 

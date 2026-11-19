@@ -1,6 +1,7 @@
 export * as api from './generated';
 export type {
   AuthConfig,
+  DiscussGroupDto,
   DragDto,
   GroupDto,
   InvitationDto,
@@ -16,6 +17,8 @@ export type {
   PendingInvitationDto,
   PersonDto,
   Problem,
+  ReactionAnswerDto,
+  ReactionDto,
   ReflectionDto,
   SessionResponse,
   TaskDto,

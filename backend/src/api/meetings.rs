@@ -15,12 +15,15 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::{
-    api::{PersonDto, check_limit, record_token_failure},
+    api::{PersonDto, check_limit, record_token_failure, tasks::TaskDto},
     auth::CurrentUser,
     domain::{
+        discuss::{self, DiscussGroupDto},
         groups::{self, GroupDto},
         meetings::{self, MeetingView, Participant},
+        reactions::{self, ReactionDto},
         reflections::{self, ReflectionCountsDto, ReflectionsSnapshot},
+        tasks::{self, TaskView},
         timer::{Timer, TimerAction},
         votes::{self, MyVoteDto},
     },
@@ -196,6 +199,16 @@ pub struct MeetingStateDto {
     /// During Vote, for the facilitator only: votes cast overall, as one
     /// number (nothing per group or per person). `null` for everyone else.
     pub votes_cast: Option<i32>,
+    /// From Discuss on, every group in Discuss order with its vote total
+    /// (spec §9.5); empty before, so totals stay hidden until then.
+    pub discuss_order: Vec<DiscussGroupDto>,
+    /// During Discuss, the group everyone follows.
+    pub discuss_group_id: Option<Uuid>,
+    /// From Discuss on, the reactions on every reflection, each emoji in the
+    /// order it was first used.
+    pub reactions: Vec<ReactionDto>,
+    /// From Discuss on, the tasks written in the meeting, oldest first.
+    pub tasks: Vec<TaskDto>,
     /// Last event `seq` included in this snapshot on `meeting:{id}`.
     pub seq: i64,
     #[serde(with = "time::serde::rfc3339")]
@@ -214,10 +227,10 @@ impl MeetingStateDto {
         view: MeetingView,
         online: &HashSet<Uuid>,
         reflections: ReflectionsSnapshot,
-        writing: WritingCounts,
+        live: (WritingCounts, Vec<DragDto>),
         groups: Vec<GroupDto>,
-        drags: Vec<DragDto>,
         votes: VotesSnapshot,
+        discuss: DiscussSnapshot,
     ) -> Self {
         let participants = participants(&view, online);
         let m = view.meeting;
@@ -265,19 +278,31 @@ impl MeetingStateDto {
                 })
                 .collect(),
             reflection_counts: reflections.counts.into(),
-            writing: writing.into(),
+            writing: live.0.into(),
             groups,
-            drags,
+            drags: live.1,
             vote_budget: m.vote_budget,
             vote_max_per_group: m.vote_max_per_group,
             my_votes: votes.mine,
             votes_cast: votes.cast,
+            discuss_order: discuss.order,
+            discuss_group_id: discuss.current,
+            reactions: discuss.reactions,
+            tasks: discuss.tasks.into_iter().map(TaskDto::from).collect(),
             seq: m.event_seq,
             created_at: m.created_at,
             ended_at: m.ended_at,
             server_now: OffsetDateTime::now_utc(),
         }
     }
+}
+
+/// The Discuss part of a state, as its viewer may see it.
+struct DiscussSnapshot {
+    order: Vec<DiscussGroupDto>,
+    current: Option<Uuid>,
+    reactions: Vec<ReactionDto>,
+    tasks: Vec<TaskView>,
 }
 
 /// The votes part of a state, as its viewer may see it.
@@ -307,10 +332,17 @@ pub(crate) async fn state_of(
         mine: votes::my_votes(&txn, &view.meeting, actor).await?,
         cast: votes::votes_cast(&txn, &view.meeting, actor).await?,
     };
+    let (order, current) = discuss::snapshot(&txn, &view.meeting).await?;
+    let discuss = DiscussSnapshot {
+        order,
+        current,
+        reactions: reactions::snapshot(&txn, &view.meeting, actor).await?,
+        tasks: tasks::of_meeting(&txn, &view.meeting).await?,
+    };
     txn.commit().await?;
     let online = state.hub.online(meeting_id);
     // An ended meeting has no editors open, whatever sockets still say.
-    let (writing, drags) = if view.meeting.status == MeetingStatus::Active {
+    let live = if view.meeting.status == MeetingStatus::Active {
         (state.hub.writing(meeting_id), state.hub.drags(meeting_id))
     } else {
         (WritingCounts::default(), Vec::new())
@@ -319,10 +351,10 @@ pub(crate) async fn state_of(
         view,
         &online,
         reflections,
-        writing,
+        live,
         groups,
-        drags,
         votes,
+        discuss,
     ))
 }
 

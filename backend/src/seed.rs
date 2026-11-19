@@ -133,6 +133,29 @@ pub const DEV_USERS: &[DevUser] = &[
         email: "tess@retro.local",
         display_name: "Tess Barbieri",
     },
+    // Also password only. The end-to-end discuss spec owns these four: uma
+    // facilitates, vera, walt and xena take part (xena is a team admin who
+    // takes over).
+    DevUser {
+        username: "uma",
+        email: "uma@retro.local",
+        display_name: "Uma Sartori",
+    },
+    DevUser {
+        username: "vera",
+        email: "vera@retro.local",
+        display_name: "Vera Mancini",
+    },
+    DevUser {
+        username: "walt",
+        email: "walt@retro.local",
+        display_name: "Walt Greco",
+    },
+    DevUser {
+        username: "xena",
+        email: "xena@retro.local",
+        display_name: "Xena Bruno",
+    },
 ];
 
 /// Creates the dev users, or resets their name and password. Idempotent.

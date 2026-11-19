@@ -14,6 +14,7 @@ mod m20261117_000001_attachments;
 mod m20261118_000001_groups;
 mod m20261119_000001_votes;
 mod m20261119_000002_vote_ordinal;
+mod m20261120_000001_discuss;
 
 pub struct Migrator;
 
@@ -33,6 +34,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261118_000001_groups::Migration),
             Box::new(m20261119_000001_votes::Migration),
             Box::new(m20261119_000002_vote_ordinal::Migration),
+            Box::new(m20261120_000001_discuss::Migration),
         ]
     }
 }

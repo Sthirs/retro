@@ -1,11 +1,13 @@
 //! Business rules, independent of HTTP.
 
 pub mod attachments;
+pub mod discuss;
 pub mod groups;
 pub mod invitations;
 pub mod meetings;
 pub mod ordering;
 pub mod pictures;
+pub mod reactions;
 pub mod reflections;
 pub mod rich_text;
 pub mod tasks;

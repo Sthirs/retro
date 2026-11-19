@@ -178,6 +178,11 @@ export interface TaskDto {
   contentHtml: string;
   createdAt: string;
   /**
+   * When its content was last edited, if ever (moves do not count).
+   * @nullable
+   */
+  editedAt?: string | null;
+  /**
    * The group of that meeting it was written for (Discuss).
    * @nullable
    */
@@ -547,6 +552,18 @@ export const MeetingStatus = {
 } as const;
 
 /**
+ * Someone writing a task, and what on (snapshot and `task.writing`; spec
+ * §9.5): `groupId` for a new task, `taskId` for one being edited.
+ */
+export interface TaskWriterDto {
+  /** @nullable */
+  groupId?: string | null;
+  /** @nullable */
+  taskId?: string | null;
+  userId: string;
+}
+
+/**
  * Whether the countdown is running.
  */
 export type TimerStatus = (typeof TimerStatus)[keyof typeof TimerStatus];
@@ -642,6 +659,11 @@ export interface MeetingStateDto {
   serverNow: string;
   status: MeetingStatus;
   taskCount: number;
+  /**
+   * During Discuss, who is writing a new task (`groupId`) or editing one
+   * (`taskId`) right now (spec §9.5, ADR-0015).
+   */
+  taskWriters: TaskWriterDto[];
   /** From Discuss on, the tasks written in the meeting, oldest first. */
   tasks: TaskDto[];
   teamId: string;

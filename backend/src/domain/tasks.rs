@@ -202,6 +202,7 @@ pub async fn insert_from(
         position: Set(position),
         created_at: Set(now),
         updated_at: Set(now),
+        edited_at: Set(None),
     }
     .insert(&txn)
     .await?;
@@ -466,10 +467,12 @@ pub async fn edit(
     let owner = Owner::Task(task.id);
     let html = attachments::resolve(&txn, task.team_id, actor, Some(owner), &content).await?;
 
+    let now = OffsetDateTime::now_utc();
     let edited = task::ActiveModel {
         id: Set(task.id),
         content: Set(html),
-        updated_at: Set(OffsetDateTime::now_utc()),
+        updated_at: Set(now),
+        edited_at: Set(Some(now)),
         ..Default::default()
     }
     .update(&txn)

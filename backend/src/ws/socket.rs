@@ -23,12 +23,14 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use super::{AccessChange, Channel, WritingMode, hub::Outbound, ticket};
+use super::{AccessChange, Channel, TaskTarget, WritingMode, hub::Outbound, ticket};
 use crate::{
-    domain::teams,
+    domain::{discuss, teams},
     entities::{
-        meeting::{self, MeetingStatus},
+        meeting::{self, MeetingPhase, MeetingStatus},
+        meeting_participant,
         reflection::ReflectionColumn,
+        task,
     },
     error::AppError,
     state::AppState,
@@ -39,7 +41,7 @@ const MAX_SUBSCRIPTIONS: usize = 32;
 /// The code sent on each channel of a team the user lost access to: the team
 /// is gone or they are no longer a member.
 const REVOKED: &str = "team_not_found";
-/// Ephemeral client messages (`writing`, `drag`) a socket may send per second; extra
+/// Ephemeral client messages (`writing`, `taskWriting`, `drag`) a socket may send per second; extra
 /// ones are dropped (ADR-0012).
 const EPHEMERAL_PER_SECOND: u32 = 10;
 
@@ -64,6 +66,17 @@ enum Command {
         column: Option<ReflectionColumn>,
         #[serde(default)]
         mode: Option<WritingMode>,
+    },
+    /// The socket started writing a new task for a group (`groupId`),
+    /// editing one (`taskId`), or neither (both `null`) in Discuss
+    /// (ADR-0015).
+    #[serde(rename = "taskWriting")]
+    TaskWriting {
+        channel: String,
+        #[serde(default, rename = "groupId")]
+        group_id: Option<Uuid>,
+        #[serde(default, rename = "taskId")]
+        task_id: Option<Uuid>,
     },
     /// The socket picked up a card (`reflectionId`) or dropped it (`null`)
     /// during Group (ADR-0012, spec §9.3).
@@ -112,6 +125,8 @@ struct Subscription {
     writing: Option<Writing>,
     /// The card this socket is dragging in that meeting, if any.
     dragging: Option<Uuid>,
+    /// The task this socket is writing or editing in that meeting, if any.
+    task_writing: Option<TaskTarget>,
 }
 
 /// A channel's message on its way to the socket, tagged with its channel so
@@ -264,6 +279,12 @@ async fn end(state: &AppState, user_id: Uuid, subscription: Subscription) {
                 .set_dragging(meeting, user_id, subscription.dragging, None)
                 .await;
         }
+        if subscription.task_writing.is_some() {
+            state
+                .hub
+                .set_task_writing(meeting, user_id, subscription.task_writing, None)
+                .await;
+        }
         state.hub.leave(meeting, team, user_id).await;
     }
 }
@@ -303,6 +324,20 @@ async fn command(
             return None;
         }
         return dragging(state, user_id, &channel, reflection_id, subscriptions)
+            .await
+            .err()
+            .map(|code| error_message(&channel, code));
+    }
+    if let Command::TaskWriting {
+        channel,
+        group_id,
+        task_id,
+    } = command
+    {
+        if !limit.allow(Instant::now()) {
+            return None;
+        }
+        return task_writing(state, user_id, &channel, group_id, task_id, subscriptions)
             .await
             .err()
             .map(|code| error_message(&channel, code));
@@ -369,6 +404,79 @@ async fn can_drag(state: &AppState, meeting_id: Uuid, user: Uuid, card: Uuid) ->
     }
 }
 
+/// Records the task the socket writes or edits in a running meeting in
+/// Discuss that it is in (ADR-0015). A refused target (`not_writable`) also
+/// ends what the socket was writing; stopping needs no check.
+async fn task_writing(
+    state: &AppState,
+    user_id: Uuid,
+    channel: &str,
+    group_id: Option<Uuid>,
+    task_id: Option<Uuid>,
+    subscriptions: &mut HashMap<String, Subscription>,
+) -> Result<(), &'static str> {
+    let subscription = subscriptions.get_mut(channel).ok_or("not_subscribed")?;
+    let (meeting, _) = subscription.presence.ok_or("not_writable")?;
+    let target = match (group_id, task_id) {
+        (_, Some(task)) => Some(TaskTarget::Edit(task)),
+        (Some(group), None) => Some(TaskTarget::New(group)),
+        (None, None) => None,
+    };
+    let allowed = match target {
+        None => true,
+        Some(target) => can_write_task(state, meeting, user_id, target).await,
+    };
+    let to = if allowed { target } else { None };
+    let from = std::mem::replace(&mut subscription.task_writing, to);
+    state.hub.set_task_writing(meeting, user_id, from, to).await;
+    if allowed { Ok(()) } else { Err("not_writable") }
+}
+
+/// Whether `user` takes part in the meeting, which runs in Discuss, and the
+/// target is its current group or a task written in it (spec §9.5); false
+/// when they cannot be read.
+async fn can_write_task(
+    state: &AppState,
+    meeting_id: Uuid,
+    user: Uuid,
+    target: TaskTarget,
+) -> bool {
+    let check = async {
+        let Some(meeting) = meeting::Entity::find_by_id(meeting_id)
+            .one(&state.db)
+            .await?
+        else {
+            return Ok(false);
+        };
+        if meeting.status != MeetingStatus::Active || meeting.phase != MeetingPhase::Discuss {
+            return Ok(false);
+        }
+        let joined = meeting_participant::Entity::find_by_id((meeting_id, user))
+            .one(&state.db)
+            .await?
+            .is_some();
+        if !joined {
+            return Ok(false);
+        }
+        Ok::<bool, AppError>(match target {
+            TaskTarget::New(group) => discuss::require_current(&state.db, &meeting, Some(group))
+                .await
+                .is_ok(),
+            TaskTarget::Edit(task) => task::Entity::find_by_id(task)
+                .one(&state.db)
+                .await?
+                .is_some_and(|t| t.meeting_id == Some(meeting_id)),
+        })
+    };
+    match check.await {
+        Ok(allowed) => allowed,
+        Err(error) => {
+            tracing::warn!(%error, "cannot check the task being written");
+            false
+        }
+    }
+}
+
 /// Records what the socket is writing in a running meeting it is in. Its
 /// errors (`not_subscribed`, `not_writable`) are its own codes: clients must
 /// not take them for a lost subscription.
@@ -414,7 +522,9 @@ async fn subscription_command(
 ) -> serde_json::Value {
     let error = error_message;
     match command {
-        Command::Writing { .. } | Command::Drag { .. } => error("", "invalid_message"),
+        Command::Writing { .. } | Command::Drag { .. } | Command::TaskWriting { .. } => {
+            error("", "invalid_message")
+        }
         Command::Unsubscribe { channel } => {
             if let Some(subscription) = subscriptions.remove(&channel) {
                 end(state, user_id, subscription).await;
@@ -461,6 +571,7 @@ async fn subscription_command(
                     presence,
                     writing: None,
                     dragging: None,
+                    task_writing: None,
                 },
             );
             json!({ "type": "subscribed", "channel": name })

@@ -38,3 +38,4 @@ Legend: 🟢 accepted · 🟡 proposed · 🔴 rejected · ⚪ superseded
 | [0012](0012-ephemeral-client-messages-and-user-events.md) | Ephemeral client messages and user-targeted events on the real-time hub | 🟡 proposed |
 | [0013](0013-image-attachments.md) | Image attachments are re-encoded as WebP and referenced by id in rich text | 🟡 proposed |
 | [0014](0014-emoji-reactions.md) | Emoji reactions are Unicode emoji, validated on the server | 🟡 proposed |
+| [0015](0015-named-task-writing-presence.md) | Named writing presence for tasks in Discuss | 🟡 proposed |

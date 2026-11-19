@@ -363,6 +363,47 @@ describe('RichTextEditor', () => {
     document.body.removeEventListener('keydown', onKey);
     wrapper.unmount();
   });
+  it('RichTextEditor task shortcuts: Ctrl + Enter submits, Esc cancels after the mention menu', async () => {
+    const wrapper = mount(RichTextEditor, {
+      props: { modelValue: '', members: MEMBERS, label: 'Task', shortcuts: true, framed: false },
+      global: { plugins: [buildI18n()] },
+      attachTo: document.body,
+    });
+    const editor = await editorOf(wrapper);
+    expect(wrapper.get('.rte').classes()).toContain('rte--bare');
+    const dom = editor.view.dom;
+    const key = async (init: KeyboardEventInit) => {
+      dom.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...init }));
+      await flushPromises();
+    };
+    editor.commands.focus();
+    await key({ key: 'Enter', ctrlKey: true });
+    expect(wrapper.emitted('submit')).toHaveLength(1);
+
+    // Esc first closes the mention menu, then cancels.
+    editor.commands.insertContent('@');
+    await flushPromises();
+    await key({ key: 'Escape' });
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false);
+    expect(wrapper.emitted('cancel')).toBeUndefined();
+    await key({ key: 'Escape' });
+    expect(wrapper.emitted('cancel')).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it('RichTextEditor task without shortcuts leaves Ctrl + Enter alone', async () => {
+    const wrapper = mountEditor();
+    const editor = await editorOf(wrapper);
+    expect(wrapper.get('.rte').classes()).not.toContain('rte--bare');
+    editor.commands.focus();
+    editor.view.dom.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }),
+    );
+    await flushPromises();
+    expect(wrapper.emitted('submit')).toBeUndefined();
+    wrapper.unmount();
+  });
+
   it('RichTextEditor autolinks bare domains and emails but not other schemes', async () => {
     const wrapper = mountEditor();
     const editor = await editorOf(wrapper);

@@ -5024,6 +5024,7 @@
           "discussOrder",
           "reactions",
           "tasks",
+          "taskWriters",
           "seq",
           "createdAt",
           "serverNow"
@@ -5144,6 +5145,13 @@
           "taskCount": {
             "type": "integer",
             "format": "int64"
+          },
+          "taskWriters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskWriterDto"
+            },
+            "description": "During Discuss, who is writing a new task (`groupId`) or editing one\n(`taskId`) right now (spec §9.5, ADR-0015)."
           },
           "tasks": {
             "type": "array",
@@ -5824,6 +5832,14 @@
             "type": "string",
             "format": "date-time"
           },
+          "editedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its content was last edited, if ever (moves do not count)."
+          },
           "groupId": {
             "type": [
               "string",
@@ -5867,6 +5883,33 @@
           "active",
           "done"
         ]
+      },
+      "TaskWriterDto": {
+        "type": "object",
+        "description": "Someone writing a task, and what on (snapshot and `task.writing`; spec\n§9.5): `groupId` for a new task, `taskId` for one being edited.",
+        "required": [
+          "userId"
+        ],
+        "properties": {
+          "groupId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "taskId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       },
       "TeamDto": {
         "type": "object",

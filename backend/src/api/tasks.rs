@@ -38,6 +38,10 @@ pub struct TaskDto {
     #[serde(with = "time::serde::rfc3339")]
     #[schema(value_type = String, format = DateTime)]
     pub created_at: OffsetDateTime,
+    /// When its content was last edited, if ever (moves do not count).
+    #[serde(with = "time::serde::rfc3339::option")]
+    #[schema(value_type = Option<String>, format = DateTime)]
+    pub edited_at: Option<OffsetDateTime>,
 }
 
 impl From<TaskView> for TaskDto {
@@ -52,6 +56,7 @@ impl From<TaskView> for TaskDto {
             meeting_id: v.task.meeting_id,
             group_id: v.task.group_id,
             created_at: v.task.created_at,
+            edited_at: v.task.edited_at,
         }
     }
 }

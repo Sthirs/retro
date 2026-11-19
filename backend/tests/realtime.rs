@@ -1982,3 +1982,129 @@ async fn tasks_written_in_discuss_reach_the_room_and_the_board() {
     assert_eq!(moved["channel"], format!("team:{team}"));
     assert_silent(&mut socket, Duration::from_millis(500)).await;
 }
+
+async fn send_task_writing(socket: &mut Socket, m: &str, group: Value, task: Value) {
+    socket
+        .send(Message::text(
+            json!({
+                "type": "taskWriting",
+                "channel": format!("meeting:{m}"),
+                "groupId": group,
+                "taskId": task,
+            })
+            .to_string(),
+        ))
+        .await
+        .unwrap();
+}
+
+/// The next `task.writing` event's writers.
+async fn task_writers(socket: &mut Socket) -> Value {
+    next_of(socket, "task.writing").await["payload"]["writers"].clone()
+}
+
+#[tokio::test]
+async fn everyone_sees_who_writes_or_edits_a_task() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, m, current, _, _) = discussing(&app).await;
+    let bob_id = user_id(&app, &bob).await;
+    let channel = format!("meeting:{m}");
+    let mut alice_socket = connect(&addr, &ticket(&app, &alice).await).await;
+    subscribe(&mut alice_socket, &channel).await;
+    let mut one = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut one, &channel).await;
+
+    // Bob writes a new task for the current group.
+    send_task_writing(&mut one, &m, json!(current), Value::Null).await;
+    let writing = json!([{ "userId": bob_id, "groupId": current, "taskId": null }]);
+    assert_eq!(task_writers(&mut alice_socket).await, writing);
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    assert_eq!(state["taskWriters"], writing);
+
+    // Then edits the task he added.
+    let res = app
+        .discuss_task(&bob, &m, &current, "<p>Fix CI</p>", &[])
+        .await;
+    assert_eq!(res.status, 201, "{}", res.text());
+    let task = TestApp::last_task(&res.json());
+    send_task_writing(&mut one, &m, Value::Null, json!(task)).await;
+    let editing = json!([{ "userId": bob_id, "groupId": null, "taskId": task }]);
+    assert_eq!(task_writers(&mut alice_socket).await, editing);
+
+    // A second tab editing the same task shows him once; he stops only when
+    // both tabs did.
+    let mut two = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut two, &channel).await;
+    send_task_writing(&mut two, &m, Value::Null, json!(task)).await;
+    // A round trip on that socket: its state is in before the first tab stops.
+    subscribe(&mut two, &channel).await;
+    send_task_writing(&mut one, &m, Value::Null, Value::Null).await;
+    unsubscribe(&mut two, &channel).await;
+    assert_eq!(task_writers(&mut alice_socket).await, json!([]));
+
+    // A closed socket stops writing.
+    send_task_writing(&mut one, &m, json!(current), Value::Null).await;
+    assert_eq!(task_writers(&mut alice_socket).await, writing);
+    one.close(None).await.unwrap();
+    assert_eq!(task_writers(&mut alice_socket).await, json!([]));
+}
+
+#[tokio::test]
+async fn tasks_are_written_by_participants_on_the_current_group_or_a_task_of_the_meeting() {
+    let app = TestApp::new().await;
+    let addr = app.spawn_server().await;
+    let (alice, bob, _, m, current, other, _) = discussing(&app).await;
+    let channel = format!("meeting:{m}");
+    let mut bob_socket = connect(&addr, &ticket(&app, &bob).await).await;
+    subscribe(&mut bob_socket, &channel).await;
+    let refused = |error: Value| assert_eq!(error["payload"]["code"], "not_writable");
+
+    // Not the current group.
+    send_task_writing(&mut bob_socket, &m, json!(other), Value::Null).await;
+    refused(next_of(&mut bob_socket, "error").await);
+    // A task of another meeting.
+    let elsewhere = create_team(&app, &bob, "Elsewhere").await;
+    let foreign = create_task(&app, &bob, elsewhere).await;
+    send_task_writing(&mut bob_socket, &m, Value::Null, foreign["id"].clone()).await;
+    refused(next_of(&mut bob_socket, "error").await);
+    // Unsubscribed channels.
+    send_task_writing(
+        &mut bob_socket,
+        &Uuid::now_v7().to_string(),
+        json!(current),
+        Value::Null,
+    )
+    .await;
+    let error = next_of(&mut bob_socket, "error").await;
+    assert_eq!(error["payload"]["code"], "not_subscribed");
+
+    // Carol is in the team and in the room, but did not join the meeting.
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    let team: Uuid = state["teamId"].as_str().unwrap().parse().unwrap();
+    let carol = app.create_user("carol", "carol@example.com", "Carol").await;
+    join_team(&app, &alice, team, &carol).await;
+    let mut carol_socket = connect(&addr, &ticket(&app, &carol).await).await;
+    subscribe(&mut carol_socket, &channel).await;
+    send_task_writing(&mut carol_socket, &m, json!(current), Value::Null).await;
+    refused(next_of(&mut carol_socket, "error").await);
+
+    // Once the meeting ended.
+    let res = app
+        .call("POST", &format!("/api/v1/meetings/{m}/end"), &alice, None)
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    send_task_writing(&mut bob_socket, &m, json!(current), Value::Null).await;
+    refused(next_of(&mut bob_socket, "error").await);
+    let state = app
+        .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
+        .await
+        .json();
+    assert_eq!(state["taskWriters"], json!([]));
+}

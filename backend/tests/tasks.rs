@@ -949,3 +949,21 @@ async fn delete_removes_mentions() {
     let by_alice = list(&b.app, &b.alice, b.team, &format!("?mentioned={alice_id}")).await;
     assert_eq!(by_alice, json!([]));
 }
+
+#[tokio::test]
+async fn an_edit_records_when_and_a_move_does_not() {
+    let b = board().await;
+    let res = move_to(&b.app, &b.bob, b.a.id, "done", None, None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["editedAt"], Value::Null);
+
+    let res = edit(&b.app, &b.bob, b.a.id, "<p>reworded</p>").await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let edited = res.json()["editedAt"].as_str().unwrap().to_owned();
+    assert!(edited.as_str() >= res.json()["createdAt"].as_str().unwrap());
+
+    // Moving it afterwards keeps the edit time.
+    let res = move_to(&b.app, &b.bob, b.a.id, "active", None, None).await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    assert_eq!(res.json()["editedAt"], edited.as_str());
+}

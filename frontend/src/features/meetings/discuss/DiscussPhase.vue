@@ -6,9 +6,15 @@
  * current group; anyone can open another group from the sidebar to look at
  * it, read-only, and come back. When the facilitator moves on, everyone's
  * room follows.
+ *
+ * It tells the others what this tab writes (ADR-0015): the task its inline
+ * editor is open on, else the current group while it holds an unsent task
+ * for it.
  */
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+
+import { realtime, type TaskWritingState } from '@/api/realtime';
 
 import AppIcon from '@/components/AppIcon.vue';
 import RichText from '@/components/RichText.vue';
@@ -17,6 +23,7 @@ import DiscussTasks from '@/features/meetings/discuss/DiscussTasks.vue';
 import ReactionBar from '@/features/meetings/discuss/ReactionBar.vue';
 import { useGroupLabel } from '@/features/meetings/discuss/useGroupLabel';
 import { useMeetingStore } from '@/stores/meeting';
+import { hasContent } from '@/stores/reflectDrafts';
 
 const { t } = useI18n();
 const store = useMeetingStore();
@@ -28,6 +35,28 @@ const cards = computed(() => (groupId.value ? (store.groupCards.get(groupId.valu
 /** Reactions and tasks only on the current group, while the meeting runs. */
 const readonly = computed(() => store.previewing || !store.isActive);
 const busy = ref(false);
+
+const taskWriting = computed<TaskWritingState | null>(() => {
+  if (!store.isActive) return null;
+  if (store.editingTaskId) return { taskId: store.editingTaskId };
+  const current = store.currentGroupId;
+  if (current && hasContent(store.taskDrafts[current] ?? '')) return { groupId: current };
+  return null;
+});
+const channel = computed(() => (store.meetingId ? `meeting:${store.meetingId}` : null));
+watch(
+  [channel, taskWriting],
+  ([name, state], old) => {
+    const before = old?.[0];
+    if (before && before !== name) realtime.setTaskWriting(before, null);
+    if (name) realtime.setTaskWriting(name, state);
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => {
+  if (channel.value) realtime.setTaskWriting(channel.value, null);
+  store.editingTaskId = null;
+});
 
 /** Moves everyone to the group on screen (facilitator). */
 async function discussThis(id: string): Promise<void> {

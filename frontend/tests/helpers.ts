@@ -283,6 +283,7 @@ export const meetingState = (overrides: Record<string, unknown> = {}) => ({
   discussGroupId: null,
   reactions: [],
   tasks: [],
+  taskWriters: [],
   seq: 2,
   createdAt: '2026-11-10T17:02:00Z',
   endedAt: null,

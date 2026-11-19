@@ -2,7 +2,7 @@
 //! out to local sockets; tracks presence across replicas (ADR-0011).
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -33,6 +33,10 @@ const REFLECTION_WRITING: &str = "reflection.writing";
 const DRAGGING_CHANGED: &str = "dragging.changed";
 /// The cluster-wide dragged cards, as clients get them.
 const CARD_DRAGGING: &str = "card.dragging";
+/// A replica's task writers in a meeting (internal, ADR-0015).
+const TASK_WRITING_CHANGED: &str = "task_writing.changed";
+/// The cluster-wide task writers, as clients get them.
+const TASK_WRITING: &str = "task.writing";
 const MEMBER_REMOVED: &str = "member.removed";
 const TEAM_DELETED: &str = "team.deleted";
 /// Access changes buffered per socket; one that lags re-checks everything.
@@ -150,6 +154,44 @@ fn drag_list(drags: &Drags) -> Vec<DragDto> {
         })
         .collect()
 }
+
+/// What a participant is doing on a task in Discuss (ADR-0015): writing a new
+/// one for a group, or editing one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TaskTarget {
+    New(Uuid),
+    Edit(Uuid),
+}
+
+/// Someone writing a task, and what on (snapshot and `task.writing`; spec
+/// §9.5): `groupId` for a new task, `taskId` for one being edited.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
+)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskWriterDto {
+    pub user_id: Uuid,
+    pub group_id: Option<Uuid>,
+    pub task_id: Option<Uuid>,
+}
+
+impl TaskWriterDto {
+    pub fn new(user_id: Uuid, target: TaskTarget) -> Self {
+        let (group_id, task_id) = match target {
+            TaskTarget::New(group) => (Some(group), None),
+            TaskTarget::Edit(task) => (None, Some(task)),
+        };
+        Self {
+            user_id,
+            group_id,
+            task_id,
+        }
+    }
+}
+
+/// Task writers in a meeting; a user writing the same thing in two tabs
+/// counts once.
+pub type TaskWriters = BTreeSet<TaskWriterDto>;
 
 /// A message on its way to a channel's local subscribers: the serialized
 /// event, and the only user who may receive it (ADR-0012).
@@ -302,6 +344,52 @@ impl ReplicaState for Dragging {
     }
 }
 
+/// Participants writing or editing tasks (spec §9.5).
+#[derive(Debug, Default)]
+struct TaskWriting;
+
+impl ReplicaState for TaskWriting {
+    type Value = TaskWriters;
+    /// One entry per writing socket.
+    type Local = Vec<TaskWriterDto>;
+    const INTERNAL: &'static str = TASK_WRITING_CHANGED;
+    const CLIENT: &'static str = TASK_WRITING;
+    const FIELD: &'static str = "writers";
+    const WHAT: &'static str = "task writing state";
+
+    fn empty() -> TaskWriters {
+        TaskWriters::new()
+    }
+
+    fn total<'a>(replicas: impl Iterator<Item = &'a TaskWriters>) -> TaskWriters {
+        replicas.flatten().copied().collect()
+    }
+
+    fn value(local: &Vec<TaskWriterDto>) -> TaskWriters {
+        local.iter().copied().collect()
+    }
+
+    fn encode(value: &TaskWriters) -> serde_json::Value {
+        json!(value)
+    }
+
+    fn decode(field: &serde_json::Value) -> Option<TaskWriters> {
+        serde_json::from_value(field.clone()).ok()
+    }
+
+    fn client_payload(value: &TaskWriters) -> serde_json::Value {
+        json!({ "writers": value })
+    }
+
+    fn track(local: &mut Local) -> &mut Track<Self> {
+        &mut local.task_writing
+    }
+
+    fn shared(online: &mut Online) -> &mut Shared<Self> {
+        &mut online.task_writing
+    }
+}
+
 /// A [`ReplicaState`] as this replica sees the cluster: meeting → replica
 /// (ordered, so totals are stable) → that replica's state.
 #[derive(Debug)]
@@ -408,6 +496,8 @@ struct Expired {
     writing: Vec<(Uuid, WritingCounts)>,
     /// Meetings whose dragged cards changed, with the cards now dragged.
     drags: Vec<(Uuid, Drags)>,
+    /// Meetings whose task writers changed, with the writers now.
+    task_writing: Vec<(Uuid, TaskWriters)>,
 }
 
 /// Who is online in which meeting, as this replica sees the cluster:
@@ -419,6 +509,7 @@ struct Online {
     meetings: HashMap<Uuid, HashMap<Uuid, Presence>>,
     writing: Shared<Writing>,
     drags: Shared<Dragging>,
+    task_writing: Shared<TaskWriting>,
     seen: HashMap<Uuid, Instant>,
     /// Replicas forgotten for their silence: if one speaks again, every
     /// replica is asked to re-announce.
@@ -511,10 +602,12 @@ impl Online {
         self.meetings.retain(|_, users| !users.is_empty());
         let writing = self.writing.forget(&gone);
         let drags = self.drags.forget(&gone);
+        let task_writing = self.task_writing.forget(&gone);
         Expired {
             offline,
             writing,
             drags,
+            task_writing,
         }
     }
 
@@ -528,6 +621,7 @@ impl Online {
         }
         local.writing.share(me, &mut self.writing);
         local.drags.share(me, &mut self.drags);
+        local.task_writing.share(me, &mut self.task_writing);
     }
 }
 
@@ -545,6 +639,8 @@ struct Local {
     writing: Track<Writing>,
     /// This replica's dragged cards per meeting (ADR-0012).
     drags: Track<Dragging>,
+    /// This replica's task writers per meeting (ADR-0015).
+    task_writing: Track<TaskWriting>,
     /// Shutting down: this replica has said goodbye; sockets no longer count.
     closing: bool,
 }
@@ -634,6 +730,48 @@ impl Hub {
                 .drags
                 .total(meeting_id),
         )
+    }
+
+    /// Who is writing or editing a task in a meeting, on any replica.
+    pub fn task_writers(&self, meeting_id: Uuid) -> Vec<TaskWriterDto> {
+        self.online
+            .lock()
+            .expect("hub presence")
+            .task_writing
+            .total(meeting_id)
+            .into_iter()
+            .collect()
+    }
+
+    /// A socket of `user` went from writing `from` to writing `to` on a
+    /// task in a meeting (`None`: nothing).
+    pub async fn set_task_writing(
+        &self,
+        meeting_id: Uuid,
+        user: Uuid,
+        from: Option<TaskTarget>,
+        to: Option<TaskTarget>,
+    ) {
+        if from == to {
+            return;
+        }
+        let mut local = self.local.lock().await;
+        if local.closing {
+            return;
+        }
+        let writers = local.task_writing.meetings.entry(meeting_id).or_default();
+        if let Some(target) = from
+            && let Some(i) = writers
+                .iter()
+                .position(|&w| w == TaskWriterDto::new(user, target))
+        {
+            writers.swap_remove(i);
+        }
+        if let Some(target) = to {
+            writers.push(TaskWriterDto::new(user, target));
+        }
+        self.announce_state::<TaskWriting>(&mut local, meeting_id)
+            .await;
     }
 
     /// A socket of `user` stopped dragging card `from` and/or started
@@ -800,6 +938,7 @@ impl Hub {
         }
         self.withdraw::<Writing>(&mut local).await;
         self.withdraw::<Dragging>(&mut local).await;
+        self.withdraw::<TaskWriting>(&mut local).await;
     }
 
     /// Publishes a socket count transition; one that cannot be published is
@@ -865,6 +1004,7 @@ impl Hub {
         }
         self.announce_all::<Writing>(&mut local).await;
         self.announce_all::<Dragging>(&mut local).await;
+        self.announce_all::<TaskWriting>(&mut local).await;
     }
 
     /// Publishes the announcements that failed, as the sockets now stand: a
@@ -878,6 +1018,7 @@ impl Hub {
         }
         self.retry_state::<Writing>(&mut local).await;
         self.retry_state::<Dragging>(&mut local).await;
+        self.retry_state::<TaskWriting>(&mut local).await;
     }
 
     /// Every heartbeat: tells the other replicas this one is alive, retries
@@ -919,6 +1060,9 @@ impl Hub {
             }
             for (meeting, drags) in expired.drags {
                 self.send_state::<Dragging>(meeting, &drags);
+            }
+            for (meeting, writers) in expired.task_writing {
+                self.send_state::<TaskWriting>(meeting, &writers);
             }
             drop(online);
         }
@@ -1018,6 +1162,7 @@ impl Hub {
             PRESENCE_CHANGED => self.presence_changed(&notification).await,
             WRITING_CHANGED => self.state_changed::<Writing>(&notification).await,
             DRAGGING_CHANGED => self.state_changed::<Dragging>(&notification).await,
+            TASK_WRITING_CHANGED => self.state_changed::<TaskWriting>(&notification).await,
             PRESENCE_ALIVE => {
                 if let Some(replica) = uuid_field(&notification.payload, "replica") {
                     self.heard_from(replica).await;
@@ -1232,6 +1377,36 @@ mod tests {
         let mut counts = NO_WRITING;
         counts[column.index()][mode as usize] = n;
         counts
+    }
+
+    #[test]
+    fn task_writers_merge_across_replicas_once_per_user_and_target() {
+        let [meeting, a, b] = ids();
+        let (user, group, task) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let new = TaskWriterDto::new(user, TaskTarget::New(group));
+        let edit = TaskWriterDto::new(user, TaskTarget::Edit(task));
+        assert_eq!(new.group_id, Some(group));
+        assert_eq!(edit.task_id, Some(task));
+        let mut online = Online::default();
+        let both = TaskWriting::value(&vec![new, edit, edit]);
+        assert_eq!(both.len(), 2);
+        assert_eq!(
+            online.task_writing.set(meeting, a, both.clone()),
+            Some(both.clone())
+        );
+        // The same writer on another replica (another tab) shows once.
+        let only_edit: TaskWriters = [edit].into();
+        assert_eq!(online.task_writing.set(meeting, b, only_edit.clone()), None);
+        assert_eq!(
+            online.task_writing.set(meeting, a, TaskWriters::new()),
+            Some(only_edit)
+        );
+        let gone: HashSet<Uuid> = [b].into();
+        assert_eq!(
+            online.task_writing.forget(&gone),
+            vec![(meeting, TaskWriters::new())]
+        );
+        assert!(online.task_writing.meetings.is_empty());
     }
 
     #[test]

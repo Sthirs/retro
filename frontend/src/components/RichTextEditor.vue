@@ -6,6 +6,9 @@
  * - `reflection`: strikethrough, bullet lists and inline code (spec §9.2), in
  *   the compact Reflect composer (toolbar under the text, a placeholder,
  *   Ctrl/Cmd + Enter submits, Esc cancels).
+ * `shortcuts` turns Ctrl/Cmd + Enter (submit) and Esc (cancel) on for a task
+ * editor too; `framed: false` drops the editor's own frame, for a composer
+ * that draws it (Discuss Tasks panel).
  * With a `teamId`, images can be pasted, dropped or picked (ADR-0013): they
  * are uploaded at once and stored as `<img data-attachment-id>`, never with a
  * `src`. Everything else is switched off so the editor cannot produce content
@@ -44,6 +47,10 @@ const props = withDefaults(
     readonly?: boolean;
     /** The team images are uploaded to; without it, images are off. */
     teamId?: string;
+    /** Ctrl/Cmd + Enter submits, Esc cancels (always on for reflections). */
+    shortcuts?: boolean;
+    /** Draws its own border and focus ring; off when the host draws them. */
+    framed?: boolean;
   }>(),
   {
     members: () => [],
@@ -52,6 +59,8 @@ const props = withDefaults(
     autofocus: false,
     readonly: false,
     teamId: undefined,
+    shortcuts: false,
+    framed: true,
   },
 );
 const emit = defineEmits<{
@@ -193,7 +202,7 @@ const AttachmentImage = Node.create({
   },
 });
 
-/** Reflections: Ctrl/Cmd + Enter sends, Esc cancels. */
+/** Ctrl/Cmd + Enter sends, Esc cancels (reflections, and tasks that ask). */
 const Shortcuts = Extension.create({
   name: 'retroShortcuts',
   addKeyboardShortcuts() {
@@ -203,7 +212,8 @@ const Shortcuts = Extension.create({
         return true;
       },
       Escape: () => {
-        if (linkOpen.value) return false;
+        // Esc first closes the link form or the mention suggestions.
+        if (linkOpen.value || suggestion.value) return false;
         emit('cancel');
         return true;
       },
@@ -254,7 +264,7 @@ const editor = useEditor({
         HTMLAttributes: { rel: 'noopener noreferrer', target: null, class: null },
       },
     }),
-    ...(reflection ? [Shortcuts] : [mentions()]),
+    ...(reflection ? [Shortcuts] : [mentions(), ...(props.shortcuts ? [Shortcuts] : [])]),
     ...(props.teamId ? [AttachmentImage] : []),
   ],
   onUpdate: ({ editor: e }) => emit('update:modelValue', e.getHTML()),
@@ -537,7 +547,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="rte" :class="{ 'rte--reflection': reflection }">
+  <div class="rte" :class="{ 'rte--reflection': reflection, 'rte--bare': !framed && !reflection }">
     <!-- Pointer presses on the toolbar keep the editor's focus and selection. -->
     <div class="rte-toolbar" role="toolbar" :aria-label="t('richText.toolbar')">
       <button
@@ -926,6 +936,51 @@ onBeforeUnmount(() => {
 .rte--reflection .rte-link {
   border-top: 1px solid var(--line);
   border-bottom: 0;
+}
+
+/* A task editor inside a composer that draws the frame (Discuss artboard):
+   a compact toolbar on top, then the text. */
+.rte--bare {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.rte--bare:focus-within {
+  outline: none;
+}
+
+.rte--bare .rte-toolbar {
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 2px 4px;
+}
+
+.rte--bare .rte-btn {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-control);
+}
+.rte--bare .rte-btn::before {
+  /* 44 px touch target around the 30 px control. */
+  content: '';
+  position: absolute;
+  inset: -7px;
+}
+
+.rte--bare .rte-area :deep(.rte-content) {
+  min-height: 48px;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.rte--bare .rte-placeholder {
+  top: 12px;
+  left: 14px;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .rte-area :deep(.rte-content) {

@@ -281,4 +281,45 @@ describe('RealtimeClient', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(drags().at(-1)).toEqual({ type: 'drag', channel: 'meeting:1', reflectionId: null });
   });
+
+  it('tells a meeting the task it writes or edits, once per change, again after a reconnect', async () => {
+    vi.useFakeTimers();
+    const rt = client();
+    rt.subscribe('meeting:1', () => {});
+    rt.setTaskWriting('meeting:1', { groupId: 'g1' });
+    await flushPromises();
+    const socket = MockWebSocket.last!;
+    socket.open();
+    socket.emit({ type: 'subscribed', channel: 'meeting:1' });
+    const writes = (s: MockWebSocket) => s.sent.filter((m) => m.type === 'taskWriting');
+    expect(writes(socket)).toEqual([
+      { type: 'taskWriting', channel: 'meeting:1', groupId: 'g1', taskId: null },
+    ]);
+    // The same state again sends nothing.
+    rt.setTaskWriting('meeting:1', { groupId: 'g1' });
+    rt.setTaskWriting('meeting:1', { taskId: 't1' });
+    expect(writes(socket).at(-1)).toEqual({
+      type: 'taskWriting',
+      channel: 'meeting:1',
+      groupId: null,
+      taskId: 't1',
+    });
+    expect(writes(socket)).toHaveLength(2);
+
+    socket.drop();
+    await vi.advanceTimersByTimeAsync(2000);
+    const again = MockWebSocket.last!;
+    again.open();
+    again.emit({ type: 'subscribed', channel: 'meeting:1' });
+    expect(writes(again)).toEqual([
+      { type: 'taskWriting', channel: 'meeting:1', groupId: null, taskId: 't1' },
+    ]);
+    rt.setTaskWriting('meeting:1', null);
+    expect(writes(again).at(-1)).toEqual({
+      type: 'taskWriting',
+      channel: 'meeting:1',
+      groupId: null,
+      taskId: null,
+    });
+  });
 });

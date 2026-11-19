@@ -6,7 +6,16 @@ import { CLIENT_ID } from '@/api/clientId';
 import { TASK_RESYNC_DELAY_MS, useMeetingStore, VOTE_TIMEOUT_MS } from '@/stores/meeting';
 import { useSessionStore } from '@/stores/session';
 
-import { ALICE, MEETING_ID, meetingState, mockFetch, problem, TEAM_ID } from './helpers';
+import {
+  ALICE,
+  BOB,
+  MEETING_ID,
+  meetingState,
+  mockFetch,
+  participant,
+  problem,
+  TEAM_ID,
+} from './helpers';
 
 const BASE = `/api/v1/meetings/${MEETING_ID}`;
 const channel = `meeting:${MEETING_ID}`;
@@ -622,6 +631,89 @@ describe('meeting store in Discuss', () => {
     expect(calls.find((c) => c.path === `${BASE}/tasks`)?.body).toEqual({
       groupId: 'g1',
       content: '<p>Fix CI</p>',
+    });
+  });
+
+  describe('editing, deleting and who writes tasks', () => {
+    const task = {
+      id: 't1',
+      status: 'active',
+      position: 'a0',
+      contentHtml: '<p>Fix CI</p>',
+      author: { id: ALICE.id, displayName: ALICE.displayName, pictureVersion: null },
+      mentions: [],
+      meetingId: MEETING_ID,
+      groupId: 'g1',
+      createdAt: '2026-11-10T18:41:00Z',
+    };
+
+    it('edits a task and takes it from the answer', async () => {
+      const edited = {
+        ...task,
+        contentHtml: '<p>Fix CI now</p>',
+        editedAt: '2026-11-10T18:47:00Z',
+      };
+      const { store, calls } = await opened(discussing({ tasks: [task, { ...task, id: 't2' }] }), {
+        'PATCH /api/v1/tasks/t1': { status: 200, body: edited },
+      });
+      expect(await store.updateTask('t1', '<p>Fix CI now</p>')).toBe(true);
+      expect(store.meeting?.tasks.map((t) => [t.id, t.contentHtml, t.editedAt])).toEqual([
+        ['t1', '<p>Fix CI now</p>', '2026-11-10T18:47:00Z'],
+        ['t2', '<p>Fix CI</p>', undefined],
+      ]);
+      expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({
+        content: '<p>Fix CI now</p>',
+      });
+    });
+
+    it('keeps the task and says why when an edit is refused', async () => {
+      const { store } = await opened(discussing({ tasks: [task] }), {
+        'PATCH /api/v1/tasks/t1': problem(400, 'invalid_task_content'),
+      });
+      expect(await store.updateTask('t1', '<p></p>')).toBe(false);
+      expect(store.actionError).toBe('invalid_task_content');
+      expect(store.meeting?.tasks[0]?.contentHtml).toBe('<p>Fix CI</p>');
+    });
+
+    it('deletes a task, also one someone else deleted first', async () => {
+      const { store } = await opened(
+        discussing({ tasks: [task, { ...task, id: 't2' }, { ...task, id: 't3' }] }),
+        {
+          'DELETE /api/v1/tasks/t1': { status: 204 },
+          'DELETE /api/v1/tasks/t2': problem(404, 'task_not_found'),
+          'DELETE /api/v1/tasks/t3': problem(500, 'internal'),
+        },
+      );
+      expect(await store.deleteTask('t1')).toBe(true);
+      expect(await store.deleteTask('t2')).toBe(true);
+      expect(store.meeting?.tasks.map((t) => t.id)).toEqual(['t3']);
+      expect(await store.deleteTask('t3')).toBe(false);
+      expect(store.meeting?.tasks.map((t) => t.id)).toEqual(['t3']);
+    });
+
+    it('knows who else writes a new task per group and who edits which task', async () => {
+      const { store } = await opened(
+        discussing({
+          participants: [participant(ALICE), participant(BOB)],
+          taskWriters: [{ userId: BOB.id, groupId: 'g1', taskId: null }],
+        }),
+      );
+      expect(store.taskWritersByGroup.get('g1')?.map((p) => p.id)).toEqual([BOB.id]);
+      store.apply({
+        type: 'task.writing',
+        channel,
+        seq: null,
+        payload: {
+          writers: [
+            { userId: ALICE.id, groupId: 'g1', taskId: null },
+            { userId: BOB.id, groupId: null, taskId: 't1' },
+            { userId: 'stranger', groupId: 'g2', taskId: null },
+          ],
+        },
+      });
+      // The viewer (Alice) and people who are not participants are left out.
+      expect(store.taskWritersByGroup.size).toBe(0);
+      expect(store.taskEditors.get('t1')?.id).toBe(BOB.id);
     });
   });
 });

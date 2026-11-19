@@ -297,7 +297,9 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 - **Center**: **one group at a time** — the group title and all its reflections (rich text, anonymous, with column label).
 - **Reactions**: participants can add emoji reactions to each reflection. Multiple different reactions per reflection are allowed, and a user can add several different emojis to the same reflection (one of each kind). Counts are shown per emoji and reacting is a toggle. Any single Unicode emoji is accepted; the server validates it and stores its fully qualified form, so "❤" and "❤️" are the same reaction ([ADR-0014](adr/0014-emoji-reactions.md)). Who reacted is not shown, only the counts and which reactions are the viewer's own.
 - **Emoji picker**: "Add reaction" opens a picker. Its first row (**Quick reactions**) holds the viewer's **most used** emoji, padded with defaults (👍 ❤️ 😂 🎉 😮 😬 💯 🙏); then a search (by name or `:shortcode:`), category tabs (Recently used, Smileys, People & gestures, Nature, Food, Objects, Symbols) and a preview of the emoji under the pointer or focus. Usage is counted in the browser, per user (`localStorage`), never on the server.
-- **Right panel — Tasks**: participants create tasks linked to the current group. Each task has rich text (same editor as reflections, including pasted images) with **@mentions** of team members, plus its author and creation time. New tasks start in the **Active** column of the board.
+- **Right panel — Tasks**: participants create tasks linked to the current group. Each task has rich text (same editor as reflections, including pasted images) with **@mentions** of team members, plus its author and creation time (*"edited 18:47"* once its content was edited). New tasks start in the **Active** column of the board. **Ctrl + Enter** adds the task.
+  - **Edit and delete**: anyone in the meeting can edit or delete any task of the group on screen, as on the board (§10.1). Edit opens the editor in place (Ctrl + Enter saves, Esc cancels); delete asks for confirmation. A note under the list says so.
+  - **Who is writing** ([ADR-0015](adr/0015-named-task-writing-presence.md)): while a participant holds an unsent task for the current group, the others see a placeholder at the top of the list (*"Sara is writing a task…"*); while a participant has the editor open on a task, the others see that task outlined with *"Marco is editing…"*. Unlike reflections, tasks are not anonymous, so the writer is named.
 - **Navigation**: the facilitator moves to the **next** or **previous** group. Everyone follows the facilitator's current group: whenever it changes, every participant's room shows the new current group. Discuss starts on the first group of the order.
 - **Preview**: anyone can open another group from the left panel to look at it, without affecting the others. A previewed group is **read-only**: reactions and tasks are only possible on the current group (the server refuses others with `not_current_group`). The preview shows **Back to current group**; the facilitator also gets **Discuss this group**, which makes it the current group for everyone. A change of the current group ends every preview.
 - After the last group, the facilitator is prompted to **End meeting**. A meeting without reflections has no groups to discuss: Discuss shows an empty state and End meeting.
@@ -335,7 +337,7 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 - The server checks team membership before accepting any subscription. When a member leaves or is removed, or the team is deleted, the server ends that user's subscriptions to the team's channels (the team channel and its meetings' channels) at once, with an `error` message on each; a former member receives nothing more.
 - Messages are JSON: `{ "type": string, "channel": string, "seq": number | null, "payload": object }`. Errors have the same shape: `{ "type": "error", "channel", "seq": null, "payload": { "code" } }`.
 - Every persisted message carries a per-channel `seq`; ephemeral and per-user notifications (marked "no `seq`" in §11.2) carry `seq: null` and are outside gap detection, which applies only to sequenced messages. After a reconnect, the client either resyncs by fetching the full state (`GET /meetings/{id}/state`) or requests the messages after the last `seq` it saw.
-- Client → server **ephemeral** messages (writing state, drag in progress, cursor) go over the WebSocket and are **not persisted**. A user's writing state is tied to their socket, so it ends when the socket closes ([ADR-0012](adr/0012-ephemeral-client-messages-and-user-events.md)). **State-changing** actions go through the REST API (or WS commands), are validated, persisted, then broadcast.
+- Client → server **ephemeral** messages (writing state, drag in progress, cursor) go over the WebSocket and are **not persisted**. A user's writing state is tied to their socket, so it ends when the socket closes ([ADR-0012](adr/0012-ephemeral-client-messages-and-user-events.md); for tasks, [ADR-0015](adr/0015-named-task-writing-presence.md)). **State-changing** actions go through the REST API (or WS commands), are validated, persisted, then broadcast.
 - Protocol details (ticket, subscribe messages, `seq`, presence across replicas): [ADR-0011](adr/0011-realtime-hub.md).
 - Horizontal scaling: when more than one backend replica runs, broadcasts go through **PostgreSQL `LISTEN/NOTIFY`** so that every replica reaches its connected clients (see §11.3).
 
@@ -355,6 +357,7 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 | `reflection.count_changed` | sent reflections per column | all |
 | `reflection.changed` | reflection id, `clientId` (no content; the author's other tabs re-read the state) | author only (no `seq`) |
 | `card.dragging` | every card being dragged and who drags it (ephemeral, no `seq`) | all |
+| `task.writing` | every participant writing a task in Discuss: user, and the group of a new task or the task being edited (ephemeral, no `seq`) | all |
 | `group.created` / `group.updated` / `group.deleted` | group (id, column, position, name; id only when deleted), the cards whose group changed (id, group id, version), `clientId` | all |
 | `vote.settings_changed` | budget, maxPerGroup, `clientId` | all |
 | `vote.changed` | `clientId` only (no `seq`; the receiving tab re-reads the state, ADR-0012) | the voter; also every user whose votes a settings change removed |
@@ -379,7 +382,7 @@ What the real-time layer has to do:
 | --- | --- |
 | Fan-out of events between backend replicas | `LISTEN/NOTIFY`. Each replica holds **one** dedicated listener connection and forwards events to its local WebSocket subscribers through in-process Tokio broadcast channels. |
 | Consistency between persisted state and events | `NOTIFY` issued inside the same transaction as the write is delivered **only on commit**, so clients never see events for rolled-back changes. A dedicated broker can't give this guarantee for free. |
-| Ephemeral events (writing, drag in progress, presence) | Throttled on the client (drag state sent only when a card is picked up or dropped; writing state sent only when an editor opens or closes) and on the server (10 messages / s per socket), and sent through `NOTIFY` without being persisted. Each replica announces its own writing counts and dragged cards per meeting, like presence. |
+| Ephemeral events (writing, drag in progress, presence) | Throttled on the client (drag state sent only when a card is picked up or dropped; writing state sent only when an editor opens or closes) and on the server (10 messages / s per socket), and sent through `NOTIFY` without being persisted. Each replica announces its own writing counts, task writers and dragged cards per meeting, like presence. |
 | Timer | Stored as `ends_at` on the meeting. Clients count down locally. No ticking server process is needed. |
 | Presence | Tracked in memory by the replica holding the socket and broadcast on change. A replica restart causes clients to reconnect and re-announce. |
 | Catch-up after reconnect | Full-state snapshot (`GET /meetings/{id}/state`). No event log retention is needed. |
@@ -505,7 +508,7 @@ reactions(reflection_id → reflections, user_id → users, emoji, created_at)
 
 tasks(id, team_id, meeting_id NULL, group_id NULL → reflection_groups, author_id → users,
       content, status ENUM('future','stuck','active','done'), position TEXT,
-      created_at, updated_at)
+      created_at, updated_at, edited_at NULL)       -- edited_at: last content edit (moves don't count)
     UNIQUE(team_id, status, position)
 
 task_mentions(task_id, user_id)  PK(task_id, user_id)
@@ -622,7 +625,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 
 The reaction endpoints are open to participants during Discuss, on cards of the current group. The emoji is percent-encoded in the path. Errors: 400 `invalid_emoji`, 403 `not_participant`, 404 `reflection_not_found`, 409 `meeting_ended`, `wrong_phase`, `not_current_group`. `PUT /meetings/{id}/discuss/current` errors: 403 `not_facilitator`, 404 `group_not_found` (not a group of this meeting), 409 `meeting_ended`, `wrong_phase`.
 
-From Discuss on, the meeting state also holds `discussOrder` (every group with its vote total and card count, in Discuss order), `discussGroupId`, `reactions` (per reflection and emoji: count, and whether it is the caller's) and `tasks` (those written in the meeting, oldest first). Before Discuss these are empty, so totals stay hidden.
+From Discuss on, the meeting state also holds `discussOrder` (every group with its vote total and card count, in Discuss order), `discussGroupId`, `reactions` (per reflection and emoji: count, and whether it is the caller's), `tasks` (those written in the meeting, oldest first, each with `editedAt` once edited) and `taskWriters` (who is writing a task right now, §9.5). Before Discuss these are empty, so totals stay hidden.
 
 The group endpoints are open to participants during Group (409 `wrong_phase`, `meeting_ended`, 403 `not_participant`) and answer with the meeting state. Unknown or foreign ids give 404 `reflection_not_found` / `group_not_found`; a card dropped onto itself gives 400 `same_reflection`, and a name over 80 characters 400 `invalid_group_name`.
 

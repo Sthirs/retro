@@ -3,18 +3,19 @@
  * The Tasks panel of Discuss (Discuss artboard, spec §9.5): the tasks
  * written for the group on screen, and, on the current group, a composer
  * (rich text with images and @mentions of team members). New tasks land in
- * the Active column of the board. Ctrl/Cmd + Enter adds.
+ * the Active column of the board. Ctrl/Cmd + Enter adds. Who else is
+ * writing a task for the group shows as a placeholder on top of the list
+ * (ADR-0015); anyone in the meeting can edit or delete any task.
  */
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import { api, type PersonDto } from '@/api/client';
-import RichText from '@/components/RichText.vue';
 import RichTextEditor from '@/components/RichTextEditor.vue';
-import UserAvatar from '@/components/UserAvatar.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import AppButton from '@/components/ui/AppButton.vue';
-import { formatTime } from '@/lib/time';
+import DiscussTaskItem from '@/features/meetings/discuss/DiscussTaskItem.vue';
+import TaskWritingPlaceholder from '@/features/meetings/discuss/TaskWritingPlaceholder.vue';
 import { useMeetingStore } from '@/stores/meeting';
 import { hasContent } from '@/stores/reflectDrafts';
 
@@ -25,6 +26,8 @@ const store = useMeetingStore();
 const tasks = computed(() =>
   (store.meeting?.tasks ?? []).filter((task) => task.groupId === props.groupId),
 );
+/** Others writing a new task for this group right now. */
+const writers = computed(() => store.taskWritersByGroup.get(props.groupId) ?? []);
 
 /** The team's members, the @-mention candidates. */
 const members = ref<PersonDto[]>([]);
@@ -93,6 +96,8 @@ async function add(): Promise<void> {
         :key="`${groupId}:${editorKey}`"
         v-model="draft"
         kind="task"
+        shortcuts
+        :framed="false"
         :members="members"
         :readonly="busy"
         :team-id="store.meeting?.teamId"
@@ -102,32 +107,23 @@ async function add(): Promise<void> {
         @uploading="uploading = $event"
       />
       <div class="composer__foot">
+        <span class="composer__hint">{{ t('discuss.tasks.addHint') }}</span>
         <AppButton variant="primary" size="compact" :disabled="!canAdd" @click="add">
           {{ t('discuss.tasks.add') }}
         </AppButton>
       </div>
     </div>
-    <p v-if="tasks.length === 0" class="tasks__none">{{ t('discuss.tasks.none') }}</p>
+    <p v-if="tasks.length === 0 && writers.length === 0" class="tasks__none">
+      {{ t('discuss.tasks.none') }}
+    </p>
     <ul v-else class="tasks__list">
-      <li v-for="task in tasks" :key="task.id" class="task" data-testid="discuss-task">
-        <RichText :html="task.contentHtml" class="task__content" />
-        <span class="task__meta">
-          <UserAvatar
-            :user-id="task.author.id"
-            :name="task.author.displayName"
-            :picture-version="task.author.pictureVersion"
-            :size="20"
-            ring="var(--card)"
-          />
-          {{
-            t('discuss.tasks.meta', {
-              name: task.author.displayName,
-              time: formatTime(task.createdAt),
-            })
-          }}
-        </span>
-      </li>
+      <TaskWritingPlaceholder v-for="writer in writers" :key="`writing:${writer.id}`" :writer />
+      <DiscussTaskItem v-for="task in tasks" :key="task.id" :task :readonly :members />
     </ul>
+    <p v-if="!readonly" class="tasks__note">
+      <AppIcon name="users" :size="15" />
+      <span>{{ t('discuss.tasks.note') }}</span>
+    </p>
   </aside>
 </template>
 
@@ -161,18 +157,30 @@ async function add(): Promise<void> {
   font-size: 13px;
   font-weight: 600;
 }
+/* One 2 px frame (the editor draws none of its own): accent while it is
+   being written in, a plain line at rest. */
 .composer {
   display: flex;
   flex-direction: column;
-  border: 2px solid var(--accent);
+  border: 2px solid var(--line);
   border-radius: var(--radius-control);
   background: var(--card);
 }
+.composer:focus-within {
+  border-color: var(--accent);
+}
 .composer__foot {
   display: flex;
-  justify-content: flex-end;
-  padding: 6px 8px 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 8px 12px;
   border-top: 1px solid var(--line);
+}
+.composer__hint {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
 }
 .tasks__none {
   margin: 0;
@@ -188,25 +196,12 @@ async function add(): Promise<void> {
   padding: 0;
   list-style: none;
 }
-.task {
+.tasks__note {
   display: flex;
-  flex-direction: column;
   gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  background: var(--card);
-}
-.task__content {
-  font-size: 14px;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.task__meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  margin: 0;
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.45;
 }
 </style>

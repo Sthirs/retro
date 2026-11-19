@@ -35,7 +35,7 @@ use crate::{
     },
     error::{AppError, AppResult, Problem},
     state::AppState,
-    ws::{DragDto, WritingCounts, WritingDto, ticket},
+    ws::{DragDto, TaskWriterDto, WritingCounts, WritingDto, ticket},
 };
 
 /// A participant of a meeting.
@@ -210,6 +210,9 @@ pub struct MeetingStateDto {
     pub reactions: Vec<ReactionDto>,
     /// From Discuss on, the tasks written in the meeting, oldest first.
     pub tasks: Vec<TaskDto>,
+    /// During Discuss, who is writing a new task (`groupId`) or editing one
+    /// (`taskId`) right now (spec §9.5, ADR-0015).
+    pub task_writers: Vec<TaskWriterDto>,
     /// Last event `seq` included in this snapshot on `meeting:{id}`.
     pub seq: i64,
     #[serde(with = "time::serde::rfc3339")]
@@ -228,7 +231,7 @@ impl MeetingStateDto {
         view: MeetingView,
         online: &HashSet<Uuid>,
         reflections: ReflectionsSnapshot,
-        live: (WritingCounts, Vec<DragDto>),
+        live: (WritingCounts, Vec<DragDto>, Vec<TaskWriterDto>),
         groups: Vec<GroupDto>,
         votes: VotesSnapshot,
         discuss: DiscussSnapshot,
@@ -290,6 +293,7 @@ impl MeetingStateDto {
             discuss_group_id: discuss.current,
             reactions: discuss.reactions,
             tasks: discuss.tasks.into_iter().map(TaskDto::from).collect(),
+            task_writers: live.2,
             seq: m.event_seq,
             created_at: m.created_at,
             ended_at: m.ended_at,
@@ -344,9 +348,20 @@ pub(crate) async fn state_of(
     let online = state.hub.online(meeting_id);
     // An ended meeting has no editors open, whatever sockets still say.
     let live = if view.meeting.status == MeetingStatus::Active {
-        (state.hub.writing(meeting_id), state.hub.drags(meeting_id))
+        // Task writers belong to Discuss: a phase change racing this
+        // snapshot must not show them alongside an earlier phase.
+        let task_writers = if view.meeting.phase == MeetingPhase::Discuss {
+            state.hub.task_writers(meeting_id)
+        } else {
+            Vec::new()
+        };
+        (
+            state.hub.writing(meeting_id),
+            state.hub.drags(meeting_id),
+            task_writers,
+        )
     } else {
-        (WritingCounts::default(), Vec::new())
+        (WritingCounts::default(), Vec::new(), Vec::new())
     };
     Ok(MeetingStateDto::new(
         view,

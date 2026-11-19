@@ -234,6 +234,8 @@ export const useMeetingStore = defineStore('meeting', () => {
    * a move to another group does not lose it.
    */
   const taskDrafts = ref<Record<string, string>>({});
+  /** The task this tab has its inline editor open on (Discuss), if any. */
+  const editingTaskId = ref<string | null>(null);
 
   function syncClock(serverNow: unknown): void {
     if (typeof serverNow !== 'string') return;
@@ -400,6 +402,34 @@ export const useMeetingStore = defineStore('meeting', () => {
     return by;
   });
 
+  /**
+   * Who else is writing a new task right now, by group id (spec §9.5,
+   * ADR-0015); the viewer's own other tabs are not "someone else".
+   */
+  const taskWritersByGroup = computed(() => {
+    const by = new Map<string, ParticipantDto[]>();
+    for (const writer of meeting.value?.taskWriters ?? []) {
+      if (writer.userId === me.value || !writer.groupId) continue;
+      const who = participantsById.value.get(writer.userId);
+      if (!who) continue;
+      const list = by.get(writer.groupId) ?? [];
+      list.push(who);
+      by.set(writer.groupId, list);
+    }
+    return by;
+  });
+
+  /** Who else has the editor open on each task right now, by task id. */
+  const taskEditors = computed(() => {
+    const by = new Map<string, ParticipantDto>();
+    for (const writer of meeting.value?.taskWriters ?? []) {
+      if (writer.userId === me.value || !writer.taskId) continue;
+      const who = participantsById.value.get(writer.userId);
+      if (who) by.set(writer.taskId, who);
+    }
+    return by;
+  });
+
   /** Applies the cards of a `group.*` event. */
   function applyMoves(m: MeetingStateDto, moves: CardMove[]): void {
     for (const move of moves) {
@@ -443,6 +473,7 @@ export const useMeetingStore = defineStore('meeting', () => {
     clearTimeout(taskResyncTimer);
     taskResyncTimer = undefined;
     taskDrafts.value = {};
+    editingTaskId.value = null;
   }
 
   /** Shows one emoji of a card as confirmed, with its pending toggles on top. */
@@ -722,6 +753,9 @@ export const useMeetingStore = defineStore('meeting', () => {
       case 'card.dragging':
         m.drags = p.drags as MeetingStateDto['drags'];
         break;
+      case 'task.writing':
+        m.taskWriters = p.writers as MeetingStateDto['taskWriters'];
+        break;
       case 'group.created':
       case 'group.updated':
         // This tab's own change came back with the answer to its request,
@@ -876,6 +910,7 @@ export const useMeetingStore = defineStore('meeting', () => {
       // (Raw: the next action clones the state, which a proxy would break.)
       before.writing = toRaw(now.writing);
       before.drags = toRaw(now.drags);
+      before.taskWriters = toRaw(now.taskWriters);
       before.myVotes = toRaw(now.myVotes);
       before.votesCast = now.votesCast;
       meeting.value = before;
@@ -1172,6 +1207,44 @@ export const useMeetingStore = defineStore('meeting', () => {
   }
 
   /**
+   * Edits a task's content (anyone in the meeting, spec §9.5). The answer is
+   * the task: it replaces the panel's copy, and its own event is skipped.
+   */
+  async function updateTask(taskId: string, content: string): Promise<boolean> {
+    actionError.value = null;
+    try {
+      const res = await api.updateTask(taskId, { content });
+      if (res.status !== 200) throw apiError(res);
+      const m = meeting.value;
+      const i = m?.tasks.findIndex((task) => task.id === taskId) ?? -1;
+      if (m && i >= 0) m.tasks[i] = res.data;
+      return true;
+    } catch (e) {
+      actionError.value = errorCode(e);
+      return false;
+    }
+  }
+
+  /** Deletes a task (anyone in the meeting); it leaves the panel at once. */
+  async function deleteTask(taskId: string): Promise<boolean> {
+    actionError.value = null;
+    try {
+      const res = await api.deleteTask(taskId);
+      // Already gone (someone else deleted it): what the viewer wanted.
+      if (res.status !== 204) {
+        const error = apiError(res);
+        if (error.code !== 'task_not_found') throw error;
+      }
+      const m = meeting.value;
+      if (m) m.tasks = m.tasks.filter((task) => task.id !== taskId);
+      return true;
+    } catch (e) {
+      actionError.value = errorCode(e);
+      return false;
+    }
+  }
+
+  /**
    * Puts the viewer's `emoji` on a card, or takes it back when it is already
    * theirs (spec §9.5: one of each emoji per person). Shown at once; the
    * answer brings the count. Toggles of the same emoji on the same card go
@@ -1320,8 +1393,13 @@ export const useMeetingStore = defineStore('meeting', () => {
     followCurrent,
     setCurrentGroup,
     createTask,
+    updateTask,
+    deleteTask,
     taskDrafts,
     setTaskDraft,
+    editingTaskId,
+    taskWritersByGroup,
+    taskEditors,
     toggleReaction,
   };
 });

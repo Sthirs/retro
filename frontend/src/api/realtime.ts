@@ -6,8 +6,9 @@
  * channel gets a `resync` event: whatever its listeners read over REST before
  * that may have missed events published until the acknowledgement.
  *
- * It also carries the tab's ephemeral state (ADR-0012): what it is writing
- * (Reflect) and the card it is dragging (Group). The server ties both to the
+ * It also carries the tab's ephemeral state (ADR-0012, ADR-0015): what it is
+ * writing (Reflect), the card it is dragging (Group) and the task it is
+ * writing or editing (Discuss). The server ties both to the
  * socket: they are sent again after every acknowledgement, so a reconnect
  * restores them.
  */
@@ -33,6 +34,9 @@ export interface WritingState {
   mode: 'new' | 'edit';
 }
 
+/** What the tab is doing on a task in Discuss: a new one for a group, or editing one. */
+export type TaskWritingState = { groupId: string } | { taskId: string };
+
 /**
  * `idle`: no subscriptions; `connecting`: the first attempt is under way;
  * `reconnecting`: the socket dropped, or an attempt failed, and it is coming back.
@@ -56,7 +60,7 @@ const EPHEMERAL_PER_SECOND = 8;
 const EPHEMERAL_WINDOW_MS = 1000;
 
 /** The kinds of ephemeral state a tab tells a meeting channel. */
-type Ephemeral = 'writing' | 'drag';
+type Ephemeral = 'writing' | 'drag' | 'taskWriting';
 
 export class RealtimeClient {
   readonly status: Ref<RealtimeStatus> = ref('idle');
@@ -75,6 +79,8 @@ export class RealtimeClient {
   private readonly writing = new Map<string, WritingState>();
   /** The card dragged per meeting channel, re-sent after each acknowledgement. */
   private readonly dragging = new Map<string, string>();
+  /** The task written or edited per meeting channel, re-sent after each acknowledgement. */
+  private readonly taskWriting = new Map<string, TaskWritingState>();
   /** When the socket's recent ephemeral messages were sent. */
   private sentAt: number[] = [];
   /** Per channel, the ephemeral states whose latest value waits for the rate budget. */
@@ -124,6 +130,18 @@ export class RealtimeClient {
     if (this.isLive(channel)) this.sendEphemeral('drag', channel);
   }
 
+  /**
+   * Tells the meeting `channel` which task this tab is writing or editing
+   * (`null`: none). Sent at once while the subscription is live, otherwise
+   * on its ack.
+   */
+  setTaskWriting(channel: string, state: TaskWritingState | null): void {
+    if (taskKey(this.taskWriting.get(channel) ?? null) === taskKey(state)) return;
+    if (state) this.taskWriting.set(channel, state);
+    else this.taskWriting.delete(channel);
+    if (this.isLive(channel)) this.sendEphemeral('taskWriting', channel);
+  }
+
   /** Subscribed and acknowledged: messages on it reach the server's subscription. */
   private isLive(channel: string): boolean {
     return this.handlers.has(channel) && !this.awaitingAck.has(channel);
@@ -155,8 +173,16 @@ export class RealtimeClient {
     if (kind === 'writing') {
       const state = this.writing.get(channel);
       this.send({ type: 'writing', channel, column: state?.column ?? null, mode: state?.mode });
-    } else {
+    } else if (kind === 'drag') {
       this.send({ type: 'drag', channel, reflectionId: this.dragging.get(channel) ?? null });
+    } else {
+      const state = this.taskWriting.get(channel);
+      this.send({
+        type: 'taskWriting',
+        channel,
+        groupId: state && 'groupId' in state ? state.groupId : null,
+        taskId: state && 'taskId' in state ? state.taskId : null,
+      });
     }
   }
 
@@ -175,6 +201,7 @@ export class RealtimeClient {
   private restoreEphemeral(channel: string): void {
     if (this.writing.has(channel)) this.sendEphemeral('writing', channel);
     if (this.dragging.has(channel)) this.sendEphemeral('drag', channel);
+    if (this.taskWriting.has(channel)) this.sendEphemeral('taskWriting', channel);
   }
 
   /** Forgets the held states and the rate budget (a new socket). */
@@ -190,6 +217,7 @@ export class RealtimeClient {
     this.handlers.clear();
     this.writing.clear();
     this.dragging.clear();
+    this.taskWriting.clear();
     this.close();
   }
 
@@ -200,6 +228,7 @@ export class RealtimeClient {
     this.awaitingAck.delete(channel);
     this.writing.delete(channel);
     this.dragging.delete(channel);
+    this.taskWriting.delete(channel);
     this.held.delete(channel);
     this.send({ type: 'unsubscribe', channel });
     if (this.handlers.size === 0) {
@@ -330,3 +359,9 @@ function socketUrl(ticket: string): string {
 
 /** The app's socket. */
 export const realtime = new RealtimeClient();
+
+/** Compares task writing states by value. */
+function taskKey(state: TaskWritingState | null): string | null {
+  if (!state) return null;
+  return 'groupId' in state ? `group:${state.groupId}` : `task:${state.taskId}`;
+}

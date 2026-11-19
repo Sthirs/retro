@@ -481,6 +481,157 @@ describe('Discuss phase', () => {
     expect(calls.filter((c) => c.path === `/api/v1/teams/${TEAM_ID}/members`)).toHaveLength(1);
   });
 
+  it('adds a task with Ctrl + Enter, as the hint says', async () => {
+    const { calls } = mockFetch(
+      routes(BOB, discussing(), {
+        [`POST ${BASE}/tasks`]: { status: 201, body: discussing({ seq: 3 }) },
+      }),
+    );
+    const { wrapper } = await open();
+    const composer = wrapper.get('.composer');
+    expect(composer.text()).toContain('Ctrl + Enter');
+    const editor = wrapper.findComponent(RichTextEditor);
+    expect(editor.props('shortcuts')).toBe(true);
+    expect(editor.props('framed')).toBe(false);
+    editor.vm.$emit('update:modelValue', '<p>Pin the runner image</p>');
+    await flushPromises();
+    editor.vm.$emit('submit');
+    await flushPromises();
+    expect(calls.find((c) => c.path === `${BASE}/tasks`)?.body).toEqual({
+      groupId: 'g1',
+      content: '<p>Pin the runner image</p>',
+    });
+    expect(wrapper.text()).toContain('Anyone in the meeting can edit or delete any task.');
+  });
+
+  it('edits a task in place and tells the others while the editor is open', async () => {
+    const edited = {
+      ...task,
+      contentHtml: '<p>Quarantine flaky tests after two failures</p>',
+      editedAt: '2026-11-10T18:47:00Z',
+    };
+    const { calls } = mockFetch(
+      routes(BOB, discussing(), {
+        'PATCH /api/v1/tasks/t1': { status: 200, body: edited },
+      }),
+    );
+    const { wrapper } = await open();
+    const socket = await openSocket();
+    socket.emit({ type: 'subscribed', channel });
+    await flushPromises();
+    const item = () => wrapper.get('[data-testid="discuss-task"]');
+    expect(item().text()).not.toContain('edited');
+
+    await wrapper.get('button[aria-label="Edit task: Quarantine flaky tests"]').trigger('click');
+    await flushPromises();
+    expect(item().classes()).toContain('task--active');
+    expect(socket.sent.at(-1)).toEqual({
+      type: 'taskWriting',
+      channel,
+      groupId: null,
+      taskId: 't1',
+    });
+    const editor = item().findComponent(RichTextEditor);
+    expect(editor.props('modelValue')).toBe('<p>Quarantine flaky tests</p>');
+    editor.vm.$emit('update:modelValue', edited.contentHtml);
+    await flushPromises();
+    await item()
+      .findAll('button')
+      .find((b) => b.text() === 'Save')!
+      .trigger('click');
+    await flushPromises();
+
+    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({
+      content: edited.contentHtml,
+    });
+    expect(item().findComponent(RichTextEditor).exists()).toBe(false);
+    expect(item().text()).toContain('Quarantine flaky tests after two failures');
+    expect(item().text()).toContain('Bob Bianchi · edited');
+    expect(socket.sent.at(-1)).toEqual({
+      type: 'taskWriting',
+      channel,
+      groupId: null,
+      taskId: null,
+    });
+  });
+
+  it('deletes a task once confirmed', async () => {
+    const { calls } = mockFetch(
+      routes(BOB, discussing(), { 'DELETE /api/v1/tasks/t1': { status: 204 } }),
+    );
+    const { wrapper } = await open();
+    await wrapper.get('button[aria-label="Delete task: Quarantine flaky tests"]').trigger('click');
+    await flushPromises();
+    const dialog = wrapper.get('dialog');
+    expect(dialog.get('h2').text()).toBe('Delete this task?');
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
+    await dialog
+      .findAll('button')
+      .find((b) => b.text() === 'Delete')!
+      .trigger('click');
+    await flushPromises();
+    expect(calls.find((c) => c.method === 'DELETE')?.path).toBe('/api/v1/tasks/t1');
+    expect(wrapper.find('[data-testid="discuss-task"]').exists()).toBe(false);
+  });
+
+  it('shows who else is writing or editing a task, never the viewer', async () => {
+    mockFetch(routes(BOB));
+    const { wrapper } = await open();
+    const socket = await openSocket();
+    socket.emit({
+      type: 'task.writing',
+      channel,
+      payload: {
+        writers: [
+          { userId: ALICE.id, groupId: 'g1', taskId: null },
+          { userId: ALICE.id, groupId: null, taskId: 't1' },
+          { userId: BOB.id, groupId: 'g1', taskId: null },
+          { userId: ALICE.id, groupId: 'g2', taskId: null },
+        ],
+      },
+    });
+    await flushPromises();
+    const writing = wrapper.findAll('[data-testid="discuss-task-writing"]');
+    expect(writing).toHaveLength(1);
+    expect(writing[0]!.attributes('aria-label')).toBe('Alice is writing a task');
+    const item = wrapper.get('[data-testid="discuss-task"]');
+    expect(item.classes()).toContain('task--active');
+    expect(item.text()).toContain('Alice is editing');
+
+    socket.emit({ type: 'task.writing', channel, payload: { writers: [] } });
+    await flushPromises();
+    expect(wrapper.find('[data-testid="discuss-task-writing"]').exists()).toBe(false);
+    expect(wrapper.get('[data-testid="discuss-task"]').classes()).not.toContain('task--active');
+  });
+
+  it('tells the others while an unsent task is held for the current group', async () => {
+    mockFetch(routes(BOB));
+    const { wrapper } = await open();
+    const socket = await openSocket();
+    socket.emit({ type: 'subscribed', channel });
+    await flushPromises();
+    const writes = () => socket.sent.filter((m) => m.type === 'taskWriting');
+    expect(writes()).toEqual([]);
+
+    wrapper.findComponent(RichTextEditor).vm.$emit('update:modelValue', '<p>Pin</p>');
+    await flushPromises();
+    expect(writes().at(-1)).toEqual({ type: 'taskWriting', channel, groupId: 'g1', taskId: null });
+    wrapper.findComponent(RichTextEditor).vm.$emit('update:modelValue', '<p></p>');
+    await flushPromises();
+    expect(writes().at(-1)).toEqual({ type: 'taskWriting', channel, groupId: null, taskId: null });
+  });
+
+  it('offers no edit or delete on a previewed group', async () => {
+    mockFetch(routes(BOB, discussing({ tasks: [task, { ...task, id: 't3', groupId: 'g2' }] })));
+    const { wrapper } = await open();
+    expect(wrapper.find('button[aria-label^="Edit task"]').exists()).toBe(true);
+    await entry(wrapper, 'On-call').trigger('click');
+    await flushPromises();
+    expect(wrapper.findAll('[data-testid="discuss-task"]')).toHaveLength(1);
+    expect(wrapper.find('button[aria-label^="Edit task"]').exists()).toBe(false);
+    expect(wrapper.find('button[aria-label^="Delete task"]').exists()).toBe(false);
+  });
+
   it('shows an empty Discuss when no group was made', async () => {
     mockFetch(
       routes(
@@ -507,8 +658,11 @@ describe('Discuss phase', () => {
 
   it('is read-only once the meeting ended', async () => {
     mockFetch(routes(BOB, discussing({ status: 'ended', endedAt: '2026-11-10T19:00:00Z' })));
-    const { wrapper } = await open();
-    // The ended meeting goes to its summary, not the room.
+    const { wrapper, router } = await open();
+    // The ended meeting goes to its summary, not the room. Waiting for it lets
+    // the lazy shell load before the file's environment is torn down.
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('meeting-summary'));
+    await flushPromises();
     expect(wrapper.find('[data-testid="add-reaction"]').exists()).toBe(false);
   });
 });

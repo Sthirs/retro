@@ -13,7 +13,8 @@ pub mod ticket;
 
 pub use channel::Channel;
 pub use hub::{
-    AccessChange, ColumnWritingDto, DragDto, Hub, WritingCounts, WritingDto, WritingMode,
+    AccessChange, ColumnWritingDto, DragDto, Hub, TaskTarget, TaskWriterDto, WritingCounts,
+    WritingDto, WritingMode,
 };
 pub use socket::ws_handler;
 

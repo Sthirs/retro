@@ -4495,7 +4495,6 @@
           "title",
           "facilitator",
           "participants",
-          "votesCast",
           "groups",
           "tasks",
           "createdAt",
@@ -4518,7 +4517,7 @@
             "items": {
               "$ref": "#/components/schemas/SummaryGroupDto"
             },
-            "description": "Most votes first (Discuss order). Empty when the meeting ended\nduring Reflect: its reflections were never revealed."
+            "description": "Most votes first (Discuss order). Empty when the meeting ended\nduring Reflect: its reflections were never revealed. Ended during\nGroup or Vote: by size, then id, with no totals."
           },
           "id": {
             "type": "string",
@@ -4549,9 +4548,12 @@
             "type": "string"
           },
           "votesCast": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32",
-            "description": "Votes cast overall."
+            "description": "Votes cast overall; `null` when the meeting ended before Discuss:\nnobody saw the totals."
           }
         }
       },
@@ -5679,7 +5681,6 @@
         "required": [
           "id",
           "name",
-          "votes",
           "reflections"
         ],
         "properties": {
@@ -5700,8 +5701,12 @@
             "description": "By column (Plus, Delta, Ideas, Thanks), then place."
           },
           "votes": {
-            "type": "integer",
-            "format": "int32"
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`null` when the meeting ended before Discuss: nobody saw the totals."
           }
         }
       },

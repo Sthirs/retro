@@ -493,7 +493,7 @@ test.describe('meeting summary', () => {
       'No reflections were revealed in this meeting.',
     );
     await expect(summary.tasksSection).toContainText('No tasks were created in this meeting.');
-    await expect(summary.fact('Votes cast')).toHaveText('0');
+    await expect(summary.fact('Votes cast')).toHaveCount(0);
     await expect(summary.participants).toHaveCount(3);
     await expect(yara.getByText('Secret worry')).toHaveCount(0);
   });
@@ -516,13 +516,41 @@ test.describe('meeting summary', () => {
     const summary = new SummaryPage(yara);
     await summary.goto(teamId, meetingId);
     await expect(summary.groupTitles()).toHaveText(['Standups', 'Try mob programming']);
-    await expect(summary.groups.filter({ hasText: '0 votes' })).toHaveCount(2);
+    await expect(summary.groups.filter({ hasText: /\d+ votes?/ })).toHaveCount(0);
     await expect(summary.cards(summary.group('Standups')).locator('.card__column')).toHaveText([
       'Plus',
       'Delta',
     ]);
-    await expect(summary.fact('Votes cast')).toHaveText('0');
+    await expect(summary.fact('Votes cast')).toHaveCount(0);
     await expect(summary.tasks).toHaveCount(0);
+  });
+
+  test('a meeting ended during Vote keeps the vote totals hidden', async () => {
+    await meetingAction(YARA, meetingId, 'phase/next');
+    await writeReflection(ZENO, meetingId, 'ideas', '<p>Try mob programming</p>');
+    await writeReflection(ABEL, meetingId, 'delta', '<p>Standups run long</p>');
+    await writeReflection(YARA, meetingId, 'plus', '<p>Standups started on time</p>');
+    await meetingAction(YARA, meetingId, 'phase/next');
+    const twins = await groupCards(
+      ABEL,
+      meetingId,
+      await cardId(meetingId, 'Standups run long'),
+      await cardId(meetingId, 'Standups started on time'),
+    );
+    await renameGroup(ABEL, twins, 'Standups');
+    await meetingAction(YARA, meetingId, 'phase/next');
+    // Every vote on the lone card: Discuss would have ranked it first.
+    const state = await meetingState(YARA, meetingId);
+    const lone = state.reflections.find((r) => r.content.includes('mob programming'))!.groupId!;
+    await castVote(ZENO, lone, 1);
+    await castVote(ZENO, lone, 1);
+    await meetingAction(YARA, meetingId, 'end');
+
+    const summary = new SummaryPage(yara);
+    await summary.goto(teamId, meetingId);
+    await expect(summary.groupTitles()).toHaveText(['Standups', 'Try mob programming']);
+    await expect(summary.groups.filter({ hasText: /\d+ votes?/ })).toHaveCount(0);
+    await expect(summary.fact('Votes cast')).toHaveCount(0);
   });
 
   test('a renamed meeting shows its new title', async () => {

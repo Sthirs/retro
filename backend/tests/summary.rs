@@ -421,7 +421,7 @@ async fn ended_during_reflect_reveals_nothing() {
         let s = ok(res);
         assert_eq!(s["groups"], json!([]));
         assert_eq!(s["tasks"], json!([]));
-        assert_eq!(s["votesCast"], 0);
+        assert_eq!(s["votesCast"], Value::Null);
         assert_eq!(s["participants"].as_array().unwrap().len(), 3);
     }
 }
@@ -454,7 +454,7 @@ async fn ended_during_group_shows_loose_cards_alone() {
     let groups = s["groups"].as_array().unwrap();
     assert_eq!(groups.len(), 2);
     assert_eq!(groups[0]["name"], "Twins");
-    assert_eq!(groups[0]["votes"], 0);
+    assert_eq!(groups[0]["votes"], Value::Null);
     let cards: Vec<&str> = groups[0]["reflections"]
         .as_array()
         .unwrap()
@@ -465,9 +465,36 @@ async fn ended_during_group_shows_loose_cards_alone() {
     assert_eq!(cards, vec![b.as_str(), c.as_str()]);
     assert_eq!(groups[1]["name"], "");
     assert_eq!(groups[1]["id"], a.as_str());
-    assert_eq!(groups[1]["votes"], 0);
+    assert_eq!(groups[1]["votes"], Value::Null);
     assert_eq!(groups[1]["reflections"][0]["content"], "<p>Loose idea</p>");
-    assert_eq!(s["votesCast"], 0);
+    assert_eq!(s["votesCast"], Value::Null);
+}
+
+/// Totals stay hidden until Discuss (§9.4): a meeting ended during Vote
+/// shows its groups by size, with no totals.
+#[tokio::test]
+async fn ended_during_vote_hides_the_totals() {
+    let app = TestApp::new().await;
+    let r = room(&app).await;
+    let m = &r.meeting;
+    next_phase(&app, &r.alice, m).await;
+    let a = sent(&app, &r.alice, m, "ideas", "Loose idea").await;
+    let b = sent(&app, &r.bob, m, "plus", "Pair one").await;
+    let c = sent(&app, &r.erin, m, "delta", "Pair two").await;
+    next_phase(&app, &r.alice, m).await;
+    pair(&app, &r.alice, m, &b, &c, "Twins").await;
+    next_phase(&app, &r.alice, m).await;
+    // The loose card gets every vote: it would lead in Discuss order.
+    let seen = state(&app, &r.alice, m).await;
+    vote(&app, &r.bob, &group_of(&seen, &a), 2).await;
+    end(&app, &r.alice, m).await;
+
+    let s = ok(summary(&app, &r.bob, m).await);
+    assert_eq!(s["votesCast"], Value::Null);
+    let groups = s["groups"].as_array().unwrap();
+    let names: Vec<&str> = groups.iter().map(|g| g["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["Twins", ""]);
+    assert!(groups.iter().all(|g| g["votes"].is_null()), "{groups:?}");
 }
 
 #[tokio::test]

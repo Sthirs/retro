@@ -150,7 +150,11 @@ export interface SummaryGroupDto {
   name: string;
   /** By column (Plus, Delta, Ideas, Thanks), then place. */
   reflections: SummaryReflectionDto[];
-  votes: number;
+  /**
+   * `null` when the meeting ended before Discuss: nobody saw the totals.
+   * @nullable
+   */
+  votes?: number | null;
 }
 
 /**
@@ -196,7 +200,8 @@ export interface EndedMeetingSummaryDto {
   facilitator: PersonDto;
   /**
    * Most votes first (Discuss order). Empty when the meeting ended
-   * during Reflect: its reflections were never revealed.
+   * during Reflect: its reflections were never revealed. Ended during
+   * Group or Vote: by size, then id, with no totals.
    */
   groups: SummaryGroupDto[];
   id: string;
@@ -210,8 +215,12 @@ export interface EndedMeetingSummaryDto {
   teamId: string;
   teamName: string;
   title: string;
-  /** Votes cast overall. */
-  votesCast: number;
+  /**
+   * Votes cast overall; `null` when the meeting ended before Discuss:
+   * nobody saw the totals.
+   * @nullable
+   */
+  votesCast?: number | null;
 }
 
 /**

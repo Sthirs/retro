@@ -71,12 +71,16 @@ const duration = computed(() =>
 const facts = computed(() => {
   const s = summary.value;
   if (!s) return [];
-  return [
+  const facts = [
     { key: 'date', label: t('summary.date'), value: formatDate(s.createdAt) },
     { key: 'duration', label: t('summary.duration'), value: duration.value },
     { key: 'facilitator', label: t('summary.facilitator'), value: s.facilitator.displayName },
-    { key: 'votesCast', label: t('summary.votesCast'), value: String(s.votesCast) },
   ];
+  // Hidden when the meeting ended before Discuss: nobody saw the totals.
+  if (s.votesCast != null) {
+    facts.push({ key: 'votesCast', label: t('summary.votesCast'), value: String(s.votesCast) });
+  }
+  return facts;
 });
 const meetingsRoute = computed(() => ({ name: 'team-meetings', params: { teamId: teamId.value } }));
 const boardRoute = computed(() => ({

@@ -209,7 +209,7 @@ Team members can open any ended meeting, which shows a read-only **summary** wit
 
 - title, the time it ended, date, duration, facilitator and the number of **votes cast** overall;
 - **participants**, in joining order (including people who have since left the team);
-- **groups**, in Discuss order (sorted by votes, ties broken as in §9.5), each with its name, **vote total** and its anonymous reflections, each shown as rich text with its column label. A card that was never grouped appears as a group of one, with no votes. A meeting ended during Reflect shows no reflections: they were never revealed;
+- **groups**, in Discuss order (sorted by votes, ties broken as in §9.5), each with its name, **vote total** and its anonymous reflections, each shown as rich text with its column label. A card that was never grouped appears as a group of one, with no votes. A meeting ended during Reflect shows no reflections: they were never revealed. A meeting ended during Group or Vote shows its groups and reflections but no vote totals and no votes-cast count, since totals are hidden until Discuss (§9.4); its groups are sorted by size, then id;
 - **tasks** created during the meeting, with their **current** board status, their @mentions, and a link to the Tasks board filtered to the meeting. A task deleted from the board no longer appears.
 
 The summary has its own address inside the team pages (§15.2); opening an ended meeting's room leads there, and opening the summary of a meeting still running leads to its room. The individual meeting phases cannot be replayed.

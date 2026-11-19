@@ -96,13 +96,25 @@ describe('Meeting summary', () => {
 
   it('says so when nothing was revealed and no task was written', async () => {
     mockFetch(
-      routes({ status: 200, body: meetingReport({ groups: [], tasks: [], votesCast: 0 }) }),
+      routes({ status: 200, body: meetingReport({ groups: [], tasks: [], votesCast: null }) }),
     );
     const { wrapper } = await open();
     expect(groups(wrapper)).toHaveLength(0);
     expect(wrapper.text()).toContain('No reflections were revealed in this meeting.');
     expect(wrapper.text()).toContain('No tasks were created in this meeting.');
-    expect(fact(wrapper, 'votesCast').get('dd').text()).toBe('0');
+    expect(wrapper.find('[data-fact="votesCast"]').exists()).toBe(false);
+  });
+
+  it('hides the vote totals of a meeting ended before Discuss', async () => {
+    const report = meetingReport({
+      votesCast: null,
+      groups: meetingReport().groups.map((g) => ({ ...g, votes: null })),
+    });
+    mockFetch(routes({ status: 200, body: report }));
+    const { wrapper } = await open();
+    expect(groups(wrapper)).toHaveLength(report.groups.length);
+    expect(wrapper.find('[data-testid="summary-group-votes"]').exists()).toBe(false);
+    expect(wrapper.find('[data-fact="votesCast"]').exists()).toBe(false);
   });
 
   it('opens the room of a meeting that is still running', async () => {

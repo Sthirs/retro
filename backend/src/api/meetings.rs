@@ -454,10 +454,12 @@ pub struct EndedMeetingSummaryDto {
     pub facilitator: PersonDto,
     /// In joining order, including people who left the team since.
     pub participants: Vec<PersonDto>,
-    /// Votes cast overall.
-    pub votes_cast: i32,
+    /// Votes cast overall; `null` when the meeting ended before Discuss:
+    /// nobody saw the totals.
+    pub votes_cast: Option<i32>,
     /// Most votes first (Discuss order). Empty when the meeting ended
-    /// during Reflect: its reflections were never revealed.
+    /// during Reflect: its reflections were never revealed. Ended during
+    /// Group or Vote: by size, then id, with no totals.
     pub groups: Vec<SummaryGroupDto>,
     /// The tasks written in the meeting, oldest first, with their current
     /// board status.

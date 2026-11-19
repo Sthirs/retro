@@ -25,7 +25,13 @@ const headingId = computed(() => `summary-group-${props.group.id}`);
     <div class="group__header">
       <span class="group__rank">{{ t('summary.rank', { rank }) }}</span>
       <h3 :id="headingId" class="group__name">{{ label }}</h3>
-      <span class="group__votes" :class="{ 'group__votes--top': rank === 1 && group.votes > 0 }">
+      <!-- No total when the meeting ended before Discuss: nobody saw it. -->
+      <span
+        v-if="group.votes != null"
+        class="group__votes"
+        :class="{ 'group__votes--top': rank === 1 && group.votes > 0 }"
+        data-testid="summary-group-votes"
+      >
         {{ t('summary.votes', { count: group.votes }, group.votes) }}
       </span>
     </div>

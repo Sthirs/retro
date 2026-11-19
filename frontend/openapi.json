@@ -1554,7 +1554,7 @@
             }
           },
           "409": {
-            "description": "`meeting_ended` or `wrong_phase`",
+            "description": "`meeting_ended`, `wrong_phase`, or `no_other_question` (the current question is the only active one)",
             "content": {
               "application/problem+json": {
                 "schema": {

@@ -386,8 +386,8 @@ async fn pick_greeting(
 }
 
 /// A random active question, avoiding the team's recent ones when possible,
-/// and never `exclude` (the question being replaced) unless it is the only
-/// active one.
+/// and never `exclude` (the question being replaced): when no other active
+/// question exists, fails with `no_other_question`.
 async fn pick_question(
     db: &impl ConnectionTrait,
     team_id: Uuid,
@@ -409,13 +409,16 @@ async fn pick_question(
     }
     icebreaker_question::Model::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT * FROM icebreaker_questions WHERE active \
-         ORDER BY text = $1, random() LIMIT 1",
+        "SELECT * FROM icebreaker_questions WHERE active AND text <> $1 \
+         ORDER BY random() LIMIT 1",
         [exclude.into()],
     ))
     .one(db)
     .await?
-    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("no icebreaker questions")))
+    .ok_or_else(|| match exclude {
+        "" => AppError::Internal(anyhow::anyhow!("no icebreaker questions")),
+        _ => AppError::Conflict("no_other_question"),
+    })
 }
 
 /// Starts a meeting; `actor` (a member) becomes its facilitator and first

@@ -621,7 +621,7 @@ pub async fn icebreaker_next(
         (status = 200, body = MeetingStateDto, description = "The meeting, with its new question"),
         (status = 403, body = Problem, content_type = "application/problem+json", description = "`not_facilitator`"),
         (status = 404, body = Problem, content_type = "application/problem+json", description = "`meeting_not_found`"),
-        (status = 409, body = Problem, content_type = "application/problem+json", description = "`meeting_ended` or `wrong_phase`"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`meeting_ended`, `wrong_phase`, or `no_other_question` (the current question is the only active one)"),
     )
 )]
 pub async fn icebreaker_question(

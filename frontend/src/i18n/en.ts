@@ -45,6 +45,7 @@ export default {
     wrong_phase: 'The meeting has moved on to another phase.',
     icebreaker_done: 'Everyone has had their turn. Move on to the next phase.',
     icebreaker_not_reached: 'This person has not had their turn yet.',
+    no_other_question: 'There is no other question to pick.',
     last_phase: 'This is the last phase.',
     target_not_participant: 'This person is no longer in the meeting.',
     invalid_title: 'Enter a title of 1 to 80 characters.',

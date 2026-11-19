@@ -372,7 +372,7 @@ async fn the_facilitator_changes_the_icebreaker_question() {
 }
 
 #[tokio::test]
-async fn the_only_active_question_stays_when_changed() {
+async fn the_only_active_question_cannot_be_changed() {
     use sea_orm::{ConnectionTrait, Statement};
     let app = TestApp::new().await;
     let alice = app.token_for("alice").await;
@@ -390,8 +390,9 @@ async fn the_only_active_question_stays_when_changed() {
         .unwrap();
 
     let res = act(&app, &alice, m, "icebreaker/question", None).await;
-    assert_eq!(res.status, 200, "{}", res.text());
-    assert_eq!(res.json()["question"], question);
+    assert_eq!(res.status, 409, "{}", res.text());
+    assert_eq!(res.json()["code"], "no_other_question");
+    assert_eq!(state(&app, &alice, m).await["question"], question);
 }
 
 #[tokio::test]

@@ -20,7 +20,7 @@ import { useErrorText } from '@/composables/useErrorText';
 import LinkStateCard from '@/features/invitations/LinkStateCard.vue';
 import SummaryGroup from '@/features/meetings/summary/SummaryGroup.vue';
 import { useDuration } from '@/features/meetings/useDuration';
-import { formatDate, formatTime } from '@/lib/time';
+import { formatDate, formatTime, isSameDay } from '@/lib/time';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -93,6 +93,15 @@ onBeforeUnmount(() => {
   clearTimeout(refreshTimer);
 });
 
+/** "Ended at 18:07", with its date when it ended on a later day than it began. */
+const endedText = computed(() => {
+  const s = summary.value;
+  if (!s) return '';
+  const time = formatTime(s.endedAt);
+  return isSameDay(s.endedAt, Date.parse(s.createdAt))
+    ? t('summary.endedAt', { time })
+    : t('summary.endedOn', { date: formatDate(s.endedAt), time });
+});
 const duration = computed(() =>
   summary.value ? formatDuration(summary.value.createdAt, summary.value.endedAt) : '',
 );
@@ -147,7 +156,7 @@ const boardRoute = computed(() => ({
         </div>
         <span class="summary__ended" data-testid="ended-at">
           <AppIcon name="flag" :size="14" />
-          {{ t('summary.endedAt', { time: formatTime(summary.endedAt) }) }}
+          {{ endedText }}
         </span>
       </div>
 

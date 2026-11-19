@@ -549,6 +549,7 @@ export default {
     back: 'Meetings',
     eyebrow: 'Meeting summary · read-only',
     endedAt: 'Ended at {time}',
+    endedOn: 'Ended {date} at {time}',
     facts: 'Meeting details',
     date: 'Date',
     duration: 'Duration',

@@ -106,6 +106,21 @@ describe('Meeting summary', () => {
     expect(wrapper.find('[data-fact="votesCast"]').exists()).toBe(false);
   });
 
+  it('dates the end when the meeting ran past midnight', async () => {
+    // 23:40 to 00:30 the next day, in the browser's time zone.
+    const start = new Date(2026, 10, 10, 23, 40);
+    const end = new Date(2026, 10, 11, 0, 30);
+    mockFetch(
+      routes({
+        status: 200,
+        body: meetingReport({ createdAt: start.toISOString(), endedAt: end.toISOString() }),
+      }),
+    );
+    const { wrapper } = await open();
+    expect(wrapper.get('[data-testid="ended-at"]').text()).toBe('Ended 11 Nov 2026 at 00:30');
+    expect(fact(wrapper, 'date').get('dd').text()).toBe('10 Nov 2026');
+  });
+
   it('keeps task statuses current while it is open', async () => {
     const task = meetingReport().tasks[0]!;
     let status = 'active';

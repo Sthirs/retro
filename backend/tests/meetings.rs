@@ -340,6 +340,62 @@ async fn the_facilitator_moves_through_the_icebreaker() {
 }
 
 #[tokio::test]
+async fn the_facilitator_changes_the_icebreaker_question() {
+    let app = TestApp::new().await;
+    let (alice, bob, _carol, team) = team_of_three(&app).await;
+    let meeting = start(&app, &alice, team).await;
+    let m = id(&meeting);
+    join(&app, &bob, team, m).await;
+
+    // Only the facilitator.
+    let res = act(&app, &bob, m, "icebreaker/question", None).await;
+    assert_eq!(res.status, 403);
+    assert_eq!(res.json()["code"], "not_facilitator");
+
+    // Each change gives another question, which everyone sees.
+    let mut question = meeting["question"].as_str().unwrap().to_owned();
+    for _ in 0..12 {
+        let res = act(&app, &alice, m, "icebreaker/question", None).await;
+        assert_eq!(res.status, 200, "{}", res.text());
+        let next = res.json()["question"].as_str().unwrap().to_owned();
+        assert!(!next.is_empty());
+        assert_ne!(next, question);
+        question = next;
+    }
+    assert_eq!(state(&app, &bob, m).await["question"], question.as_str());
+
+    // Only during the Icebreaker.
+    act(&app, &alice, m, "phase/next", None).await;
+    let res = act(&app, &alice, m, "icebreaker/question", None).await;
+    assert_eq!(res.status, 409);
+    assert_eq!(res.json()["code"], "wrong_phase");
+}
+
+#[tokio::test]
+async fn the_only_active_question_cannot_be_changed() {
+    use sea_orm::{ConnectionTrait, Statement};
+    let app = TestApp::new().await;
+    let alice = app.token_for("alice").await;
+    let team = create_team(&app, &alice, "Platform").await;
+    let meeting = start(&app, &alice, team).await;
+    let m = id(&meeting);
+    let question = meeting["question"].as_str().unwrap();
+    app.db
+        .execute_raw(Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "UPDATE icebreaker_questions SET active = text = $1",
+            [question.into()],
+        ))
+        .await
+        .unwrap();
+
+    let res = act(&app, &alice, m, "icebreaker/question", None).await;
+    assert_eq!(res.status, 409, "{}", res.text());
+    assert_eq!(res.json()["code"], "no_other_question");
+    assert_eq!(state(&app, &alice, m).await["question"], question);
+}
+
+#[tokio::test]
 async fn the_facilitator_goes_back_in_the_icebreaker() {
     let app = TestApp::new().await;
     let (alice, bob, carol, team) = team_of_three(&app).await;

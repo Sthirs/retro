@@ -1,14 +1,26 @@
 <script setup lang="ts">
 /** Phase 1 (Icebreaker artboard): the greeting, the question, who is answering. */
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
+import AppIcon from '@/components/AppIcon.vue';
 import PresenceAvatar from '@/components/PresenceAvatar.vue';
 import { useMeetingStore } from '@/stores/meeting';
 
 const { t } = useI18n();
 const store = useMeetingStore();
 const meeting = computed(() => store.meeting!);
+
+const changing = ref(false);
+async function changeQuestion(): Promise<void> {
+  if (changing.value) return;
+  changing.value = true;
+  try {
+    await store.changeQuestion();
+  } finally {
+    changing.value = false;
+  }
+}
 </script>
 
 <template>
@@ -23,8 +35,24 @@ const meeting = computed(() => store.meeting!);
       </span>
     </div>
     <div class="ice__question">
-      <span class="label">{{ t('icebreaker.question') }}</span>
-      <p class="ice__question-text">{{ meeting.question }}</p>
+      <div class="ice__question-head">
+        <span class="label">{{ t('icebreaker.question') }}</span>
+        <button
+          v-if="store.isFacilitator"
+          type="button"
+          class="reroll"
+          :aria-label="t('icebreaker.changeQuestion')"
+          :title="t('icebreaker.changeQuestionHint')"
+          :disabled="changing"
+          data-testid="change-question"
+          @click="changeQuestion"
+        >
+          <AppIcon name="refresh" :size="17" />
+        </button>
+      </div>
+      <p class="ice__question-text" aria-live="polite" data-testid="icebreaker-question">
+        {{ meeting.question }}
+      </p>
     </div>
     <div v-if="store.currentSpeaker" class="speaker" aria-live="polite">
       <PresenceAvatar
@@ -96,6 +124,39 @@ const meeting = computed(() => store.meeting!);
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+.ice__question-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.reroll {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--accent-text);
+  cursor: pointer;
+}
+.reroll::before {
+  /* 44 px touch target. */
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+.reroll:hover {
+  background: var(--well);
+}
+.reroll:disabled {
+  cursor: progress;
+  opacity: 0.75;
 }
 .label {
   color: var(--muted);

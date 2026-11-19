@@ -653,8 +653,8 @@ export interface MeetingStateDto {
   /** Most votes one participant may give the same group. */
   voteMaxPerGroup: number;
   /**
-   * During Vote, for the facilitator only: votes cast overall, as one
-   * number (nothing per group or per person). `null` for everyone else.
+   * During Vote, votes cast overall, as one number (nothing per group or
+   * per person), for everyone. `null` in the other phases.
    * @nullable
    */
   votesCast?: number | null;
@@ -2250,6 +2250,55 @@ export const icebreakerNext = async (
   options?: Parameters<typeof apiFetch>[1],
 ): Promise<icebreakerNextResponse> => {
   return apiFetch<icebreakerNextResponse>(getIcebreakerNextUrl(meetingId), {
+    ...options,
+    method: 'POST',
+  });
+};
+
+export type icebreakerQuestionResponse200 = {
+  data: MeetingStateDto;
+  status: 200;
+};
+
+export type icebreakerQuestionResponse403 = {
+  data: Problem;
+  status: 403;
+};
+
+export type icebreakerQuestionResponse404 = {
+  data: Problem;
+  status: 404;
+};
+
+export type icebreakerQuestionResponse409 = {
+  data: Problem;
+  status: 409;
+};
+
+export type icebreakerQuestionResponseSuccess = icebreakerQuestionResponse200 & {
+  headers: Headers;
+};
+export type icebreakerQuestionResponseError = (
+  icebreakerQuestionResponse403 | icebreakerQuestionResponse404 | icebreakerQuestionResponse409
+) & {
+  headers: Headers;
+};
+
+export type icebreakerQuestionResponse =
+  icebreakerQuestionResponseSuccess | icebreakerQuestionResponseError;
+
+export const getIcebreakerQuestionUrl = (meetingId: string) => {
+  return `/api/v1/meetings/${meetingId}/icebreaker/question`;
+};
+
+/**
+ * @summary Replaces the icebreaker question with another one (facilitator).
+ */
+export const icebreakerQuestion = async (
+  meetingId: string,
+  options?: Parameters<typeof apiFetch>[1],
+): Promise<icebreakerQuestionResponse> => {
+  return apiFetch<icebreakerQuestionResponse>(getIcebreakerQuestionUrl(meetingId), {
     ...options,
     method: 'POST',
   });

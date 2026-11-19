@@ -250,6 +250,19 @@ async fn participants_receive_meeting_events_in_order() {
     assert_eq!(person["payload"]["index"], 1);
     assert_eq!(person["seq"].as_i64().unwrap(), first_seq + 1);
 
+    let res = app
+        .call(
+            "POST",
+            &format!("/api/v1/meetings/{m}/icebreaker/question"),
+            &alice,
+            None,
+        )
+        .await;
+    assert_eq!(res.status, 200, "{}", res.text());
+    let question = next_of(&mut alice_socket, "icebreaker.question_changed").await;
+    assert_eq!(question["payload"]["question"], res.json()["question"]);
+    assert_eq!(question["seq"].as_i64().unwrap(), first_seq + 2);
+
     app.call(
         "POST",
         &format!("/api/v1/meetings/{m}/facilitator"),
@@ -259,14 +272,14 @@ async fn participants_receive_meeting_events_in_order() {
     .await;
     let changed = next_of(&mut alice_socket, "facilitator.changed").await;
     assert_eq!(changed["payload"]["facilitatorId"], bob_id);
-    assert_eq!(changed["seq"].as_i64().unwrap(), first_seq + 2);
+    assert_eq!(changed["seq"].as_i64().unwrap(), first_seq + 3);
 
     // The snapshot's seq matches the last event.
     let state = app
         .call("GET", &format!("/api/v1/meetings/{m}/state"), &alice, None)
         .await
         .json();
-    assert_eq!(state["seq"].as_i64().unwrap(), first_seq + 2);
+    assert_eq!(state["seq"].as_i64().unwrap(), first_seq + 3);
 
     app.call("POST", &format!("/api/v1/meetings/{m}/end"), &bob, None)
         .await;
@@ -1636,7 +1649,7 @@ fn kinds(events: &[Value]) -> Vec<&str> {
 }
 
 #[tokio::test]
-async fn votes_reach_the_voter_and_the_count_reaches_the_facilitator() {
+async fn votes_reach_the_voter_and_the_count_reaches_everyone() {
     let app = TestApp::new().await;
     let addr = app.spawn_server().await;
     let (alice, bob, dana, m, group) = voting(&app).await;
@@ -1653,42 +1666,49 @@ async fn votes_reach_the_voter_and_the_count_reaches_the_facilitator() {
     rename(&app, &alice, &m, "After bob's vote").await;
 
     // Bob's tabs learn that his votes changed, and which tab did it: no
-    // group, no count, no seq.
+    // group, no count, no seq. Everyone gets the new total, as it is.
     let before = events_before(&mut bob_socket, "meeting.renamed").await;
-    assert_eq!(kinds(&before), vec!["vote.changed"], "{before:?}");
+    assert_eq!(
+        kinds(&before),
+        vec!["vote.changed", "vote.cast_changed"],
+        "{before:?}"
+    );
     assert_eq!(before[0]["payload"], json!({ "clientId": bob_tab }));
     assert_eq!(before[0]["seq"], Value::Null);
     assert!(before[0].get("user").is_none());
-    // The facilitator gets only the new total, with no re-read to do.
-    let before = events_before(&mut alice_socket, "meeting.renamed").await;
-    assert_eq!(kinds(&before), vec!["vote.cast_changed"], "{before:?}");
-    assert_eq!(
-        before[0]["payload"],
-        json!({ "votesCast": 1, "clientId": bob_tab })
-    );
-    assert_eq!(before[0]["seq"], Value::Null);
-    assert!(before[0].get("user").is_none());
-    // Dana hears nothing of bob's vote, before the checkpoint or late.
-    let before = events_before(&mut dana_socket, "meeting.renamed").await;
-    assert!(before.is_empty(), "unexpected: {before:?}");
+    for socket in [&mut alice_socket, &mut dana_socket] {
+        let before = events_before(socket, "meeting.renamed").await;
+        assert_eq!(kinds(&before), vec!["vote.cast_changed"], "{before:?}");
+        assert_eq!(
+            before[0]["payload"],
+            json!({ "votesCast": 1, "clientId": bob_tab })
+        );
+        assert!(before[0]["seq"].is_i64(), "{before:?}");
+        assert!(before[0].get("user").is_none());
+    }
 
-    // Dana's vote reaches dana, and its total alice, never bob.
+    // Dana's vote reaches dana; only its total reaches the others.
     let dana_tab = Uuid::now_v7().to_string();
     put_vote(&app, &dana, &group, &dana_tab).await;
     rename(&app, &alice, &m, "After dana's vote").await;
     let before = events_before(&mut dana_socket, "meeting.renamed").await;
-    assert_eq!(kinds(&before), vec!["vote.changed"], "{before:?}");
-    assert_eq!(before[0]["payload"], json!({ "clientId": dana_tab }));
-    let before = events_before(&mut alice_socket, "meeting.renamed").await;
-    assert_eq!(kinds(&before), vec!["vote.cast_changed"], "{before:?}");
     assert_eq!(
-        before[0]["payload"],
-        json!({ "votesCast": 2, "clientId": dana_tab })
+        kinds(&before),
+        vec!["vote.changed", "vote.cast_changed"],
+        "{before:?}"
     );
-    let before = events_before(&mut bob_socket, "meeting.renamed").await;
-    assert!(before.is_empty(), "unexpected: {before:?}");
+    assert_eq!(before[0]["payload"], json!({ "clientId": dana_tab }));
+    for socket in [&mut alice_socket, &mut bob_socket] {
+        let before = events_before(socket, "meeting.renamed").await;
+        assert_eq!(kinds(&before), vec!["vote.cast_changed"], "{before:?}");
+        assert_eq!(
+            before[0]["payload"],
+            json!({ "votesCast": 2, "clientId": dana_tab })
+        );
+    }
 
-    // The facilitator's own vote: their other tabs re-read, and get the total.
+    // The facilitator's own vote: their other tabs re-read, everyone gets
+    // the total.
     let alice_tab = Uuid::now_v7().to_string();
     put_vote(&app, &alice, &group, &alice_tab).await;
     rename(&app, &alice, &m, "After alice's vote").await;
@@ -1701,7 +1721,8 @@ async fn votes_reach_the_voter_and_the_count_reaches_the_facilitator() {
     assert_eq!(before[1]["payload"]["votesCast"], 3);
     for socket in [&mut bob_socket, &mut dana_socket] {
         let before = events_before(socket, "meeting.renamed").await;
-        assert!(before.is_empty(), "unexpected: {before:?}");
+        assert_eq!(kinds(&before), vec!["vote.cast_changed"], "{before:?}");
+        assert_eq!(before[0]["payload"]["votesCast"], 3);
     }
 }
 
@@ -1749,12 +1770,20 @@ async fn new_vote_settings_reach_everyone_and_trimmed_voters_reload() {
         );
     }
     // Bob lost a vote: his tabs re-read. Dana lost none, now or late.
+    // Everyone gets the total left after the trim.
     let before = events_before(&mut bob_socket, "meeting.renamed").await;
-    assert_eq!(kinds(&before), vec!["vote.changed"], "{before:?}");
+    assert_eq!(
+        kinds(&before),
+        vec!["vote.changed", "vote.cast_changed"],
+        "{before:?}"
+    );
     assert_eq!(before[0]["payload"], json!({ "clientId": settings_tab }));
+    assert_eq!(
+        before[1]["payload"],
+        json!({ "votesCast": 1, "clientId": settings_tab })
+    );
     let before = events_before(&mut dana_socket, "meeting.renamed").await;
-    assert!(before.is_empty(), "unexpected: {before:?}");
-    // The facilitator gets the total left after the trim.
+    assert_eq!(kinds(&before), vec!["vote.cast_changed"], "{before:?}");
     let before = events_before(&mut alice_socket, "meeting.renamed").await;
     assert_eq!(
         kinds(&before),

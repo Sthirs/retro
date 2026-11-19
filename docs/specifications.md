@@ -218,7 +218,7 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 
 - **Title**: each meeting has a title, **"Retro #N"** by default (`N` counts the team's meetings, starting at 1). The facilitator can rename it from the pencil next to the title (1–80 characters) while the meeting is active.
 - Header: meeting title, team name and date, current phase with a stepper showing all five phases, facilitator name, participant avatars with presence, and an **Invite** button that copies the meeting invite link (§6.3).
-- Facilitator controls: **Next** (person/group/phase depending on context), **Timer**, **Settings** (e.g. votes), **Transfer facilitator**, **End meeting**.
+- Facilitator controls: **Next** (person/group/phase depending on context), **Change question** (Icebreaker), **Timer**, **Settings** (e.g. votes), **Transfer facilitator**, **End meeting**.
 - Team admins who are not the facilitator see a **Take over facilitation** action.
 - **Ready** button at the bottom for participants (used in Reflect, Group and Vote; refused in the other phases). The facilitator sees a counter such as *"4 / 6 ready"* (out of all participants) and who is ready; the others see who is facilitating. Ready states reset when the phase changes.
 - **Timer** (facilitator), in any phase:
@@ -239,6 +239,7 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 
   Both differ from meeting to meeting. Where possible, the backend avoids repeating the team's recent picks.
 - The participants are shown **one at a time** on everyone's screen (avatar + name), in a randomized order. The meeting starts in this phase, so the order is built as people join: while the facilitator is still on the first person, each newcomer takes a random place among those who have not spoken yet; this shuffles everyone who joins at the start.
+- The facilitator can **change the question** at any time during this phase (the ↻ button next to *"Today's question"*, shown to the facilitator only). The backend picks another active question from the curated list, never the current one, avoiding the team's recent picks as at creation. Everyone sees the new question live.
 - Only the **facilitator** can move to the **next person**. After the last person, the facilitator can move to the **next phase** (Reflect).
 - The facilitator can go back to the **previous person**, or to **anyone who has already had their turn** by selecting them in the speaking order. The turn continues from that person: everyone after them is up again, and Next walks through them in the same order.
 - Participants who join after the first person has finished are added to the end of the queue.
@@ -285,9 +286,9 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 
 - Every participant gets a **vote budget** (default **5**) and can give at most **3 votes** (default) to the same group.
 - The facilitator can change both values in the meeting **Settings** (budget 1–20, at most 1–10 per group), until Vote ends. Lowering the budget below what a user has already spent removes that user's most recent votes so they fit the new limit; lowering the maximum per group removes each user's most recent votes on any group above it. The settings dialog warns how many people (never who) would lose votes; the server computes that number, so the client never holds anyone's usage.
-- Each group shows **+** and **−** buttons and the user's own vote count on it. **−** takes back the user's most recent vote on that group. A counter shows remaining votes ("2 of 5 votes left").
+- Each group shows **+** and **−** buttons and the user's own vote count on it. **−** takes back the user's most recent vote on that group. A counter shows the user's remaining votes ("You have 2 of 5 votes left").
 - A card never grouped shows as the plain card it was (its implicit single-card group has no name). Clicking a group expands it to read its cards; expanding is local to each viewer.
-- During this phase, users see **only their own votes**. Totals are hidden until Discuss, to avoid bias. The facilitator sees how many votes have been cast overall, as one number: nothing per group or per person. That number updates live: each vote sends the facilitator the new total (`vote.cast_changed`), so their tab does not re-read the state.
+- During this phase, users see **only their own votes**. Totals are hidden until Discuss, to avoid bias. Everyone sees the **team's** remaining votes, as one number and a progress bar (*"Team · 12/30 votes left"*): the team's votes are the number of meeting participants times the vote budget, so they grow when someone joins. Nothing is shown per group or per person. That number updates live: each vote sends everyone the new total of votes cast overall (`vote.cast_changed`), so tabs do not re-read the state.
 - Participants press **Ready**. The facilitator advances to Discuss.
 
 ### 9.5 Discuss
@@ -349,6 +350,7 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 | `timer.updated` | timer (status, endsAt or remainingMs, durationMs; `null` when stopped), serverNow | all |
 | `ready.changed` | userId, ready, readyCount | all |
 | `icebreaker.person_changed` | index | all |
+| `icebreaker.question_changed` | question | all |
 | `reflection.writing` | per column, how many new and edited reflections are being written (no author; ephemeral, no `seq`) | all |
 | `reflection.count_changed` | sent reflections per column | all |
 | `reflection.changed` | reflection id, `clientId` (no content; the author's other tabs re-read the state) | author only (no `seq`) |
@@ -356,7 +358,7 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 | `group.created` / `group.updated` / `group.deleted` | group (id, column, position, name; id only when deleted), the cards whose group changed (id, group id, version), `clientId` | all |
 | `vote.settings_changed` | budget, maxPerGroup, `clientId` | all |
 | `vote.changed` | `clientId` only (no `seq`; the receiving tab re-reads the state, ADR-0012) | the voter; also every user whose votes a settings change removed |
-| `vote.cast_changed` | votesCast (the absolute number of votes cast overall), `clientId` (no `seq`; the tab takes the number as it is, without re-reading the state) | the facilitator only, after every change of votes |
+| `vote.cast_changed` | votesCast (the absolute number of votes cast overall), `clientId` (the tab takes the number as it is, without re-reading the state) | all, after every change of votes |
 | `discuss.group_changed` | group id, `clientId` | all |
 | `reaction.changed` | reflection, emoji, count (absolute), `clientId` — never who reacted | all |
 | `reaction.mine_changed` | reflection, emoji, mine, `clientId` (no `seq`; the user's other tabs mark the reaction as theirs or not) | the reacting user only |
@@ -413,6 +415,7 @@ Constraints and mitigations:
 | Copy meeting invite link | ✗ | ✓ | ✓ | ✓ |
 | Regenerate meeting invite link | ✗ | ✗ | ✗* | ✓ |
 | Advance person / phase / group | ✗ | ✗ | ✗* | ✓ |
+| Change icebreaker question | ✗ | ✗ | ✗* | ✓ |
 | Set timer, vote settings | ✗ | ✗ | ✗* | ✓ |
 | Rename meeting | ✗ | ✗ | ✗* | ✓ |
 | Transfer facilitator role | ✗ | ✗ | ✗* | ✓ |
@@ -591,6 +594,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | POST | `/meetings/{id}/phase/next` | Advance phase (facilitator) |
 | POST | `/meetings/{id}/icebreaker/next` | Next person (facilitator) |
 | POST | `/meetings/{id}/icebreaker/goto` | `{ userId }`: back to someone who already had their turn (facilitator) |
+| POST | `/meetings/{id}/icebreaker/question` | Change the icebreaker question (facilitator, during Icebreaker) |
 | PUT | `/meetings/{id}/timer` | Start / pause / stop the timer (facilitator) |
 | PUT | `/meetings/{id}/ready` | Set own ready flag |
 | PATCH | `/meetings/{id}/settings` | `{ voteBudget, voteMaxPerGroup }`: vote budget / max per group (facilitator, until Vote ends; 400 `invalid_vote_settings` out of bounds, 409 `wrong_phase` after Vote) |
@@ -614,7 +618,7 @@ Base path: `/api/v1`. JSON throughout. Errors use [RFC 9457](https://www.rfc-edi
 | DELETE | `/reflections/{rid}/reactions/{emoji}` | Remove a reaction (idempotent); same answer |
 | PUT | `/meetings/{id}/discuss/current` | `{ groupId }`: set the current group (facilitator); answers with the meeting state |
 
-`POST /groups/{gid}/vote` is open to participants during Vote and answers with the meeting state, holding the caller's own votes (`myVotes`) and, for the facilitator only, the number of votes cast overall (`votesCast`; `null` for everyone else and outside Vote). Nobody receives anyone else's votes or usage. Errors: 400 `invalid_vote` (delta neither +1 nor −1), 403 `not_participant`, 404 `group_not_found`, 409 `meeting_ended`, `wrong_phase`, `vote_budget_exhausted`, `vote_group_limit`, `no_vote_to_remove`.
+`POST /groups/{gid}/vote` is open to participants during Vote and answers with the meeting state, holding the caller's own votes (`myVotes`) and the number of votes cast overall (`votesCast`; `null` outside Vote). Nobody receives anyone else's votes or usage. Errors: 400 `invalid_vote` (delta neither +1 nor −1), 403 `not_participant`, 404 `group_not_found`, 409 `meeting_ended`, `wrong_phase`, `vote_budget_exhausted`, `vote_group_limit`, `no_vote_to_remove`.
 
 The reaction endpoints are open to participants during Discuss, on cards of the current group. The emoji is percent-encoded in the path. Errors: 400 `invalid_emoji`, 403 `not_participant`, 404 `reflection_not_found`, 409 `meeting_ended`, `wrong_phase`, `not_current_group`. `PUT /meetings/{id}/discuss/current` errors: 403 `not_facilitator`, 404 `group_not_found` (not a group of this meeting), 409 `meeting_ended`, `wrong_phase`.
 

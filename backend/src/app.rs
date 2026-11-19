@@ -121,6 +121,10 @@ pub fn router(state: AppState) -> Router {
             post(api::meetings::icebreaker_next),
         )
         .route(
+            "/meetings/{meeting_id}/icebreaker/question",
+            post(api::meetings::icebreaker_question),
+        )
+        .route(
             "/meetings/{meeting_id}/icebreaker/goto",
             post(api::meetings::icebreaker_goto),
         )

@@ -115,6 +115,25 @@ describe('Meeting room', () => {
     expect(button(wrapper, 'Next: Group')).toBeTruthy();
   });
 
+  it('changes the question, as the facilitator', async () => {
+    const after = meetingState({ question: 'What would you do with a free afternoon?', seq: 3 });
+    const { calls } = mockFetch(
+      routes(meetingState(), {
+        [`POST ${BASE}/icebreaker/question`]: { status: 200, body: after },
+      }),
+    );
+    const { wrapper } = await open();
+    const change = wrapper.get('button[aria-label="Change question"]');
+    expect(change.attributes('title')).toBe('Change question (facilitator only)');
+    await change.trigger('click');
+    await flushPromises();
+    expect(calls.some((c) => c.method === 'POST' && c.path === `${BASE}/icebreaker/question`)).toBe(
+      true,
+    );
+    expect(wrapper.text()).toContain('What would you do with a free afternoon?');
+    expect(wrapper.text()).not.toContain("What's a small thing that made your week better?");
+  });
+
   it.each([
     ['the previous person', (w: VueWrapper) => button(w, 'Previous person')!],
     [
@@ -147,13 +166,22 @@ describe('Meeting room', () => {
     expect(wrapper.find('[role="toolbar"]').exists()).toBe(false);
     expect(button(wrapper, 'Next person')).toBeUndefined();
     expect(wrapper.find('button[aria-label="Rename meeting"]').exists()).toBe(false);
+    expect(wrapper.find('button[aria-label="Change question"]').exists()).toBe(false);
     expect(wrapper.text()).toContain('Bob Bianchi (you)');
 
     const socket = await openSocket();
     socket.emit({
-      type: 'icebreaker.person_changed',
+      type: 'icebreaker.question_changed',
       channel,
       seq: 3,
+      payload: { question: 'What would you do with a free afternoon?' },
+    });
+    await flushPromises();
+    expect(wrapper.text()).toContain('What would you do with a free afternoon?');
+    socket.emit({
+      type: 'icebreaker.person_changed',
+      channel,
+      seq: 4,
       payload: { index: 1 },
     });
     await flushPromises();
@@ -167,13 +195,13 @@ describe('Meeting room', () => {
     socket.emit({
       type: 'meeting.renamed',
       channel,
-      seq: 4,
+      seq: 5,
       payload: { title: 'Incident review' },
     });
     socket.emit({
       type: 'facilitator.changed',
       channel,
-      seq: 5,
+      seq: 6,
       payload: { facilitatorId: BOB.id },
     });
     await flushPromises();

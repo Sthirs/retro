@@ -389,13 +389,14 @@ async fn everyone_sees_only_their_own_votes() {
 
     let bob = state(&app, &r.bob, &r.meeting).await;
     assert_eq!(mine(&bob), vec![(r.pair.clone(), 2)]);
-    assert_eq!(bob["votesCast"], Value::Null);
+    // Everyone sees how many were cast overall, as one number.
+    assert_eq!(cast(&bob), 3);
     let erin = state(&app, &r.erin, &r.meeting).await;
     assert_eq!(mine(&erin), vec![(r.d1.clone(), 1)]);
-    assert_eq!(erin["votesCast"], Value::Null);
+    assert_eq!(cast(&erin), 3);
 
-    // The facilitator has no votes yet, and sees only how many were cast,
-    // as one number: nothing per voter.
+    // The facilitator has no votes yet, and sees the same number: nothing
+    // per voter.
     let alice = state(&app, &r.alice, &r.meeting).await;
     assert_eq!(mine(&alice), vec![]);
     assert_eq!(cast(&alice), 3);
@@ -414,7 +415,7 @@ async fn everyone_sees_only_their_own_votes() {
 }
 
 #[tokio::test]
-async fn the_cast_count_follows_the_facilitator_role() {
+async fn every_participant_sees_the_cast_count_whoever_facilitates() {
     let app = TestApp::new().await;
     let r = room(&app).await;
     ok(vote(&app, &r.erin, &r.d1, 1).await);
@@ -427,11 +428,11 @@ async fn the_cast_count_follows_the_facilitator_role() {
     )
     .await;
     assert_eq!(res.status, 200, "{}", res.text());
-    assert_eq!(
-        state(&app, &r.alice, &r.meeting).await["votesCast"],
-        Value::Null
-    );
-    assert_eq!(cast(&state(&app, &r.bob, &r.meeting).await), 1);
+    for token in [&r.alice, &r.bob, &r.erin] {
+        assert_eq!(cast(&state(&app, token, &r.meeting).await), 1);
+    }
+    // A participant's own vote answers with the new total.
+    assert_eq!(cast(&ok(vote(&app, &r.erin, &r.d1, 1).await)), 2);
 }
 
 #[tokio::test]

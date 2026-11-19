@@ -86,11 +86,11 @@ const remove = (wrapper: VueWrapper, name: string) =>
 
 describe('Vote phase', () => {
   it('shows the groups, single cards as cards, and the votes left', async () => {
-    mockFetch(routes());
+    mockFetch(routes(BOB, voting({ votesCast: 3 })));
     const { wrapper } = await open();
 
     expect(wrapper.get('h1').text()).toBe('Vote');
-    expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('5 of 5 votes left');
+    expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('You have 5 of 5 votes left');
     expect(wrapper.text()).toContain('Up to 3 on one group');
     const flaky = group(wrapper, 'Flaky CI');
     expect(flaky.text()).toContain('2 cards');
@@ -99,8 +99,13 @@ describe('Vote phase', () => {
     const demo = group(wrapper, 'Add a demo slot to the Friday standup');
     expect(demo.text()).toContain('Ideas');
     expect(demo.find('[data-testid="vote-group-toggle"]').exists()).toBe(false);
-    // No totals and no cast count for a participant.
-    expect(wrapper.find('[data-testid="vote-cast"]').exists()).toBe(false);
+    // No totals per group, but the team's votes left: 2 people × 5, 3 cast.
+    expect(wrapper.get('[data-testid="vote-team-left"]').text()).toBe('7/10 votes left');
+    const bar = wrapper.get('[data-testid="vote-cast"] [role="progressbar"]');
+    expect(bar.attributes('aria-label')).toBe('Team votes cast');
+    expect(bar.attributes('aria-valuenow')).toBe('3');
+    expect(bar.attributes('aria-valuemax')).toBe('10');
+    expect(wrapper.get('[data-testid="vote-cast"]').text()).toContain('Team');
     expect(wrapper.find('[data-testid="vote-settings"]').exists()).toBe(false);
   });
 
@@ -115,7 +120,7 @@ describe('Vote phase', () => {
     const demo = 'Add a demo slot to the Friday standup';
     expect(remove(wrapper, demo).attributes('disabled')).toBeDefined();
     expect(add(wrapper, demo).attributes('disabled')).toBeUndefined();
-    expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('2 of 5 votes left');
+    expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('You have 2 of 5 votes left');
   });
 
   it('disables every + once the budget is spent', async () => {
@@ -132,7 +137,7 @@ describe('Vote phase', () => {
       ),
     );
     const { wrapper } = await open();
-    expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('0 of 4 votes left');
+    expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('You have 0 of 4 votes left');
     for (const b of wrapper.findAll('[data-testid="vote-add"]')) {
       expect(b.attributes('disabled')).toBeDefined();
     }
@@ -152,7 +157,7 @@ describe('Vote phase', () => {
     await flushPromises();
     expect(calls.find((c) => c.path.endsWith('/vote'))?.body).toEqual({ delta: 1 });
     expect(group(wrapper, 'Flaky CI').get('[data-testid="vote-count"]').text()).toBe('1');
-    expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('4 of 5 votes left');
+    expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('You have 4 of 5 votes left');
   });
 
   it('expands a group locally to read its cards, and votes from there', async () => {
@@ -168,15 +173,15 @@ describe('Vote phase', () => {
     expect(flaky.findAll('[data-testid="vote-card"]')).toHaveLength(0);
   });
 
-  it('shows the facilitator the cast count and the Settings button', async () => {
+  it('shows the facilitator the team’s votes left and the Settings button', async () => {
     mockFetch(routes(ALICE, voting({ votesCast: 6 })));
     const { wrapper } = await open();
-    expect(wrapper.get('[data-testid="vote-cast"]').text()).toBe('6 votes cast so far');
+    expect(wrapper.get('[data-testid="vote-team-left"]').text()).toBe('4/10 votes left');
     expect(wrapper.find('[data-testid="vote-settings"]').exists()).toBe(true);
   });
 
-  it('updates the counter when the settings change for everyone', async () => {
-    mockFetch(routes());
+  it('updates the counters when the settings change for everyone', async () => {
+    mockFetch(routes(BOB, voting({ votesCast: 4 })));
     const { wrapper } = await open();
     const socket = await openSocket();
     socket.emit({
@@ -186,7 +191,8 @@ describe('Vote phase', () => {
       payload: { budget: 7, maxPerGroup: 2, clientId: null },
     });
     await flushPromises();
-    expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('7 of 7 votes left');
+    expect(wrapper.get('[data-testid="vote-left"]').text()).toBe('You have 7 of 7 votes left');
+    expect(wrapper.get('[data-testid="vote-team-left"]').text()).toBe('10/14 votes left');
     expect(wrapper.text()).toContain('Up to 2 on one group');
   });
 
@@ -194,7 +200,7 @@ describe('Vote phase', () => {
     // The server counts; the client never sees anyone's usage.
     const affected: Record<string, number> = { '4/3': 2, '4/2': 2, '1/3': 3 };
     const { calls } = mockFetch(
-      routes(ALICE, voting({ votesCast: 12 }), {
+      routes(ALICE, voting({ votesCast: 8 }), {
         [`GET ${BASE}/settings/impact`]: ({ url }: { url: URL }) => ({
           status: 200,
           body: {
@@ -207,12 +213,12 @@ describe('Vote phase', () => {
         [`PATCH ${BASE}/settings`]: {
           status: 200,
           // The server trimmed two votes.
-          body: voting({ votesCast: 10, voteBudget: 4, voteMaxPerGroup: 3 }),
+          body: voting({ votesCast: 6, voteBudget: 4, voteMaxPerGroup: 3 }),
         },
       }),
     );
     const { wrapper } = await open();
-    expect(wrapper.get('[data-testid="vote-cast"]').text()).toBe('12 votes cast so far');
+    expect(wrapper.get('[data-testid="vote-team-left"]').text()).toBe('2/10 votes left');
     await wrapper.get('[data-testid="vote-settings"]').trigger('click');
     await flushPromises();
     const dialog = wrapper.get('dialog[open]');
@@ -261,7 +267,7 @@ describe('Vote phase', () => {
     });
     // The room takes the server's trimmed count.
     expect(wrapper.find('dialog[open]').exists()).toBe(false);
-    expect(wrapper.get('[data-testid="vote-cast"]').text()).toBe('10 votes cast so far');
+    expect(wrapper.get('[data-testid="vote-team-left"]').text()).toBe('2/8 votes left');
   });
 
   it('the settings warning follows votes cast while the dialog is open', async () => {

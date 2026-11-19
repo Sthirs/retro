@@ -385,31 +385,40 @@ async fn pick_greeting(
     .ok_or_else(|| AppError::Internal(anyhow::anyhow!("no greetings")))
 }
 
-/// A random active question, avoiding the team's recent ones when possible.
+/// A random active question, avoiding the team's recent ones when possible,
+/// and never `exclude` (the question being replaced): when no other active
+/// question exists, fails with `no_other_question`.
 async fn pick_question(
     db: &impl ConnectionTrait,
     team_id: Uuid,
+    exclude: Option<&str>,
 ) -> Result<icebreaker_question::Model, AppError> {
+    let exclude = exclude.unwrap_or_default();
     let fresh = icebreaker_question::Model::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT * FROM icebreaker_questions WHERE active AND text NOT IN ( \
+        "SELECT * FROM icebreaker_questions WHERE active AND text <> $3 AND text NOT IN ( \
            SELECT icebreaker_question FROM meetings WHERE team_id = $1 \
            ORDER BY created_at DESC LIMIT $2) \
          ORDER BY random() LIMIT 1",
-        [team_id.into(), (RECENT_PICKS as i64).into()],
+        [team_id.into(), (RECENT_PICKS as i64).into(), exclude.into()],
     ))
     .one(db)
     .await?;
     if let Some(question) = fresh {
         return Ok(question);
     }
-    icebreaker_question::Model::find_by_statement(Statement::from_string(
+    icebreaker_question::Model::find_by_statement(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "SELECT * FROM icebreaker_questions WHERE active ORDER BY random() LIMIT 1",
+        "SELECT * FROM icebreaker_questions WHERE active AND text <> $1 \
+         ORDER BY random() LIMIT 1",
+        [exclude.into()],
     ))
     .one(db)
     .await?
-    .ok_or_else(|| AppError::Internal(anyhow::anyhow!("no icebreaker questions")))
+    .ok_or_else(|| match exclude {
+        "" => AppError::Internal(anyhow::anyhow!("no icebreaker questions")),
+        _ => AppError::Conflict("no_other_question"),
+    })
 }
 
 /// Starts a meeting; `actor` (a member) becomes its facilitator and first
@@ -434,7 +443,7 @@ pub async fn create(
         .unwrap_or(0)
         + 1;
     let greeting = pick_greeting(&txn, team_id).await?;
-    let question = pick_question(&txn, team_id).await?;
+    let question = pick_question(&txn, team_id, None).await?;
 
     let now = OffsetDateTime::now_utc();
     let meeting = meeting::ActiveModel {
@@ -619,6 +628,36 @@ pub async fn icebreaker_goto(
         .filter(|&p| p < meeting.icebreaker_index)
         .ok_or(AppError::Conflict("icebreaker_not_reached"))?;
     set_speaker(&txn, &meeting, position).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// Replaces the icebreaker question with another one (facilitator, during
+/// Icebreaker; spec §9.1) and tells everyone.
+pub async fn icebreaker_change_question(
+    db: &(impl TransactionTrait + ConnectionTrait),
+    meeting_id: Uuid,
+    actor: Uuid,
+) -> Result<(), AppError> {
+    let txn = db.begin().await?;
+    let meeting = lock_icebreaker(&txn, meeting_id, actor).await?;
+    let question = pick_question(&txn, meeting.team_id, Some(&meeting.icebreaker_question))
+        .await?
+        .text;
+    meeting::ActiveModel {
+        id: Set(meeting.id),
+        icebreaker_question: Set(question.clone()),
+        ..Default::default()
+    }
+    .update(&txn)
+    .await?;
+    ws::publish_meeting(
+        &txn,
+        meeting.id,
+        "icebreaker.question_changed",
+        json!({ "question": question }),
+    )
+    .await?;
     txn.commit().await?;
     Ok(())
 }

@@ -197,8 +197,8 @@ pub struct MeetingStateDto {
     /// From Vote on, the caller's own votes per group. Nobody sees anyone
     /// else's votes.
     pub my_votes: Vec<MyVoteDto>,
-    /// During Vote, for the facilitator only: votes cast overall, as one
-    /// number (nothing per group or per person). `null` for everyone else.
+    /// During Vote, votes cast overall, as one number (nothing per group or
+    /// per person), for everyone. `null` in the other phases.
     pub votes_cast: Option<i32>,
     /// From Discuss on, every group in Discuss order with its vote total
     /// (spec §9.5); empty before, so totals stay hidden until then.
@@ -331,7 +331,7 @@ pub(crate) async fn state_of(
     let groups = groups::snapshot(&txn, &view.meeting).await?;
     let votes = VotesSnapshot {
         mine: votes::my_votes(&txn, &view.meeting, actor).await?,
-        cast: votes::votes_cast(&txn, &view.meeting, actor).await?,
+        cast: votes::votes_cast(&txn, &view.meeting).await?,
     };
     let (order, current) = discuss::snapshot(&txn, &view.meeting).await?;
     let discuss = DiscussSnapshot {
@@ -607,6 +607,29 @@ pub async fn icebreaker_next(
     Path(meeting_id): Path<Uuid>,
 ) -> AppResult<Json<MeetingStateDto>> {
     meetings::icebreaker_next(&state.db, meeting_id, user.id).await?;
+    Ok(Json(state_of(&state, meeting_id, user.id).await?))
+}
+
+/// Replaces the icebreaker question with another one (facilitator).
+#[utoipa::path(
+    post,
+    path = "/api/v1/meetings/{meeting_id}/icebreaker/question",
+    tag = "meetings",
+    security(("bearer" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Meeting id")),
+    responses(
+        (status = 200, body = MeetingStateDto, description = "The meeting, with its new question"),
+        (status = 403, body = Problem, content_type = "application/problem+json", description = "`not_facilitator`"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`meeting_not_found`"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`meeting_ended`, `wrong_phase`, or `no_other_question` (the current question is the only active one)"),
+    )
+)]
+pub async fn icebreaker_question(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(meeting_id): Path<Uuid>,
+) -> AppResult<Json<MeetingStateDto>> {
+    meetings::icebreaker_change_question(&state.db, meeting_id, user.id).await?;
     Ok(Json(state_of(&state, meeting_id, user.id).await?))
 }
 

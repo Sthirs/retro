@@ -1503,6 +1503,74 @@
         ]
       }
     },
+    "/api/v1/meetings/{meeting_id}/icebreaker/question": {
+      "post": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "Replaces the icebreaker question with another one (facilitator).",
+        "operationId": "icebreaker_question",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meeting, with its new question",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingStateDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`not_facilitator`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_ended`, `wrong_phase`, or `no_other_question` (the current question is the only active one)",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/meetings/{meeting_id}/invite-link": {
       "get": {
         "tags": [
@@ -5121,7 +5189,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "During Vote, for the facilitator only: votes cast overall, as one\nnumber (nothing per group or per person). `null` for everyone else."
+            "description": "During Vote, votes cast overall, as one number (nothing per group or\nper person), for everyone. `null` in the other phases."
           },
           "writing": {
             "$ref": "#/components/schemas/WritingDto",

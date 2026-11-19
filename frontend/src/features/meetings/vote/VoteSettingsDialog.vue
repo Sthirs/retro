@@ -133,7 +133,7 @@ async function askImpact(): Promise<{ key: string; affected: number | null } | n
 }
 
 // Asked again on each change of the draft, and on each vote cast meanwhile
-// (the facilitator's total changes): the count shown stays until then.
+// (the total changes): the count shown stays until then.
 watch(
   [() => props.open, lowers, draftKey, () => store.votesCast],
   () => {

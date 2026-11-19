@@ -6,7 +6,16 @@ import { CLIENT_ID } from '@/api/clientId';
 import { useMeetingStore, VOTE_TIMEOUT_MS } from '@/stores/meeting';
 import { useSessionStore } from '@/stores/session';
 
-import { ALICE, BOB, MEETING_ID, meetingState, mockFetch, problem, TEAM_ID } from './helpers';
+import {
+  ALICE,
+  BOB,
+  MEETING_ID,
+  meetingState,
+  mockFetch,
+  participant,
+  problem,
+  TEAM_ID,
+} from './helpers';
 
 const BASE = `/api/v1/meetings/${MEETING_ID}`;
 const isVote = (c: { method: string; path: string }) =>
@@ -76,8 +85,28 @@ describe('meeting store in Vote', () => {
     expect(store.votesLeft).toBe(3);
     expect(store.voteBudget).toBe(5);
     expect(store.voteMaxPerGroup).toBe(3);
-    // Only the facilitator gets the usage; nobody else gets a cast count.
+    // Nobody gets anyone's usage.
     expect(store.votesCast).toBeNull();
+  });
+
+  it('counts the team’s votes: every participant’s budget, less the votes cast', async () => {
+    const { store } = await opened(
+      voting({
+        facilitatorId: BOB.id,
+        votesCast: 4,
+        participants: [participant(ALICE), participant(BOB)],
+      }),
+    );
+    expect(store.teamVoteBudget).toBe(10);
+    expect(store.teamVotesLeft).toBe(6);
+    store.apply({
+      type: 'vote.settings_changed',
+      channel,
+      seq: 3,
+      payload: { budget: 7, maxPerGroup: 3, clientId: null },
+    });
+    expect(store.teamVoteBudget).toBe(14);
+    expect(store.teamVotesLeft).toBe(10);
   });
 
   it('takes the facilitator’s cast count, with their own votes on the way', async () => {
@@ -233,15 +262,17 @@ describe('meeting store in Vote', () => {
     expect(calls.filter((c) => c.method === 'GET')).toHaveLength(0);
   });
 
-  it('ignores a total when not the facilitator', async () => {
-    const { store } = await opened(voting({ facilitatorId: BOB.id }));
+  it('takes a total when not the facilitator too', async () => {
+    const { store, calls } = await opened(voting({ facilitatorId: BOB.id, votesCast: 3 }));
+    const before = calls.length;
     store.apply({
       type: 'vote.cast_changed',
       channel,
-      seq: null,
+      seq: 3,
       payload: { votesCast: 5, clientId: 'other-tab' },
     });
-    expect(store.votesCast).toBeNull();
+    expect(store.votesCast).toBe(5);
+    expect(calls).toHaveLength(before);
   });
 
   it('takes new settings from everyone’s event', async () => {
@@ -255,19 +286,6 @@ describe('meeting store in Vote', () => {
     expect(store.voteBudget).toBe(2);
     expect(store.voteMaxPerGroup).toBe(1);
     expect(store.votesLeft).toBe(0);
-  });
-
-  it('re-reads when the facilitator changes during Vote', async () => {
-    const { store, calls } = await opened();
-    const before = calls.filter((c) => c.method === 'GET').length;
-    store.apply({
-      type: 'facilitator.changed',
-      channel,
-      seq: 3,
-      payload: { facilitatorId: ALICE.id },
-    });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(calls.filter((c) => c.method === 'GET').length).toBeGreaterThan(before);
   });
 
   it('saves the settings and takes the answer', async () => {
@@ -425,19 +443,15 @@ describe('meeting store in Vote', () => {
     expect(store.myVotes.get('g1')).toBe(1);
   });
 
-  it('shows the cast count once the role arrives, and hides it once it leaves', async () => {
-    const { store } = await opened(voting({ facilitatorId: BOB.id }), {
-      // The reload after the handoff (seq 3).
-      [`GET ${BASE}/state`]: { status: 200, body: voting({ votesCast: 4, seq: 3 }) },
-    });
-    expect(store.votesCast).toBeNull();
+  it('keeps the cast count when the facilitator changes', async () => {
+    const { store } = await opened(voting({ facilitatorId: BOB.id, votesCast: 4 }));
+    expect(store.votesCast).toBe(4);
     store.apply({
       type: 'facilitator.changed',
       channel,
       seq: 3,
       payload: { facilitatorId: ALICE.id },
     });
-    await tick();
     expect(store.isFacilitator).toBe(true);
     expect(store.votesCast).toBe(4);
     store.apply({
@@ -446,8 +460,7 @@ describe('meeting store in Vote', () => {
       seq: 4,
       payload: { facilitatorId: BOB.id },
     });
-    // At once, before any reload.
-    expect(store.votesCast).toBeNull();
+    expect(store.votesCast).toBe(4);
   });
 
   it('reloads after a settings save whose answer was lost, not after a refusal', async () => {

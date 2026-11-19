@@ -1,14 +1,14 @@
 //! Votes (spec §9.4): during Vote, every participant spends a budget of
 //! votes on groups, at most a set number on the same group. Nobody sees
-//! anyone else's votes; the facilitator sees how many were cast overall.
+//! anyone else's votes; everyone sees how many were cast overall.
 //!
 //! Every vote is a row, so limits are counts and "the most recent votes" a
 //! lower limit removes are known exactly: those with the highest `ordinal`,
 //! the order the server accepted them in. Changes lock the meeting, which
 //! checks the limits transactionally. Each publishes `vote.changed
 //! {clientId}` (ids only, ADR-0012) to the voter, whose tabs re-read the
-//! state, and `vote.cast_changed {votesCast, clientId}` to the facilitator,
-//! whose tabs take the new total as it is.
+//! state, and `vote.cast_changed {votesCast, clientId}` to everyone, whose
+//! tabs take the new total as it is.
 
 use std::collections::BTreeSet;
 
@@ -160,14 +160,13 @@ struct UsageRow {
     on_group: i64,
 }
 
-/// Votes cast overall, as one number (spec §9.4). Only the facilitator gets
-/// it, and only while the meeting is in Vote; `None` for everyone else.
+/// Votes cast overall, as one number (spec §9.4), for everyone while the
+/// meeting is in Vote; `None` in the other phases.
 pub async fn votes_cast(
     db: &impl ConnectionTrait,
     meeting: &meeting::Model,
-    viewer: Uuid,
 ) -> Result<Option<i32>, AppError> {
-    if meeting.phase != MeetingPhase::Vote || meeting.facilitator_id != viewer {
+    if meeting.phase != MeetingPhase::Vote {
         return Ok(None);
     }
     Ok(Some(count_cast(db, meeting.id).await?))
@@ -228,8 +227,8 @@ pub async fn impact(
 }
 
 /// Tells `users` that their votes changed (each re-reads its own state
-/// unless the event is its own echo), and the facilitator the new number of
-/// votes cast overall, which their tabs take as it is.
+/// unless the event is its own echo), and everyone the new number of votes
+/// cast overall, which their tabs take as it is.
 async fn publish_changed(
     txn: &impl ConnectionTrait,
     meeting: &meeting::Model,
@@ -247,10 +246,9 @@ async fn publish_changed(
         )
         .await?;
     }
-    ws::publish_user(
+    ws::publish_meeting(
         txn,
         meeting.id,
-        meeting.facilitator_id,
         "vote.cast_changed",
         json!({ "votesCast": count_cast(txn, meeting.id).await?, "clientId": client }),
     )

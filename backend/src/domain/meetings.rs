@@ -191,8 +191,27 @@ pub async fn view(
     meeting_id: Uuid,
     actor: Uuid,
 ) -> Result<MeetingView, AppError> {
+    one_view(db, meeting_id, actor, true).await
+}
+
+/// [`view`] without the task and group counts (left at 0), for callers that
+/// load those rows themselves (the summary).
+pub async fn view_without_counts(
+    db: &impl ConnectionTrait,
+    meeting_id: Uuid,
+    actor: Uuid,
+) -> Result<MeetingView, AppError> {
+    one_view(db, meeting_id, actor, false).await
+}
+
+async fn one_view(
+    db: &impl ConnectionTrait,
+    meeting_id: Uuid,
+    actor: Uuid,
+    with_counts: bool,
+) -> Result<MeetingView, AppError> {
     let (meeting, _) = find_for_member(db, meeting_id, actor, false).await?;
-    views(db, vec![meeting])
+    views_with(db, vec![meeting], with_counts)
         .await?
         .pop()
         .ok_or_else(|| AppError::Internal(anyhow::anyhow!("meeting is missing")))
@@ -241,6 +260,15 @@ async fn views(
     db: &impl ConnectionTrait,
     meetings: Vec<meeting::Model>,
 ) -> Result<Vec<MeetingView>, AppError> {
+    views_with(db, meetings, true).await
+}
+
+/// [`views`], with the task and group counts only when `with_counts`.
+async fn views_with(
+    db: &impl ConnectionTrait,
+    meetings: Vec<meeting::Model>,
+    with_counts: bool,
+) -> Result<Vec<MeetingView>, AppError> {
     if meetings.is_empty() {
         return Ok(Vec::new());
     }
@@ -266,8 +294,14 @@ async fn views(
     .all(db)
     .await?;
 
-    let counts = count_by_meeting(db, "tasks", &placeholders, id_values.clone()).await?;
-    let group_counts = count_by_meeting(db, "reflection_groups", &placeholders, id_values).await?;
+    let (counts, group_counts) = if with_counts {
+        (
+            count_by_meeting(db, "tasks", &placeholders, id_values.clone()).await?,
+            count_by_meeting(db, "reflection_groups", &placeholders, id_values).await?,
+        )
+    } else {
+        (HashMap::new(), HashMap::new())
+    };
 
     let team_ids: Vec<Uuid> = meetings.iter().map(|m| m.team_id).collect();
     let team_names: HashMap<Uuid, String> = team::Entity::find()

@@ -84,7 +84,8 @@ pub async fn of_meeting(
             Some(AccessMode::ReadOnly),
         )
         .await?;
-    let view = meetings::view(&txn, meeting_id, actor).await?;
+    // The summary loads its tasks and groups itself: no counts needed.
+    let view = meetings::view_without_counts(&txn, meeting_id, actor).await?;
     if view.meeting.status == MeetingStatus::Active {
         return Err(AppError::Conflict("meeting_active"));
     }

@@ -305,3 +305,64 @@ export const meetingSummary = (overrides: Record<string, unknown> = {}) => ({
   endedAt: null,
   ...overrides,
 });
+
+/** `GET /meetings/{id}/summary`: an ended meeting, alice facilitated. */
+export const meetingReport = (overrides: Record<string, unknown> = {}) => ({
+  id: MEETING_ID,
+  teamId: TEAM_ID,
+  teamName: 'Platform Team',
+  title: 'Retro #3',
+  facilitator: { id: ALICE.id, displayName: ALICE.displayName, pictureVersion: null },
+  participants: [
+    { id: ALICE.id, displayName: ALICE.displayName, pictureVersion: null },
+    { id: BOB.id, displayName: BOB.displayName, pictureVersion: null },
+  ],
+  votesCast: 9,
+  groups: [
+    {
+      id: '0192f000-0000-7000-8000-0000000000a1',
+      name: 'Flaky CI is slowing us down',
+      votes: 5,
+      reflections: [
+        {
+          id: '0192f000-0000-7000-8000-0000000000b1',
+          column: 'delta',
+          content: '<p>Flaky e2e tests blocked <strong>merges</strong>.</p>',
+        },
+        {
+          id: '0192f000-0000-7000-8000-0000000000b2',
+          column: 'ideas',
+          content: '<p>Quarantine flaky tests.</p>',
+        },
+      ],
+    },
+    {
+      id: '0192f000-0000-7000-8000-0000000000b3',
+      name: '',
+      votes: 1,
+      reflections: [
+        {
+          id: '0192f000-0000-7000-8000-0000000000b3',
+          column: 'thanks',
+          content: '<p>Thanks Marco for covering the incident!</p>',
+        },
+      ],
+    },
+  ],
+  tasks: [
+    {
+      id: '0192f000-0000-7000-8000-0000000000c1',
+      status: 'done',
+      position: 'a0',
+      contentHtml: '<p>Rotate the on-call buddy</p>',
+      author: { id: ALICE.id, displayName: ALICE.displayName, pictureVersion: null },
+      mentions: [{ id: BOB.id, displayName: BOB.displayName, pictureVersion: null }],
+      meetingId: MEETING_ID,
+      groupId: '0192f000-0000-7000-8000-0000000000a1',
+      createdAt: '2026-11-10T17:50:00Z',
+    },
+  ],
+  createdAt: '2026-11-10T17:02:00Z',
+  endedAt: '2026-11-10T18:07:00Z',
+  ...overrides,
+});

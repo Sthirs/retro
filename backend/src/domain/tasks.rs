@@ -249,8 +249,17 @@ pub async fn of_meeting(
     if meeting.phase < MeetingPhase::Discuss {
         return Ok(Vec::new());
     }
+    written_in(db, meeting.id).await
+}
+
+/// The tasks written in a meeting, oldest first, with their authors and
+/// mentions, whatever its phase: their current board status (spec §8.3).
+pub async fn written_in(
+    db: &impl ConnectionTrait,
+    meeting_id: Uuid,
+) -> Result<Vec<TaskView>, AppError> {
     let rows = task::Entity::find()
-        .filter(task::Column::MeetingId.eq(meeting.id))
+        .filter(task::Column::MeetingId.eq(meeting_id))
         .order_by_asc(task::Column::CreatedAt)
         .order_by_asc(task::Column::Id)
         .all(db)

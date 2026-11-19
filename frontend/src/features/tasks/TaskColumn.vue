@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { VueDraggable } from 'vue-draggable-plus';
 
 import type { TaskDto, TaskStatus } from '@/api/client';
+import TaskStatusPill from '@/components/TaskStatusPill.vue';
 import TaskCard from '@/features/tasks/TaskCard.vue';
 import { useTasksStore } from '@/stores/tasks';
 
@@ -39,7 +40,7 @@ function onDrop(event: DropEvent): void {
   <!-- tabindex -1: focus lands here after a card is moved or deleted from its menu. -->
   <section class="column" :aria-label="name" :data-column="status" tabindex="-1">
     <div class="column__header">
-      <span class="pill" :class="`pill--${status}`">{{ name }}</span>
+      <TaskStatusPill :status="status">{{ name }}</TaskStatusPill>
       <span class="column__count" data-testid="count">{{ tasks.length }}</span>
     </div>
     <VueDraggable
@@ -88,32 +89,6 @@ function onDrop(event: DropEvent): void {
   align-items: center;
   justify-content: space-between;
   padding: 0 4px;
-}
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: var(--radius-pill);
-  font-size: 12px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.pill--future {
-  background: var(--tag-neutral);
-  color: var(--muted);
-}
-.pill--stuck {
-  background: var(--col-delta-bg);
-  color: var(--col-delta-fg);
-}
-.pill--active {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-.pill--done {
-  background: var(--col-plus-bg);
-  color: var(--col-plus-fg);
 }
 .column__count {
   font-size: 13px;

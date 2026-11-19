@@ -2,11 +2,11 @@
 /**
  * The meeting room (spec §8.2): joins the meeting, follows its channel and
  * shows the current phase. Everyone sees the facilitator's changes live; when
- * the meeting ends, everyone lands on the ended view.
+ * the meeting ends, everyone lands on its summary (spec §8.1, §8.3).
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import { MeetingPhase } from '@/api/client';
 import { realtime } from '@/api/realtime';
@@ -17,7 +17,6 @@ import { useErrorText } from '@/composables/useErrorText';
 import LinkLayout from '@/features/invitations/LinkLayout.vue';
 import LinkStateCard from '@/features/invitations/LinkStateCard.vue';
 import EndMeetingDialog from '@/features/meetings/EndMeetingDialog.vue';
-import MeetingEndedView from '@/features/meetings/MeetingEndedView.vue';
 import MeetingFooter from '@/features/meetings/MeetingFooter.vue';
 import MeetingSidebar from '@/features/meetings/MeetingSidebar.vue';
 import PhaseHeader from '@/features/meetings/PhaseHeader.vue';
@@ -37,6 +36,7 @@ import { useSessionStore } from '@/stores/session';
 const { t } = useI18n();
 const errorText = useErrorText();
 const route = useRoute();
+const router = useRouter();
 const store = useMeetingStore();
 const session = useSessionStore();
 // Created with the room, so drafts follow the meeting even outside Reflect.
@@ -63,16 +63,20 @@ useChannel(
 watch(meetingId, (id) => void store.open(id), { immediate: true });
 onBeforeUnmount(() => store.reset());
 
-// Ending closes the dialogs for everyone: the ended view replaces the room.
+// An ended meeting (opened late, or ended while here) shows its summary.
 watch(
-  () => store.isActive,
-  (active) => {
-    if (!active) {
-      transferOpen.value = false;
-      endOpen.value = false;
-      settingsOpen.value = false;
-    }
+  () => (meeting.value && !store.isActive ? meeting.value.id : null),
+  (ended) => {
+    if (!ended) return;
+    transferOpen.value = false;
+    endOpen.value = false;
+    settingsOpen.value = false;
+    void router.replace({
+      name: 'meeting-summary',
+      params: { teamId: teamId.value, meetingId: ended },
+    });
   },
+  { immediate: true },
 );
 // Losing the facilitator role closes the facilitator's dialogs.
 watch(
@@ -133,7 +137,9 @@ onBeforeUnmount(() => clearTimeout(noticeTimer));
   <LinkLayout v-else-if="!meeting">
     <p class="loading" aria-busy="true">{{ t('meetingRoom.loading') }}</p>
   </LinkLayout>
-  <MeetingEndedView v-else-if="!store.isActive" :meeting="meeting" />
+  <LinkLayout v-else-if="!store.isActive">
+    <p class="loading" aria-busy="true">{{ t('summary.loading') }}</p>
+  </LinkLayout>
   <div v-else class="room">
     <MeetingSidebar />
     <div class="room__main">

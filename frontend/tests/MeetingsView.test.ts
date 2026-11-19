@@ -76,6 +76,7 @@ describe('Meetings page', () => {
     expect(join.attributes('href')).toBe(`/teams/${TEAM_ID}/meetings/${MEETING_ID}`);
 
     const row = wrapper.get('section[aria-labelledby="meetings-ended"] li a');
+    expect(row.attributes('href')).toBe(`/teams/${TEAM_ID}/meetings/ended-1/summary`);
     expect(row.text()).toContain('Retro #2');
     expect(row.text()).toContain('27 Oct 2026');
     expect(row.text()).toContain('58 min');

@@ -508,7 +508,7 @@ describe('Discuss phase', () => {
   it('is read-only once the meeting ended', async () => {
     mockFetch(routes(BOB, discussing({ status: 'ended', endedAt: '2026-11-10T19:00:00Z' })));
     const { wrapper } = await open();
-    // The ended meeting shows its own view, not the room.
+    // The ended meeting goes to its summary, not the room.
     expect(wrapper.find('[data-testid="add-reaction"]').exists()).toBe(false);
   });
 });

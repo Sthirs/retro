@@ -23,7 +23,7 @@ const duration = computed(() =>
   <li>
     <RouterLink
       class="row"
-      :to="{ name: 'meeting-room', params: { teamId: meeting.teamId, meetingId: meeting.id } }"
+      :to="{ name: 'meeting-summary', params: { teamId: meeting.teamId, meetingId: meeting.id } }"
     >
       <span class="row__title">{{ meeting.title }}</span>
       <span class="row__muted row__date">{{ formatDate(meeting.createdAt) }}</span>

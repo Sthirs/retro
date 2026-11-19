@@ -69,6 +69,13 @@ export function buildRouter(history: RouterHistory = createWebHistory()): Router
             component: () => import('@/features/meetings/MeetingsView.vue'),
           },
           {
+            // An ended meeting's summary sits in the shell (Summary artboard);
+            // the room sends everyone here once the meeting ends.
+            path: 'meetings/:meetingId/summary',
+            name: 'meeting-summary',
+            component: () => import('@/features/meetings/summary/MeetingSummaryView.vue'),
+          },
+          {
             path: 'tasks',
             name: 'team-tasks',
             component: () => import('@/features/tasks/TasksBoardView.vue'),
@@ -82,7 +89,7 @@ export function buildRouter(history: RouterHistory = createWebHistory()): Router
       },
       {
         // The meeting room has its own chrome (phase sidebar, bottom bar), so
-        // it sits outside the shell; an ended meeting shows what it was.
+        // it sits outside the shell; an ended meeting redirects to its summary.
         path: '/teams/:teamId/meetings/:meetingId',
         name: 'meeting-room',
         component: () => import('@/features/meetings/MeetingRoomView.vue'),

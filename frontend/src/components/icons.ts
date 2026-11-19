@@ -44,6 +44,7 @@ export const ICONS = {
   pencil: ['M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z'],
   move: ['M5 9 2 12l3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20'],
   chevronLeft: ['m15 6-6 6 6 6'],
+  arrowLeft: ['M19 12H5M11 18l-6-6 6-6'],
   chevronRight: ['m9 6 6 6-6 6'],
   moreVertical: ['circle:12,5,1.4', 'circle:12,12,1.4', 'circle:12,19,1.4'],
   search: ['circle:11,11,7', 'm20 20-3.5-3.5'],

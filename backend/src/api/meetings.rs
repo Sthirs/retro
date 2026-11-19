@@ -23,6 +23,7 @@ use crate::{
         meetings::{self, MeetingView, Participant},
         reactions::{self, ReactionDto},
         reflections::{self, ReflectionCountsDto, ReflectionsSnapshot},
+        summary::{self, MeetingSummary, SummaryGroupDto},
         tasks::{self, TaskView},
         timer::{Timer, TimerAction},
         votes::{self, MyVoteDto},
@@ -440,6 +441,89 @@ pub async fn get_meeting_state(
     Path(meeting_id): Path<Uuid>,
 ) -> AppResult<Json<MeetingStateDto>> {
     Ok(Json(state_of(&state, meeting_id, user.id).await?))
+}
+
+/// An ended meeting's read-only summary (spec §8.3).
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct EndedMeetingSummaryDto {
+    pub id: Uuid,
+    pub team_id: Uuid,
+    pub team_name: String,
+    pub title: String,
+    pub facilitator: PersonDto,
+    /// In joining order, including people who left the team since.
+    pub participants: Vec<PersonDto>,
+    /// Votes cast overall.
+    pub votes_cast: i32,
+    /// Most votes first (Discuss order). Empty when the meeting ended
+    /// during Reflect: its reflections were never revealed.
+    pub groups: Vec<SummaryGroupDto>,
+    /// The tasks written in the meeting, oldest first, with their current
+    /// board status.
+    pub tasks: Vec<TaskDto>,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    #[schema(value_type = String, format = DateTime)]
+    pub ended_at: OffsetDateTime,
+}
+
+impl EndedMeetingSummaryDto {
+    fn new(summary: MeetingSummary) -> AppResult<Self> {
+        let MeetingSummary {
+            view,
+            votes_cast,
+            groups,
+            tasks,
+        } = summary;
+        let ended_at = view
+            .meeting
+            .ended_at
+            .ok_or_else(|| AppError::Internal(anyhow::anyhow!("ended meeting without ended_at")))?;
+        Ok(Self {
+            id: view.meeting.id,
+            team_id: view.meeting.team_id,
+            team_name: view.team_name,
+            title: view.meeting.title,
+            facilitator: view.facilitator.into(),
+            participants: view
+                .participants
+                .into_iter()
+                .map(|p| p.user.into())
+                .collect(),
+            votes_cast,
+            groups,
+            tasks: tasks.into_iter().map(Into::into).collect(),
+            created_at: view.meeting.created_at,
+            ended_at,
+        })
+    }
+}
+
+/// The summary of an ended meeting: facts, groups by votes with their
+/// anonymous reflections, and its tasks with their current status.
+#[utoipa::path(
+    get,
+    path = "/api/v1/meetings/{meeting_id}/summary",
+    tag = "meetings",
+    security(("bearer" = [])),
+    params(("meeting_id" = Uuid, Path, description = "Meeting id")),
+    responses(
+        (status = 200, body = EndedMeetingSummaryDto, description = "The summary"),
+        (status = 401, body = Problem, content_type = "application/problem+json", description = "Not signed in"),
+        (status = 404, body = Problem, content_type = "application/problem+json", description = "`meeting_not_found`: no such meeting or not a team member"),
+        (status = 409, body = Problem, content_type = "application/problem+json", description = "`meeting_active`: the meeting has not ended"),
+    )
+)]
+pub async fn get_meeting_summary(
+    State(state): State<AppState>,
+    CurrentUser(user): CurrentUser,
+    Path(meeting_id): Path<Uuid>,
+) -> AppResult<Json<EndedMeetingSummaryDto>> {
+    let summary = summary::of_meeting(&state.db, meeting_id, user.id).await?;
+    Ok(Json(EndedMeetingSummaryDto::new(summary)?))
 }
 
 /// A new title.

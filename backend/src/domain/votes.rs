@@ -174,7 +174,10 @@ pub async fn votes_cast(
 }
 
 /// Votes cast overall in a meeting, with no check of who asks.
-async fn count_cast(db: &impl ConnectionTrait, meeting_id: Uuid) -> Result<i32, AppError> {
+pub(crate) async fn count_cast(
+    db: &impl ConnectionTrait,
+    meeting_id: Uuid,
+) -> Result<i32, AppError> {
     let cast = vote::Entity::find()
         .filter(vote::Column::MeetingId.eq(meeting_id))
         .count(db)

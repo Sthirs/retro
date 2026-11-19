@@ -6,6 +6,7 @@ import {
   BOB,
   me,
   MEETING_ID,
+  meetingReport,
   meetingState,
   mockFetch,
   MockWebSocket,
@@ -36,6 +37,7 @@ function routes(state = meetingState(), extra: Record<string, unknown> = {}, use
     [`GET /api/v1/teams/${TEAM_ID}/meetings`]: { status: 200, body: [] },
     [`POST ${BASE}/join`]: { status: 200, body: state },
     [`GET ${BASE}/state`]: { status: 200, body: state },
+    [`GET ${BASE}/summary`]: { status: 200, body: meetingReport() },
     ...extra,
   } as Parameters<typeof mockFetch>[0];
 }
@@ -254,7 +256,7 @@ describe('Meeting room', () => {
         [`POST ${BASE}/end`]: { status: 200, body: ended },
       }),
     );
-    const { wrapper } = await open();
+    const { wrapper, router } = await open();
     await wrapper.get('[role="toolbar"]').findAll('button').at(-1)!.trigger('click');
     await flushPromises();
     const dialog = wrapper.get('dialog[open]');
@@ -269,15 +271,16 @@ describe('Meeting room', () => {
     await dialog.findAll('button').at(-1)!.trigger('click');
     await flushPromises();
     expect(calls.some((c) => c.method === 'POST' && c.path === `${BASE}/end`)).toBe(true);
-    expect(wrapper.text()).toContain('This meeting has ended');
-    expect(wrapper.text()).toContain(
-      'It ran on 10 Nov 2026 for 58 min, facilitated by Alice Rossi.',
-    );
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('meeting-summary'));
+    await flushPromises();
+    expect(router.currentRoute.value.path).toBe(`/teams/${TEAM_ID}/meetings/${MEETING_ID}/summary`);
+    expect(wrapper.text()).toContain('Meeting summary · read-only');
+    expect(wrapper.get('h1').text()).toBe('Retro #3');
   });
 
-  it('lands participants on the ended view when the facilitator ends it', async () => {
+  it('lands participants on the summary when the facilitator ends it', async () => {
     mockFetch(routes(meetingState(), {}, BOB));
-    const { wrapper } = await open();
+    const { wrapper, router } = await open();
     const socket = await openSocket();
     socket.emit({
       type: 'meeting.ended',
@@ -286,8 +289,19 @@ describe('Meeting room', () => {
       payload: { endedAt: '2026-11-10T18:00:00Z' },
     });
     await flushPromises();
-    expect(wrapper.text()).toContain('This meeting has ended');
-    expect(wrapper.find('a[href$="/meetings"]').text()).toBe('Back to meetings');
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('meeting-summary'));
+    await flushPromises();
+    expect(wrapper.text()).toContain('Meeting summary · read-only');
+    expect(wrapper.text()).toContain('Flaky CI is slowing us down');
+  });
+
+  it('sends an ended meeting straight to its summary', async () => {
+    const ended = meetingState({ status: 'ended', endedAt: '2026-11-10T18:07:00Z' });
+    mockFetch(routes(ended, { [`POST ${BASE}/join`]: problem(409, 'meeting_ended') }, BOB));
+    const { wrapper, router } = await open();
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('meeting-summary'));
+    await flushPromises();
+    expect(wrapper.get('h1').text()).toBe('Retro #3');
   });
 
   it('renames the meeting inline', async () => {

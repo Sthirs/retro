@@ -10,6 +10,7 @@ pub mod pictures;
 pub mod reactions;
 pub mod reflections;
 pub mod rich_text;
+pub mod summary;
 pub mod tasks;
 pub mod teams;
 pub mod timer;

@@ -156,6 +156,34 @@ pub const DEV_USERS: &[DevUser] = &[
         email: "xena@retro.local",
         display_name: "Xena Bruno",
     },
+    // Also password only. The end-to-end summary spec owns these five: yara
+    // facilitates, zeno and abel take part, bea is a member who never joins,
+    // noah is never in the team.
+    DevUser {
+        username: "yara",
+        email: "yara@retro.local",
+        display_name: "Yara Costa",
+    },
+    DevUser {
+        username: "zeno",
+        email: "zeno@retro.local",
+        display_name: "Zeno Rinaldi",
+    },
+    DevUser {
+        username: "abel",
+        email: "abel@retro.local",
+        display_name: "Abel Marchetti",
+    },
+    DevUser {
+        username: "bea",
+        email: "bea@retro.local",
+        display_name: "Bea Leone",
+    },
+    DevUser {
+        username: "noah",
+        email: "noah@retro.local",
+        display_name: "Noah Gentile",
+    },
 ];
 
 /// Creates the dev users, or resets their name and password. Idempotent.

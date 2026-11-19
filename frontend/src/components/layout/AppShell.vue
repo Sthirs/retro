@@ -73,6 +73,11 @@ useChannel(
 );
 const activeCount = computed(() => (meetings.teamId === teamId.value ? meetings.active.length : 0));
 
+/** A meeting's summary belongs to the Meetings section. */
+function isCurrent(name: string): boolean {
+  return route.name === name || (name === 'team-meetings' && route.name === 'meeting-summary');
+}
+
 const entries: { name: string; label: string; icon: IconName }[] = [
   { name: 'team-meetings', label: 'nav.meetings', icon: 'calendar' },
   { name: 'team-tasks', label: 'nav.tasks', icon: 'tasks' },
@@ -102,7 +107,7 @@ const entries: { name: string; label: string; icon: IconName }[] = [
           :key="entry.name"
           :to="{ name: entry.name, params: { teamId } }"
           class="nav__link"
-          :aria-current="route.name === entry.name ? 'page' : undefined"
+          :aria-current="isCurrent(entry.name) ? 'page' : undefined"
         >
           <AppIcon :name="entry.icon" />
           {{ t(entry.label) }}

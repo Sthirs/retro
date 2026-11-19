@@ -2167,6 +2167,74 @@
         ]
       }
     },
+    "/api/v1/meetings/{meeting_id}/summary": {
+      "get": {
+        "tags": [
+          "meetings"
+        ],
+        "summary": "The summary of an ended meeting: facts, groups by votes with their\nanonymous reflections, and its tasks with their current status.",
+        "operationId": "get_meeting_summary",
+        "parameters": [
+          {
+            "name": "meeting_id",
+            "in": "path",
+            "description": "Meeting id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndedMeetingSummaryDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`meeting_not_found`: no such meeting or not a team member",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`meeting_active`: the meeting has not ended",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/meetings/{meeting_id}/tasks": {
       "post": {
         "tags": [
@@ -4407,6 +4475,76 @@
           }
         }
       },
+      "EndedMeetingSummaryDto": {
+        "type": "object",
+        "description": "An ended meeting's read-only summary (spec §8.3).",
+        "required": [
+          "id",
+          "teamId",
+          "teamName",
+          "title",
+          "facilitator",
+          "participants",
+          "votesCast",
+          "groups",
+          "tasks",
+          "createdAt",
+          "endedAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "facilitator": {
+            "$ref": "#/components/schemas/PersonDto"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SummaryGroupDto"
+            },
+            "description": "Most votes first (Discuss order). Empty when the meeting ended\nduring Reflect: its reflections were never revealed."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "participants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PersonDto"
+            },
+            "description": "In joining order, including people who left the team since."
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskDto"
+            },
+            "description": "The tasks written in the meeting, oldest first, with their current\nboard status."
+          },
+          "teamId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "teamName": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "votesCast": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Votes cast overall."
+          }
+        }
+      },
       "GreetingDto": {
         "type": "object",
         "description": "\"Hello\" in the meeting's language.",
@@ -5522,6 +5660,60 @@
           },
           "enabled": {
             "type": "boolean"
+          }
+        }
+      },
+      "SummaryGroupDto": {
+        "type": "object",
+        "description": "A group with its vote total and its reflections. A card that was never\ngrouped is a group of one, with no name.",
+        "required": [
+          "id",
+          "name",
+          "votes",
+          "reflections"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The group's id, or the card's for a card that was never grouped."
+          },
+          "name": {
+            "type": "string",
+            "description": "Empty when unnamed (\"Untitled group\", or a lone card's text)."
+          },
+          "reflections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SummaryReflectionDto"
+            },
+            "description": "By column (Plus, Delta, Ideas, Thanks), then place."
+          },
+          "votes": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "SummaryReflectionDto": {
+        "type": "object",
+        "description": "A reflection as the summary shows it: anonymous.",
+        "required": [
+          "id",
+          "column",
+          "content"
+        ],
+        "properties": {
+          "column": {
+            "$ref": "#/components/schemas/ReflectionColumn"
+          },
+          "content": {
+            "type": "string",
+            "description": "Sanitized rich text."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },

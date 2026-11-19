@@ -37,7 +37,8 @@ export class MeetingRoomPage {
       name: 'Transfer facilitator role',
     });
     this.endDialog = page.getByRole('dialog', { name: 'End this meeting?' });
-    this.ended = page.getByText('This meeting has ended');
+    // An ended meeting sends everyone to its summary.
+    this.ended = page.getByText('Meeting summary · read-only');
     this.reconnecting = page.getByRole('status').filter({ hasText: 'Reconnecting…' });
   }
 

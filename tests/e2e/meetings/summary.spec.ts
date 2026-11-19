@@ -366,15 +366,17 @@ test.describe('meeting summary', () => {
     await editTask(BEA, await taskId(SPLIT), `<p>${SPLIT} in two stages</p>`);
     await deleteTask(ZENO, await taskId(DOC_DAY));
 
+    const subscribed = channelSubscribed(yara, `team:${teamId}`);
     await summary.goto(teamId, meetingId);
+    await subscribed;
     await expect(summary.tasks).toHaveCount(2);
     await expect(summary.task(QUARANTINE)).toContainText('Done');
     await expect(summary.task(SPLIT)).toContainText(`${SPLIT} in two stages`);
     await expect(summary.task(SPLIT)).toContainText('Stuck');
     await expect(summary.task(DOC_DAY)).toHaveCount(0);
 
+    // While it is open, the summary follows the board live.
     await moveTask(ABEL, await taskId(SPLIT), 'future');
-    await yara.reload();
     await expect(summary.task(SPLIT)).toContainText('Future');
   });
 

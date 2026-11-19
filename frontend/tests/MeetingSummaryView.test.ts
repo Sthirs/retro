@@ -16,6 +16,7 @@ import {
   team,
   TEAM_ID,
   wsTicket,
+  openSocket,
 } from './helpers';
 
 const SUMMARY = `/api/v1/meetings/${MEETING_ID}/summary`;
@@ -103,6 +104,29 @@ describe('Meeting summary', () => {
     expect(wrapper.text()).toContain('No reflections were revealed in this meeting.');
     expect(wrapper.text()).toContain('No tasks were created in this meeting.');
     expect(wrapper.find('[data-fact="votesCast"]').exists()).toBe(false);
+  });
+
+  it('keeps task statuses current while it is open', async () => {
+    const task = meetingReport().tasks[0]!;
+    let status = 'active';
+    const { calls } = mockFetch({
+      ...routes(),
+      [`GET ${SUMMARY}`]: () => ({
+        status: 200,
+        body: meetingReport({ tasks: [{ ...task, status }] }),
+      }),
+    });
+    const { wrapper } = await open();
+    const socket = await openSocket();
+    expect(wrapper.find('.pill--active').exists()).toBe(true);
+
+    // Another member moves the task on the board.
+    status = 'done';
+    socket.emit({ type: 'task.updated', channel: `team:${TEAM_ID}`, payload: { id: task.id } });
+    await vi.waitFor(() => expect(wrapper.find('.pill--done').exists()).toBe(true));
+    expect(calls.filter((c) => c.path === SUMMARY)).toHaveLength(2);
+    // The page stayed on screen while it refreshed.
+    expect(wrapper.find('.summary__loading').exists()).toBe(false);
   });
 
   it('hides the vote totals of a meeting ended before Discuss', async () => {

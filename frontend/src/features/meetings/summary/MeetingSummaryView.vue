@@ -15,6 +15,7 @@ import RichText from '@/components/RichText.vue';
 import TaskStatusPill from '@/components/TaskStatusPill.vue';
 import UserAvatar from '@/components/UserAvatar.vue';
 import AppButton from '@/components/ui/AppButton.vue';
+import { useChannel } from '@/composables/useChannel';
 import { useErrorText } from '@/composables/useErrorText';
 import LinkStateCard from '@/features/invitations/LinkStateCard.vue';
 import SummaryGroup from '@/features/meetings/summary/SummaryGroup.vue';
@@ -34,10 +35,13 @@ const summary = ref<EndedMeetingSummaryDto | null>(null);
 const error = ref<string | null>(null);
 let loadSeq = 0;
 
-async function load(id: string): Promise<void> {
+/** Loads the summary; `silent` keeps the shown one until the new one lands. */
+async function load(id: string, silent = false): Promise<void> {
   const seq = ++loadSeq;
-  summary.value = null;
-  error.value = null;
+  if (!silent) {
+    summary.value = null;
+    error.value = null;
+  }
   try {
     const res = await api.getMeetingSummary(id);
     if (res.status !== 200) throw apiError(res);
@@ -50,6 +54,8 @@ async function load(id: string): Promise<void> {
     summary.value = res.data;
   } catch (e) {
     if (seq !== loadSeq) return;
+    // A failed refresh keeps what is shown: it is still the meeting's summary.
+    if (silent && summary.value) return;
     const code = errorCode(e);
     if (code === 'meeting_active') {
       await router.replace({
@@ -62,8 +68,30 @@ async function load(id: string): Promise<void> {
   }
 }
 watch(meetingId, (id) => void load(id), { immediate: true });
+
+// Task statuses are the board's current ones (spec §8.3): follow the team's
+// task events while the summary is open, and catch up after a reconnect.
+const REFRESH_DELAY_MS = 300;
+let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+function refreshSoon(): void {
+  if (refreshTimer !== undefined) return;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = undefined;
+    if (summary.value) void load(meetingId.value, true);
+  }, REFRESH_DELAY_MS);
+}
+useChannel(
+  () => (summary.value ? `team:${teamId.value}` : null),
+  (event) => {
+    if (event.type === 'resync' || event.type.startsWith('task.')) refreshSoon();
+  },
+);
+
 // A response that lands after the user has left must not redirect them.
-onBeforeUnmount(() => loadSeq++);
+onBeforeUnmount(() => {
+  loadSeq++;
+  clearTimeout(refreshTimer);
+});
 
 const duration = computed(() =>
   summary.value ? formatDuration(summary.value.createdAt, summary.value.endedAt) : '',

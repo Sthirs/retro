@@ -155,7 +155,7 @@ function contextOptions(): BrowserContextOptions {
     deviceScaleFactor: 1,
     locale: 'en-US',
     timezoneId: 'Europe/Rome',
-    colorScheme: 'light',
+    colorScheme: 'dark',
   };
 }
 

@@ -29,7 +29,7 @@ export default defineConfig({
     // the machine that generated them.
     locale: 'en-US',
     timezoneId: 'Europe/Rome',
-    colorScheme: 'light',
+    colorScheme: 'dark',
     trace: 'retain-on-failure',
     ...devices['Desktop Chrome'],
     // 16:10 desktop. deviceScaleFactor 1 keeps every PNG exactly 1440x900 and

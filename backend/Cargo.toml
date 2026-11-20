@@ -39,7 +39,7 @@ gif = { version = "=0.14.2", default-features = false, features = ["std"] }
 image-webp = { version = "=0.2.4", default-features = false }
 webp-animation = { version = "=0.10.0", default-features = false, features = ["static"] }
 futures-util = { version = "=0.3.34", default-features = false, features = ["sink", "std"] }
-jsonwebtoken = { version = "=11.1.0", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "=12.0.0", default-features = false, features = ["rust_crypto"] }
 metrics = "=0.24.6"
 metrics-exporter-prometheus = { version = "=0.18.3", default-features = false, features = ["http-listener"] }
 openidconnect = { version = "=4.1.0", default-features = false, features = ["reqwest", "rustls-tls"] }

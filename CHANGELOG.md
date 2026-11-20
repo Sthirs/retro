@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/Sthirs/retro/compare/v1.0.0...v1.0.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** use official nginx 1.31.9 image for the frontend ([#26](https://github.com/Sthirs/retro/issues/26)) ([7477ca7](https://github.com/Sthirs/retro/commit/7477ca74688bd21448e00971e465095dd8d3d793))
+
 ## [1.0.0](https://github.com/Sthirs/retro/compare/v0.1.0...v1.0.0) (2026-11-20)
 
 

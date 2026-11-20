@@ -90,30 +90,13 @@ where it stays until it is done.
   or both.
 - **Make it yours** — Light and dark themes and a profile picture.
 
-## Quick start
-
-```bash
-nvm install && nvm use
-scripts/setup.sh
-scripts/dev.sh
-```
-
-Then open the printed URL and sign in as `alice` / `password` (or `bob`), with
-the form or through single sign-on. Prerequisites and daily commands are in the
-[development guide](docs/development.md).
-
-The screenshots above are generated from a running cluster:
-
-```bash
-npm run screenshots -- https://$(scripts/dev-host.sh)
-```
-
 ## Documentation
 
 | Document | Description |
 | --- | --- |
 | [Specification](docs/specifications.md) | The canonical product specification |
 | [Development guide](docs/development.md) | How to run and work on the project |
+| [Deployment guide](docs/deployment.md) | Running Retro in production with the Helm chart |
 | [Architecture decision records](docs/adr/README.md) | Why things are the way they are |
 | [Contribution methodology](AGENTS.md) | The process for making changes, for humans and coding agents |
 

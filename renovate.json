@@ -32,6 +32,18 @@
       "minimumReleaseAge": "7 days"
     }
   ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "PostgreSQL image the backend integration tests start via testcontainers",
+      "managerFilePatterns": ["/^backend/tests/common/mod\\.rs$/"],
+      "matchStrings": [
+        "Postgres::default\\(\\)\\s*\\.with_tag\\(\"(?<currentValue>[^\"]+)\"\\)"
+      ],
+      "depNameTemplate": "postgres",
+      "datasourceTemplate": "docker"
+    }
+  ],
   "vulnerabilityAlerts": {
     "enabled": true,
     "groupName": "security updates",

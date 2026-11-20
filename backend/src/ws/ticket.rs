@@ -37,7 +37,7 @@ fn issue_at(secret: &str, user_id: Uuid, now: i64) -> anyhow::Result<(String, i6
     let token = encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
+        &EncodingKey::from_secret(secret.as_bytes())?,
     )?;
     Ok((token, exp))
 }
@@ -50,7 +50,7 @@ pub fn verify(secret: &str, ticket: &str) -> Option<Uuid> {
     validation.leeway = 0;
     decode::<Claims>(
         ticket,
-        &DecodingKey::from_secret(secret.as_bytes()),
+        &DecodingKey::from_secret(secret.as_bytes()).ok()?,
         &validation,
     )
     .ok()

@@ -22,6 +22,15 @@ async fn serves_openapi_document() {
 }
 
 #[tokio::test]
+async fn samples_notification_queue_usage() {
+    let app = TestApp::new().await;
+    let usage = retro_backend::services::metrics::notification_queue_usage(&app.db)
+        .await
+        .expect("query");
+    assert!((0.0..=1.0).contains(&usage), "{usage}");
+}
+
+#[tokio::test]
 async fn responses_carry_a_request_id() {
     let app = TestApp::new().await;
     let res = app.get("/healthz").await;

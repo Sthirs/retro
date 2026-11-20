@@ -51,7 +51,9 @@ account is created on her first sign-in (`OIDC_AUTO_REGISTER`). The backend also
 seeds `dana`, `erin`, `finn`, `gina` and `hugo` (password only, not in dex); the
 end-to-end suite owns them: `dana` for the account spec, `erin` and `finn` for the
 tasks spec, `gina` and `hugo` for the teams spec. The suite never changes `alice`,
-`bob` or `carol`, so they are yours to use by hand.
+`bob` or `carol`, so they are yours to use by hand. `giulia`, `marco`, `sara`,
+`aisha` and `leo` (password only) belong to the README screenshot generator
+(`npm run screenshots`, see [Testing](#testing)).
 
 | Username | Email | Name | Password | Sign-in methods |
 | --- | --- | --- | --- | --- |
@@ -62,6 +64,11 @@ tasks spec, `gina` and `hugo` for the teams spec. The suite never changes `alice
 | `finn` | `finn@retro.local` | Finn Moretti | `password` | password only (not in dex) |
 | `gina` | `gina@retro.local` | Gina Ferri | `password` | password only (not in dex) |
 | `hugo` | `hugo@retro.local` | Hugo Conti | `password` | password only (not in dex) |
+| `giulia` | `giulia@retro.local` | Giulia Romano | `password` | password only (not in dex) |
+| `marco` | `marco@retro.local` | Marco Bassi | `password` | password only (not in dex) |
+| `sara` | `sara@retro.local` | Sara Lombardi | `password` | password only (not in dex) |
+| `aisha` | `aisha@retro.local` | Aisha Khan | `password` | password only (not in dex) |
+| `leo` | `leo@retro.local` | Leo Ferrara | `password` | password only (not in dex) |
 | — | `carol@retro.local` | Carol Verdi | `password` (in dex) | SSO only |
 
 On the first SSO sign-in, the backend links the dex identity to the existing account
@@ -225,6 +232,15 @@ Backend integration tests create a fresh database per test. With Podman, export
 End-to-end tests run against the deployed application (no `webServer`): rebuild and
 restart first (`scripts/dev.sh`). Install the browser once with
 `npx playwright install chromium`. Reports land in `playwright-report/`.
+
+### README screenshots
+
+`npm run screenshots -- https://$(scripts/dev-host.sh)` regenerates
+`docs/screenshots/` against the running cluster. It uses its own Playwright config
+(`playwright.screenshots.config.ts`, specs in `scripts/screenshots/`), so it never
+runs with the end-to-end suite. It signs in as the generator's seeded users, builds
+a throwaway team and meeting through the API, captures 1440×900 PNGs and deletes
+the team again.
 
 ## Command reference
 

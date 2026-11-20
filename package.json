@@ -27,7 +27,8 @@
     "test": "npm run test:backend && npm run test:frontend",
     "test:backend": "cargo test --manifest-path backend/Cargo.toml",
     "test:frontend": "npm run test --workspace @retro/frontend",
-    "test:playwright": "bash ./scripts/test-playwright.sh"
+    "test:playwright": "bash ./scripts/test-playwright.sh",
+    "screenshots": "bash ./scripts/capture-screenshots.sh"
   },
   "devDependencies": {
     "@playwright/test": "1.65.1",

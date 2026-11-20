@@ -166,6 +166,15 @@ The chart sets them from `values.yaml` (ConfigMap and Secrets).
 | `RUST_LOG` | `info,sqlx=warn,sea_orm=warn` | Log filter |
 | `LOG_FORMAT` | JSON | `pretty` for human-readable logs |
 
+`/metrics` on `METRICS_ADDR` exports, per replica:
+
+| Metric | Type | Meaning |
+| --- | --- | --- |
+| `http_requests_total` / `http_request_duration_seconds` | counter / histogram | HTTP requests by method, route and status |
+| `ws_connections` | gauge | Open WebSockets |
+| `realtime_events_total` | counter | Real-time notifications received, by `type`; `rate()` gives events/s |
+| `pg_notification_queue_usage` | gauge | Share of PostgreSQL's `NOTIFY` queue in use (0–1), sampled every 15 s |
+
 ### Database
 
 | Variable | Default | Description |

@@ -1157,6 +1157,10 @@ impl Hub {
             tracing::warn!("malformed real-time notification");
             return;
         };
+        // Events per second (spec §20): every notification this replica hears,
+        // by type. Types are a fixed set, all from our own `pg_notify`.
+        metrics::counter!("realtime_events_total", "type" => notification.kind.clone())
+            .increment(1);
         match notification.kind.as_str() {
             PRESENCE_SYNC => self.announce_local().await,
             PRESENCE_CHANGED => self.presence_changed(&notification).await,

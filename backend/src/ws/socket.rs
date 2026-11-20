@@ -148,7 +148,25 @@ pub async fn ws_handler(
     Ok(ws.on_upgrade(move |socket| serve(socket, state, user_id)))
 }
 
+/// Counts this replica's open WebSockets in `ws_connections` (spec §20): up
+/// when created, down when dropped, also if the socket task panics.
+struct ConnectionGauge;
+
+impl ConnectionGauge {
+    fn new() -> Self {
+        metrics::gauge!("ws_connections").increment(1.0);
+        Self
+    }
+}
+
+impl Drop for ConnectionGauge {
+    fn drop(&mut self) {
+        metrics::gauge!("ws_connections").decrement(1.0);
+    }
+}
+
 async fn serve(socket: WebSocket, state: AppState, user_id: Uuid) {
+    let _gauge = ConnectionGauge::new();
     let (mut sink, mut stream) = socket.split();
     let (out, mut outgoing) = mpsc::channel::<Outgoing>(256);
     // Taken before any subscription is authorised: a removal that commits

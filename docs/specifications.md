@@ -345,7 +345,7 @@ The summary has its own address inside the team pages (§15.2); opening an ended
 
 | Event | Payload highlights | Visible to |
 | --- | --- | --- |
-| `participant.joined` / `participant.left` | user | all |
+| `participant.joined` | user | all |
 | `presence.changed` | user, online (on the team channel also the meeting) | meeting + team channel |
 | `facilitator.changed` | new facilitator | all |
 | `phase.changed` | phase (clients re-read the state; at Group start this reveals the reflections, at Discuss start the vote totals) | all |
@@ -766,7 +766,7 @@ The application is deployed to Kubernetes with a Helm chart (`deploy/helm/retro`
 
 - **Frontend** and **backend** are deployed as separate microservices, each with its own `Deployment`, `Service`, resource limits, probes and `HorizontalPodAutoscaler` (optional).
 - An **Ingress** (optional, configurable class/TLS) routes `/` to the frontend and `/api` to the backend, with WebSocket upgrade enabled.
-- **ConfigMap**: non-secret configuration (OIDC issuer/client ID, public URLs, log level, vote defaults).
+- **ConfigMap**: non-secret configuration (OIDC issuer/client ID, public URLs, log level).
 - **Secrets**: database password and auth secrets (JWT secret, SSO state secret, OIDC client secret). Alternatively, `existingSecret`s can be referenced.
 - **Migration Job** (optional, one per release revision) running the backend's migration command; new pods become ready once it has applied their migrations (ADR-0004).
 - The **database is not deployed** by the chart in production. The chart assumes PostgreSQL is already available and reads connection details from `values.yaml`. Development-only PostgreSQL and dex templates render only with `devMode.enabled` (ADR-0006).

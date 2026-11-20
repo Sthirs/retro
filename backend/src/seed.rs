@@ -184,6 +184,34 @@ pub const DEV_USERS: &[DevUser] = &[
         email: "noah@retro.local",
         display_name: "Noah Gentile",
     },
+    // Also password only. The README screenshot generator
+    // (scripts/screenshots/) owns these five: giulia facilitates, the others
+    // take part.
+    DevUser {
+        username: "giulia",
+        email: "giulia@retro.local",
+        display_name: "Giulia Romano",
+    },
+    DevUser {
+        username: "marco",
+        email: "marco@retro.local",
+        display_name: "Marco Bassi",
+    },
+    DevUser {
+        username: "sara",
+        email: "sara@retro.local",
+        display_name: "Sara Lombardi",
+    },
+    DevUser {
+        username: "aisha",
+        email: "aisha@retro.local",
+        display_name: "Aisha Khan",
+    },
+    DevUser {
+        username: "leo",
+        email: "leo@retro.local",
+        display_name: "Leo Ferrara",
+    },
 ];
 
 /// Creates the dev users, or resets their name and password. Idempotent.

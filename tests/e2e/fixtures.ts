@@ -8,7 +8,9 @@
  * to the account spec, erin and finn to the tasks spec, gina and hugo to the
  * teams spec, ivan, jade and kai to the meetings spec, lena, milo and nora to
  * the reflect spec, omar and pia to the group spec, quinn, rosa, sami and tess
- * to the vote spec, uma, vera, walt and xena to the discuss spec. See
+ * to the vote spec, uma, vera, walt and xena to the discuss spec. giulia, marco,
+ * sara, aisha and leo belong to the README screenshot generator
+ * (scripts/screenshots/). See
  * backend/src/seed.rs and deploy/helm/retro/templates/dev-dex.yaml.
  */
 export const USERS = {
@@ -44,6 +46,11 @@ export const USERS = {
   abel: { username: 'abel', email: 'abel@retro.local', name: 'Abel Marchetti' },
   bea: { username: 'bea', email: 'bea@retro.local', name: 'Bea Leone' },
   noah: { username: 'noah', email: 'noah@retro.local', name: 'Noah Gentile' },
+  giulia: { username: 'giulia', email: 'giulia@retro.local', name: 'Giulia Romano' },
+  marco: { username: 'marco', email: 'marco@retro.local', name: 'Marco Bassi' },
+  sara: { username: 'sara', email: 'sara@retro.local', name: 'Sara Lombardi' },
+  aisha: { username: 'aisha', email: 'aisha@retro.local', name: 'Aisha Khan' },
+  leo: { username: 'leo', email: 'leo@retro.local', name: 'Leo Ferrara' },
   carol: { username: 'carol', email: 'carol@retro.local', name: 'Carol Verdi' },
 } as const;
 

@@ -91,4 +91,4 @@ jobs:
       - name: Package and push Helm chart
         run: |
           helm package deploy/helm/retro
-          helm push retro-*.tgz "oci://${IMAGE_PREFIX}/charts"
+          helm push retro-*.tgz "oci://${IMAGE_PREFIX,,}/charts"

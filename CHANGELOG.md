@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/Sthirs/retro/compare/v1.0.1...v1.0.2) (2026-11-21)
+
+
+### Miscellaneous Chores
+
+* release 1.0.2 ([#29](https://github.com/Sthirs/retro/issues/29)) ([8ca5967](https://github.com/Sthirs/retro/commit/8ca5967407c69e6b7b2ff0e9be4632090519b8d3))
+
 ## [1.0.1](https://github.com/Sthirs/retro/compare/v1.0.0...v1.0.1) (2026-11-20)
 
 

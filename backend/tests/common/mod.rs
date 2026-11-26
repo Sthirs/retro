@@ -329,7 +329,7 @@ async fn database() -> (String, Option<ContainerAsync<Postgres>>) {
         return (url.to_string(), None);
     }
     let container = Postgres::default()
-        .with_tag("18-alpine")
+        .with_tag("19-alpine")
         .start()
         .await
         .expect("start postgres container (is Docker or Podman running?)");

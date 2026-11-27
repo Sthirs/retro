@@ -93,7 +93,17 @@ async fn subscribe(socket: &mut Socket, channel: &str) -> Value {
         ))
         .await
         .unwrap();
-    next(socket).await
+    // The reply to this subscribe: the ack or an error for this channel. Events
+    // forwarded on the new subscription (e.g. our own presence on a meeting
+    // channel) can overtake the ack, so they are skipped.
+    loop {
+        let message = next(socket).await;
+        if (message["type"] == "subscribed" || message["type"] == "error")
+            && message["channel"] == channel
+        {
+            return message;
+        }
+    }
 }
 
 #[tokio::test]

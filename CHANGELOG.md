@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/Sthirs/retro/compare/v1.0.2...v1.0.3) (2026-11-27)
+
+
+### Bug Fixes
+
+* **deps:** update minor and patch updates ([#32](https://github.com/Sthirs/retro/issues/32)) ([b8ac00d](https://github.com/Sthirs/retro/commit/b8ac00d16346ed28e3864f5a18b4e27f5ae6c09f))
+
 ## [1.0.2](https://github.com/Sthirs/retro/compare/v1.0.1...v1.0.2) (2026-11-21)
 
 

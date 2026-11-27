@@ -14,7 +14,7 @@ RUN npm run build --workspace @retro/frontend \
   && find frontend/dist -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' \) \
      -exec gzip -9 -k -n {} +
 
-FROM nginx:1.31.9-alpine@sha256:fb4658584bd9a916ffb6f6e365f97c25cfdb2923801f551ea08356e695f14ff7
+FROM nginx:1.31.10-alpine@sha256:7fc0fb4af7bf006aeb31aea88069976060f8f0a0a86b667126742cc17f4e31ae
 # Run as non-root on a read-only root filesystem: drop the `user` directive and
 # keep the pid file in /tmp (temp paths are set in nginx.conf).
 RUN sed -i -e '/^user /d' -e 's,^pid .*,pid /tmp/nginx.pid;,' /etc/nginx/nginx.conf

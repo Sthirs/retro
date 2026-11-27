@@ -151,9 +151,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.104"
+version = "1.0.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+checksum = "2cb931c189b85683d69a5cfad41d4d418671e1ac413dd209f3f2fc31e3cfd902"
 
 [[package]]
 name = "argon2"
@@ -784,9 +784,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.9"
+version = "4.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "844c5c0b65be192cb68d570cca1b21a6444431d24e39c084dc0336177015337c"
+checksum = "50066ca966813ca8957ee15361752f19424a8ff620dbe9c8993d9f99d99b04b3"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -794,9 +794,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.6.7"
+version = "4.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d"
+checksum = "a0ed97c96ef4efb3cc84e09fa388df4463e7cc3224ec38d7b1d9e45749333590"
 dependencies = [
  "anstream",
  "anstyle",
@@ -1335,7 +1335,7 @@ dependencies = [
  "curve25519-dalek",
  "ed25519",
  "serde",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "signature 3.0.0",
  "subtle",
  "zeroize",
@@ -1511,9 +1511,9 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "form_urlencoded"
-version = "1.2.2"
+version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+checksum = "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e"
 dependencies = [
  "percent-encoding",
 ]
@@ -2390,7 +2390,7 @@ dependencies = [
  "rsa 0.10.0",
  "serde",
  "serde_json",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "signature 3.0.0",
  "zeroize",
 ]
@@ -3025,7 +3025,7 @@ dependencies = [
  "elliptic-curve",
  "primefield",
  "primeorder",
- "sha2 0.11.1",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -3039,7 +3039,7 @@ dependencies = [
  "fiat-crypto",
  "primefield",
  "primeorder",
- "sha2 0.11.1",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -3788,7 +3788,7 @@ dependencies = [
  "sea-orm",
  "serde",
  "serde_json",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "sqlx",
  "testcontainers-modules",
  "thiserror 2.0.21",
@@ -3864,7 +3864,7 @@ dependencies = [
  "pkcs1 0.8.0",
  "pkcs8 0.11.0",
  "rand_core 0.10.1",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "signature 3.0.0",
  "spki 0.8.1",
  "zeroize",
@@ -4410,9 +4410,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+checksum = "5b0e5c7d67bc53f435386b2130fdc900488c5703770f6d8a4633060e34288a27"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
@@ -4577,7 +4577,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "smallvec",
  "thiserror 2.0.21",
  "time",
@@ -4617,7 +4617,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "sqlx-core",
  "sqlx-mysql",
  "sqlx-postgres",
@@ -4649,7 +4649,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "sha1 0.11.0",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "sqlx-core",
  "thiserror 2.0.21",
  "time",
@@ -4685,7 +4685,7 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
- "sha2 0.11.1",
+ "sha2 0.11.2",
  "smallvec",
  "sqlx-core",
  "stringprep",
@@ -5428,9 +5428,9 @@ dependencies = [
 
 [[package]]
 name = "url"
-version = "2.5.8"
+version = "2.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+checksum = "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a"
 dependencies = [
  "form_urlencoded",
  "idna",

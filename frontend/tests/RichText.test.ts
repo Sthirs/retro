@@ -683,7 +683,7 @@ describe('rich text images', () => {
     );
     const wrapper = mountWithImages('<p>alpha beta</p>');
     const editor = await editorOf(wrapper);
-    editor.view.posAtCoords = () => ({ pos: 6, inside: -1 }); // after "alpha"
+    editor.view.posAtCoords = () => ({ pos: 6, inside: -1, affinity: 0 }); // after "alpha"
     const files = ['a.png', 'b.png'].map(
       (name) => new File([new Uint8Array([1])], name, { type: 'image/png' }),
     );
